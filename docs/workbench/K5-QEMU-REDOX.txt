@@ -1,0 +1,202 @@
+
+
+U-Boot 2026.10-g8649a54d301a (Oct 24 2026 - 23:19:03 +0000)
+
+DRAM:  2 GiB
+using memory 0xbe442000-0xbf482000 for malloc()
+Core:  51 devices, 14 uclasses, devicetree: board
+Flash: 64 MiB
+Loading Environment from Flash...
+*** Warning - bad CRC, using default environment
+
+In:    serial,usbkbd
+Out:   serial,vidconsole
+Err:   serial,vidconsole
+No USB controllers found
+Net:   No ethernet found.
+
+
+Hit any key to stop autoboot: 2
+Hit any key to stop autoboot: 1
+Hit any key to stop autoboot: 0
+Scanning for bootflows in all bootdevs
+Seq  Method       State   Uclass    Part  Name                      Filename
+---  -----------  ------  --------  ----  ------------------------  ----------------
+Scanning global bootmeth 'efi_mgr':
+Missing TPMv2 device for EFI_TCG_PROTOCOL
+Missing RNG device for EFI_RNG_PROTOCOL
+  0  efi_mgr      ready   (none)       0  <NULL>
+** Booting bootflow '<NULL>' with efi_mgr
+Booting: Label: virtio 0 Device path: /VenHw(e61d73b9-a384-4acc-aeab-82e828f3628b,0000000000000000)/VenHw(e61d73b9-a384-4acc-aeab-82e828f3628b,8d0000001f000000)/VenHw(e61d73b9-a384-4acc-aeab-82e828f3628b,17008d0000000000)
+WARN - Failed to locate Outputs: Status(0x800000000000000E) "not found"
+
+INFO - Currently in EL1
+
+Redox OS Bootloader 1.0.0 on aarch64/UEFI
+
+Hardware descriptor: DeviceTree(bfec5000, 2000)
+
+kernel_entry(0xbffd3000, 0xffff8000bfec5000, 0xffffff0000095000, 0xbe3207c0)
+
+KernelArgs {
+
+    kernel_base: 0xbd1b6000,
+
+    kernel_size: 0x169530,
+
+    stack_base: 0xbfea5000,
+
+    stack_size: 0x20000,
+
+    env_base: 0xbfe95000,
+
+    env_size: 0x44,
+
+    acpi_rsdp_base: 0xbfec5000,
+
+    acpi_rsdp_size: 0x2000,
+
+    areas_base: 0xbc7cf030,
+
+    areas_size: 0x6000,
+
+    bootstrap_base: 0xbb8f3000,
+
+    bootstrap_size: 0x6b2000,
+
+}
+
+kernel::dtb::serial:INFO -- UART Compatible { string: "arm,pl011\0arm,primecell" } at 0xFFFF800009000000 size 0x1000
+kernel::arch::aarch64::start:INFO -- Redox OS starting...
+kernel::startup:DEBUG -- Kernel: BD1B6000:BD31F530
+kernel::startup:DEBUG -- Env: BFE95000:BFE95044
+kernel::startup:DEBUG -- HWDESC: BFEC5000:BFEC7000
+kernel::startup:DEBUG -- Areas: BC7CF030:BC7D5030
+kernel::startup:DEBUG -- Bootstrap: BB8F3000:BBFA5000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory BFFD3000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory BFEC7000 size 2000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory BFE8B000 size A000
+kernel::startup::memory:DEBUG -- Registering Free memory 40000000 size 7B8F3000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BB8F3000 size 6B2000
+kernel::startup::memory:DEBUG -- Registering Free memory BBFA5000 size 9A9000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BC94E000 size 6B3000
+kernel::startup::memory:DEBUG -- Registering Free memory BD001000 size 1B5000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BD1B6000 size 16A000
+kernel::startup::memory:DEBUG -- Registering Free memory BD320000 size 1148000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BE468000 size 1000
+kernel::startup::memory:DEBUG -- Registering Free memory BE469000 size 1017000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BF480000 size 10000
+kernel::startup::memory:DEBUG -- Registering Free memory BF490000 size 9FB000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BFE8B000 size 3E000
+kernel::startup::memory:DEBUG -- Registering Free memory BFEC9000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BFECA000 size 103000
+kernel::startup::memory:DEBUG -- Registering Free memory BFFCD000 size 6000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BFFD3000 size 1000
+kernel::startup::memory:DEBUG -- Registering Free memory BFFD4000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BFFD5000 size 1000
+kernel::startup::memory:DEBUG -- Registering Free memory BFFD6000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BFFD7000 size 22000
+kernel::startup::memory:DEBUG -- Registering Free memory BFFF9000 size 7000
+kernel::startup::memory:DEBUG -- Registering Device memory 8000000 size 8000000
+kernel::startup::memory:DEBUG -- Registering Device memory 10000000 size 30000000
+kernel::startup::memory:DEBUG -- Registering Kernel memory BD1B6000 size 169530
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory BFE95000 size 44
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory BFEC5000 size 2000
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory BB8F3000 size 6B2000
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory BFEA5000 size 20000
+kernel::startup::memory:DEBUG -- 40000000:BB8F3000
+kernel::startup::memory:DEBUG -- BBFA5000:BC94E000
+kernel::startup::memory:DEBUG -- BD001000:BD1B6000
+kernel::startup::memory:DEBUG -- BD320000:BE468000
+kernel::startup::memory:DEBUG -- BE469000:BF480000
+kernel::startup::memory:DEBUG -- BF490000:BFE8B000
+kernel::startup::memory:DEBUG -- BFEC9000:BFECA000
+kernel::startup::memory:DEBUG -- BFFCD000:BFFD3000
+kernel::startup::memory:DEBUG -- BFFD4000:BFFD5000
+kernel::startup::memory:DEBUG -- BFFD6000:BFFD7000
+kernel::startup::memory:DEBUG -- BFFF9000:C0000000
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x40000000], size: 7B8F3000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbbfa5000], size: 9A9000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbd001000], size: 1B5000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbd320000], size: 1148000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbe469000], size: 1017000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbf490000], size: 9FB000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbfec9000], size: 1000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbffcd000], size: 6000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbffd4000], size: 1000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbffd6000], size: 1000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbfff9000], size: 7000 }
+kernel::startup::memory:INFO -- Memory: 2032 MB
+kernel::startup::memory:INFO -- Highest huge page level: 0
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x40000000 => 0xffff800040000000, 506099 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x40000000 remaining 506099
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbbfa5000 => 0xffff8000bbfa5000, 2473 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbbfa5000 remaining 2473
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbd001000 => 0xffff8000bd001000, 437 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbd001000 remaining 437
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbd320000 => 0xffff8000bd320000, 4424 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbd320000 remaining 4424
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbe469000 => 0xffff8000be469000, 4119 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbe469000 remaining 4119
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbf490000 => 0xffff8000bf490000, 2555 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbf490000 remaining 2555
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbfec9000 => 0xffff8000bfec9000, 1 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbfec9000 remaining 1
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbffcd000 => 0xffff8000bffcd000, 6 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbffcd000 remaining 6
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbffd4000 => 0xffff8000bffd4000, 1 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbffd4000 remaining 1
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbffd6000 => 0xffff8000bffd6000, 1 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbffd6000 remaining 1
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbfff9000 => 0xffff8000bfff9000, 7 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbfff9000 remaining 7
+kernel::startup::memory:DEBUG -- MAPPING STACK, BASE bfea5000 SIZE 20000
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbfea5000 => 0xffff8000bfea5000, 32 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbfea5000 remaining 32
+kernel::startup::memory:DEBUG -- Table: 40000000
+kernel::startup::memory:DEBUG -- 256: 40001403
+kernel::startup::memory:DEBUG -- 510: 403FF403
+kernel::startup::memory:INFO -- Permanently used: 5908 KB
+kernel::acpi:ERROR -- NO RSDP FOUND
+kernel::memory:DEBUG -- Initial freelist consistent
+kernel::arch::aarch64::device:INFO -- PSCI INIT
+kernel::arch::aarch64::device::psci:INFO -- PSCI 1.1 using hvc conduit from device tree
+kernel::arch::aarch64::device:INFO -- CPU TOPOLOGY INIT
+kernel::arch::aarch64::device::cpu::topology:INFO -- DT CPU topology: 1 enabled, 0 disabled, BSP MPIDR=0x0, 0 PSCI secondaries
+kernel::arch::aarch64::device::cpu::topology:DEBUG -- CPU topology logical #0: MPIDR=0x0 boot=true enable-method=none
+kernel::arch::aarch64::device::cpu::boot:INFO -- CPU boot resources: no secondary CPUs
+kernel::arch::aarch64::device:INFO -- IRQCHIP INIT
+kernel::dtb:DEBUG -- root parent = 0x00008002
+kernel::dtb:DEBUG -- intc@8000000, compatible = arm,gic-v3, #interrupt-cells = 0x00000003, phandle = 0x00008002
+kernel::dtb::irqchip:DEBUG -- intc@8000000, compatible = arm,gic-v3, #interrupt-cells = 0x00000003, phandle = 0x00008002
+kernel::arch::aarch64::device::irqchip::gic:INFO -- gic: Distributor supports 1 CPUs and 288 IRQs
+kernel::arch::aarch64::device::irqchip::gicv3:INFO -- GicV3 { gic_dist_if: GicDistIf { address: FFFF800008000000, ncpus: 1, nirqs: 120 }, gic_cpu_if: GicV3CpuIf, gicrs: [(8000000, 10000)], irq_range: (0, 0) }
+kernel::arch::aarch64::device::irqchip::gicv3:INFO -- gic irq_range = (0, 288)
+kernel::arch::aarch64::device:INFO -- select 0 as root ic
+kernel::arch::aarch64::device:INFO -- GIT INIT
+kernel::arch::aarch64::device::generic_timer:DEBUG -- generic_timer use_virtual_timer = false
+kernel::arch::aarch64::device::generic_timer:DEBUG -- architected timer irq = L3(1, 14, 4)
+kernel::arch::aarch64::device::generic_timer:INFO -- architected timer virq = 30 (non-secure physical)
+kernel::arch::aarch64::device:INFO -- SERIAL INIT
+kernel::arch::aarch64::device::serial:INFO -- serial_port virq = 33
+kernel::arch::aarch64::device:INFO -- RTC INIT
+kernel::arch::aarch64::device::rtc:INFO -- PL031 RTC at 0x9010000
+kernel::startup:INFO -- SECONDARY CPU INIT
+kernel::scheme::acpi:WARN -- expected RXSDT_ENUM to be initialized before AcpiScheme, is ACPI available?
+kernel::startup:DEBUG -- BSP: 1 CPUs
+kernel::startup:DEBUG -- Env: Ok("DTB_ADDR=00000000bfec5000\nDTB_SIZE=0000000000002000\nREDOX_RAMBOOT=1\n")
+kernel::syscall::process:DEBUG -- Bootstrap entry point: 3000
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+init: switchroot to /scheme/initfs /scheme/initfs/etc
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+init: RAM boot shell on /scheme/debug; no rootfs mounted
+Redox RAM shell. Type help for commands.
+ram:~$ qemu-system-aarch64: terminating on signal 15 from pid 599425 (timeout)

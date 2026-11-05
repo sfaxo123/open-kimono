@@ -1,0 +1,196 @@
+From: Remy <remy@localhost>
+Subject: [PATCH] aarch64: refuse malformed watchdog reg regions in the probe
+
+WDT-BOUNDS-01 (monitor audit 327db53, root disposition 3926e33):
+qcom_wdt::probe enforced the reg-span minimum from 0043 but, unlike
+the PON glue since 0041, never checked that the translated base is
+word-aligned or that base + span does not wrap. MmioBus forms
+base + offset volatile pointers from that base, so a malformed FDT
+region would be dereferenced at handoff time.
+
+Add a pure-layer WdtRegion::new (mirroring 0041's ArbBounds
+discipline): refuse base % 4 != 0, refuse checked_add overflow,
+keep the span minimum - all before the region is stored and any
+register is touched; refusal skips the node fail-safe. Host tests
+13/13 (9 existing + 4 new region cases); mutation proof (alignment
+refusal deleted -> exactly the alignment test fails; byte-restore
+-> 13/13) and apply-check evidence in the goal hidden_files/p47/.
+
+---
+diff --git a/src/arch/aarch64/device/qcom_wdt.rs b/src/arch/aarch64/device/qcom_wdt.rs
+index d41a242a..b81bd73f 100644
+--- a/src/arch/aarch64/device/qcom_wdt.rs
++++ b/src/arch/aarch64/device/qcom_wdt.rs
+@@ -48,6 +48,14 @@
+ //! are equivalent on this hardware, and preserving unknown bits is
+ //! the conservative choice for a register we do not fully own.
+ //!
++//! The reg region the FDT grants is validated before it is stored
++//! (patch 0047, mirroring patch 0041's ArbBounds discipline in
++//! qcom_pon.rs): the translated base must be word-aligned and
++//! base + span must not wrap, on top of the span minimum the probe
++//! has required since 0043. MmioBus forms `base + offset` volatile
++//! pointers from that base, so a malformed region is refused in
++//! the probe instead of being dereferenced at handoff time.
++//!
+ //! The pure layer (register constants, compatible/layout
+ //! selection, env parsing, EN read-modify-write math, and the
+ //! handoff transaction against the abstract WdtBus surface) has no
+@@ -178,6 +186,53 @@ pub const fn en_is_armed(en: u32) -> bool {
+     en & WDT_ENABLE != 0
+ }
+ 
++// ---------------------------------------------------------------------------
++// Pure layer: reg-region validation (the ArbBounds discipline of
++// qcom_pon.rs patch 0041, applied to this module's single region).
++// ---------------------------------------------------------------------------
++
++/// The watchdog reg region as granted by the FDT: the translated
++/// CPU-physical base plus the span the FDT granted (`ranges`
++/// translation preserves lengths, so the FDT length is the span of
++/// the translated region too). The WdtBus surface is infallible -
++/// a volatile access to a bad address faults instead of returning
++/// an error - so the region is proven sound up front, in
++/// `WdtRegion::new`, before the probe stores it and long before
++/// the first register access. Every offset the handoff transaction
++/// can issue (the highest is WDT_BITE_TIME at +0x14) fits by
++/// construction once the span minimum holds, so no per-access
++/// check is needed downstream.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct WdtRegion {
++    /// Translated CPU-physical base of the reg region.
++    pub base: usize,
++    /// Span of the region in bytes, as granted by the FDT.
++    pub span: usize,
++}
++
++impl WdtRegion {
++    /// Validate an FDT-granted region: the base must be
++    /// word-aligned (the registers are 32-bit and the volatile
++    /// accesses assume it), `base + span` must not wrap the
++    /// address space (checked arithmetic - an overflowing end is
++    /// not a region), and the span must cover the KPSS register
++    /// block. Any refusal leaves the node undiscovered: the
++    /// handoff reports the feature unavailable and boot continues,
++    /// the same fail-safe the probe's span check has always had.
++    pub fn new(base: usize, span: usize) -> Result<WdtRegion, &'static str> {
++        if base % 4 != 0 {
++            return Err("watchdog reg base is not word-aligned");
++        }
++        if base.checked_add(span).is_none() {
++            return Err("watchdog reg base + span wraps the address space");
++        }
++        if span < WDT_REG_SPAN_MIN {
++            return Err("watchdog reg span is smaller than the KPSS register block");
++        }
++        Ok(WdtRegion { base, span })
++    }
++}
++
+ // ---------------------------------------------------------------------------
+ // Pure layer: the handoff transaction against an abstract bus.
+ // ---------------------------------------------------------------------------
+@@ -265,7 +320,7 @@ pub fn init(fdt: &crate::dtb::Fdt<'_>) {
+ /// FDT probe behind init(): returns the translated CPU-physical
+ /// base of the watchdog reg region, for the first enabled node
+ /// whose compatible list selects the KPSS layout and whose reg
+-/// span covers the register block.
++/// region passes WdtRegion validation.
+ #[cfg(not(test))]
+ fn probe(fdt: &crate::dtb::Fdt<'_>) -> Option<usize> {
+     use fdt::properties::{values::StringList, Status};
+@@ -291,11 +346,19 @@ fn probe(fdt: &crate::dtb::Fdt<'_>) -> Option<usize> {
+         }
+         let Some(reg) = node.reg() else { continue };
+         let Some(first) = reg.iter::<usize, usize>().next() else { continue };
+-        let Ok(region) = first else { continue };
+-        if region.len < WDT_REG_SPAN_MIN {
++        let Ok(entry) = first else { continue };
++        let Some(base) = crate::dtb::translate_mmio_address(fdt, &node, &entry) else {
+             continue;
+-        }
+-        return crate::dtb::translate_mmio_address(fdt, &node, &region);
++        };
++        // Validate the granted region before it is stored
++        // (WdtRegion::new): word-aligned base, no base + span
++        // wrap, span covering the register block. A malformed
++        // region skips the node - fail-safe - instead of reaching
++        // the MmioBus pointer arithmetic at handoff time.
++        let Ok(region) = WdtRegion::new(base, entry.len) else {
++            continue;
++        };
++        return Some(region.base);
+     }
+     None
+ }
+@@ -515,4 +578,70 @@ mod tests {
+         );
+         assert!(bus.writes.is_empty());
+     }
++
++    #[test]
++    fn region_accepts_valid_and_boundary_regions() {
++        // The real node: watchdog@17980000, span 0x1000.
++        assert_eq!(
++            WdtRegion::new(0x1798_0000, 0x1000),
++            Ok(WdtRegion {
++                base: 0x1798_0000,
++                span: 0x1000
++            })
++        );
++        // A span exactly at the minimum is accepted.
++        assert_eq!(
++            WdtRegion::new(0x1798_0000, WDT_REG_SPAN_MIN),
++            Ok(WdtRegion {
++                base: 0x1798_0000,
++                span: WDT_REG_SPAN_MIN
++            })
++        );
++        // A large span that does not wrap is accepted, including
++        // one whose end lands exactly on the top of the address
++        // space (base + span == usize::MAX does not overflow).
++        assert!(WdtRegion::new(0x1000, usize::MAX - 0x1000).is_ok());
++    }
++
++    #[test]
++    fn region_refuses_misaligned_base() {
++        for base in [0x1798_0001usize, 0x1798_0002, 0x1798_0003, 0x2] {
++            assert_eq!(
++                WdtRegion::new(base, 0x1000),
++                Err("watchdog reg base is not word-aligned"),
++                "base {base:#x} must be refused as misaligned"
++            );
++        }
++    }
++
++    #[test]
++    fn region_refuses_wrapping_base_plus_span() {
++        // Aligned base near the top of the address space,
++        // generous span, end wraps past the top (usize is 64-bit
++        // here and on the target, so a wrap case must reach past
++        // usize::MAX - a merely 32-bit-flavored base cannot wrap).
++        assert_eq!(
++            WdtRegion::new(usize::MAX - 0xFFF, 0x2000),
++            Err("watchdog reg base + span wraps the address space")
++        );
++        // The highest aligned base with a minimum-valid span wraps.
++        assert_eq!(
++            WdtRegion::new(usize::MAX - 3, WDT_REG_SPAN_MIN),
++            Err("watchdog reg base + span wraps the address space")
++        );
++    }
++
++    #[test]
++    fn region_refuses_span_below_minimum() {
++        // The span minimum the probe has required since 0043, now
++        // enforced by the same validation entry point.
++        assert_eq!(
++            WdtRegion::new(0x1798_0000, WDT_REG_SPAN_MIN - 4),
++            Err("watchdog reg span is smaller than the KPSS register block")
++        );
++        assert_eq!(
++            WdtRegion::new(0x1798_0000, 0),
++            Err("watchdog reg span is smaller than the KPSS register block")
++        );
++    }
+ }

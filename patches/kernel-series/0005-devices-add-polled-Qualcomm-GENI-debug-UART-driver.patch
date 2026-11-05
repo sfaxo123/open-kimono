@@ -1,0 +1,718 @@
+From 12d7699748b7943510dbcc452d0cfc9c262ef757 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:11:48 +0000
+Subject: [PATCH 05/21] devices: add polled Qualcomm GENI debug UART driver
+
+FIFO-mode 8N1 driver for the qcom,geni-debug-uart serial engine behind a
+small Mmio trait. init() checks the SE firmware protocol at
+GENI_FW_REVISION_RO (0x68), quiesces running TX/RX commands, programs
+packing, watermarks, FIFO mode and frame format, and restarts the RX
+sequencer. The serial clock divider is only written when the SE clock
+rate is known; otherwise the firmware setting is kept, as Linux earlycon
+does. TX is one command per byte with bounded polls and an abort path;
+RX drains packed FIFO words honouring RX_LAST_BYTE_VALID. SE interrupt
+delivery stays masked because the GIC virq for SPI 354 does not fit the
+u8 numbering the console IRQ handler passes to irq_trigger.
+
+Host tests run against a behavioural register model.
+
+Co-Authored-By: Cursor <noreply@cursor.com>
+---
+ src/devices/mod.rs                  |   1 +
+ src/devices/uart_qcom_geni.rs       | 332 ++++++++++++++++++++++++++++
+ src/devices/uart_qcom_geni/model.rs | 139 ++++++++++++
+ src/devices/uart_qcom_geni/tests.rs | 191 ++++++++++++++++
+ 4 files changed, 663 insertions(+)
+ create mode 100644 src/devices/uart_qcom_geni.rs
+ create mode 100644 src/devices/uart_qcom_geni/model.rs
+ create mode 100644 src/devices/uart_qcom_geni/tests.rs
+
+diff --git a/src/devices/mod.rs b/src/devices/mod.rs
+index dc475689..3d520c43 100644
+--- a/src/devices/mod.rs
++++ b/src/devices/mod.rs
+@@ -4,3 +4,4 @@ pub mod serial;
+ pub mod uart_16550;
+ pub mod uart_meson;
+ pub mod uart_pl011;
++pub mod uart_qcom_geni;
+diff --git a/src/devices/uart_qcom_geni.rs b/src/devices/uart_qcom_geni.rs
+new file mode 100644
+index 00000000..ccc93972
+--- /dev/null
++++ b/src/devices/uart_qcom_geni.rs
+@@ -0,0 +1,332 @@
++//! Qualcomm GENI serial engine (QUP v3) as a polled debug UART,
++//! `qcom,geni-debug-uart`.
++//!
++//! Clean-room implementation from the register-level description in the
++//! redox-oneplus6 `specs/geni-debug-uart.md`; behaviour cross-checked against
++//! the ISC-licensed OpenBSD qcuart(4). No GPL code was used.
++
++use core::ptr;
++
++use crate::{
++    scheme::debug::{debug_input, debug_notify},
++    sync::CleanLockToken,
++};
++
++#[cfg(test)]
++pub mod model;
++#[cfg(test)]
++mod tests;
++
++/// Serial-engine register offsets, relative to the SE base.
++pub mod reg {
++    pub const FORCE_DEFAULT: usize = 0x020;
++    pub const STATUS: usize = 0x040;
++    pub const M_CLK_CFG: usize = 0x048;
++    pub const S_CLK_CFG: usize = 0x04c;
++    pub const FW_REVISION_RO: usize = 0x068;
++    pub const DMA_MODE_EN: usize = 0x258;
++    pub const UART_TX_TRANS_CFG: usize = 0x25c;
++    pub const TX_PACKING_CFG0: usize = 0x260;
++    pub const TX_PACKING_CFG1: usize = 0x264;
++    pub const UART_TX_WORD_LEN: usize = 0x268;
++    pub const UART_TX_STOP_BIT_LEN: usize = 0x26c;
++    pub const UART_TX_TRANS_LEN: usize = 0x270;
++    pub const UART_RX_TRANS_CFG: usize = 0x280;
++    pub const RX_PACKING_CFG0: usize = 0x284;
++    pub const RX_PACKING_CFG1: usize = 0x288;
++    pub const UART_RX_WORD_LEN: usize = 0x28c;
++    pub const UART_TX_PARITY_CFG: usize = 0x2a4;
++    pub const UART_RX_PARITY_CFG: usize = 0x2a8;
++    pub const M_CMD0: usize = 0x600;
++    pub const M_CMD_CTRL: usize = 0x604;
++    pub const M_IRQ_STATUS: usize = 0x610;
++    pub const M_IRQ_CLEAR: usize = 0x618;
++    pub const S_CMD0: usize = 0x630;
++    pub const S_CMD_CTRL: usize = 0x634;
++    pub const S_IRQ_STATUS: usize = 0x640;
++    pub const S_IRQ_CLEAR: usize = 0x648;
++    pub const TX_FIFO: usize = 0x700;
++    pub const RX_FIFO: usize = 0x780;
++    pub const RX_FIFO_STATUS: usize = 0x804;
++    pub const TX_WATERMARK: usize = 0x80c;
++    pub const RX_WATERMARK: usize = 0x810;
++    pub const RX_RFR_WATERMARK: usize = 0x814;
++    pub const GSI_EVENT_EN: usize = 0xe18;
++    pub const IRQ_EN: usize = 0xe1c;
++}
++
++pub const STATUS_M_CMD_ACTIVE: u32 = 1 << 0;
++pub const STATUS_S_CMD_ACTIVE: u32 = 1 << 12;
++pub const CMD_CTRL_ABORT: u32 = 1 << 1;
++pub const IRQ_CMD_DONE: u32 = 1 << 0;
++pub const IRQ_CMD_ABORT: u32 = 1 << 5;
++pub const M_IRQ_TX_FIFO_WATERMARK: u32 = 1 << 30;
++pub const OPCODE_SHIFT: u32 = 27;
++pub const OPCODE_UART_START: u32 = 1;
++pub const RX_FIFO_WC_MASK: u32 = 0x1ff_ffff;
++pub const RX_LAST: u32 = 1 << 31;
++pub const RX_LAST_BYTE_VALID_SHIFT: u32 = 28;
++pub const RX_LAST_BYTE_VALID_MASK: u32 = 0x7;
++pub const PROTOCOL_UART: u32 = 2;
++pub const UART_CTS_MASK: u32 = 1 << 1;
++pub const SER_CLK_EN: u32 = 1 << 0;
++pub const CLK_DIV_SHIFT: u32 = 4;
++pub const CLK_DIV_MAX: u32 = 0xfff;
++/// 8 bits per transfer word, 4 words per FIFO element, LSB first.
++pub const PACKING_CFG0: u32 = 0xf;
++pub const PACKING_CFG1: u32 = 0;
++pub const BITS_PER_CHAR: u32 = 8;
++pub const TX_WATERMARK_WORDS: u32 = 2;
++/// Watermarks assume the 16-word FIFO every SDM845 SE reports.
++pub const RX_WATERMARK_WORDS: u32 = 8;
++pub const RX_RFR_WATERMARK_WORDS: u32 = 14;
++pub const OVERSAMPLING: u32 = 32;
++/// Smallest mapping that covers every register this driver touches.
++pub const MIN_REGISTER_SPAN: usize = 0x1000;
++
++/// Bounds every status poll so a power-collapsed SE cannot hang the kernel.
++const POLL_LIMIT: usize = 1_000_000;
++/// Words drained per `poll_rx` call, so a babbling line cannot starve callers.
++const RX_DRAIN_LIMIT: usize = 64;
++
++pub trait Mmio {
++    fn read(&self, offset: usize) -> u32;
++    fn write(&mut self, offset: usize, value: u32);
++}
++
++pub struct DirectMmio {
++    base: usize,
++}
++
++impl DirectMmio {
++    /// # Safety
++    ///
++    /// `base` must be a 4-byte aligned, mapped device-memory range of at least
++    /// [`MIN_REGISTER_SPAN`] bytes that exclusively belongs to one GENI SE.
++    pub const unsafe fn new(base: usize) -> Self {
++        Self { base }
++    }
++}
++
++impl Mmio for DirectMmio {
++    fn read(&self, offset: usize) -> u32 {
++        unsafe { ptr::read_volatile((self.base + offset) as *const u32) }
++    }
++
++    fn write(&mut self, offset: usize, value: u32) {
++        unsafe { ptr::write_volatile((self.base + offset) as *mut u32, value) }
++    }
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum InitError {
++    /// The SE firmware runs another protocol (SPI, I2C, ...) or none.
++    NotUart { protocol: u32 },
++    /// No divider in range yields the requested baud within 2%.
++    NoClockDivider { se_clock_hz: u32, baud: u32 },
++}
++
++/// Divider for `GENI_SER_{M,S}_CLK_CFG` that turns `se_clock_hz` into
++/// `baud * OVERSAMPLING`, or `None` if the error exceeds 2%.
++pub fn clock_divider(se_clock_hz: u32, baud: u32) -> Option<u32> {
++    let sample_hz = baud.checked_mul(OVERSAMPLING).filter(|&hz| hz != 0)?;
++    let div = se_clock_hz.checked_add(sample_hz / 2)? / sample_hz;
++    if !(1..=CLK_DIV_MAX).contains(&div) {
++        return None;
++    }
++    let actual = u64::from(se_clock_hz) / (u64::from(div) * u64::from(OVERSAMPLING));
++    (actual.abs_diff(u64::from(baud)) * 50 <= u64::from(baud)).then_some(div)
++}
++
++pub struct SerialPort<M: Mmio = DirectMmio> {
++    mmio: M,
++    /// Set after a TX timeout so a dead SE costs one timeout, not one per byte.
++    tx_stalled: bool,
++}
++
++impl<M: Mmio> SerialPort<M> {
++    pub fn new(mmio: M) -> Self {
++        Self {
++            mmio,
++            tx_stalled: false,
++        }
++    }
++
++    #[cfg(test)]
++    pub fn mmio(&self) -> &M {
++        &self.mmio
++    }
++
++    pub fn protocol(&self) -> u32 {
++        (self.mmio.read(reg::FW_REVISION_RO) >> 8) & 0xff
++    }
++
++    fn poll(&self, offset: usize, mask: u32, set: bool) -> bool {
++        for _ in 0..POLL_LIMIT {
++            if (self.mmio.read(offset) & mask != 0) == set {
++                return true;
++            }
++            core::hint::spin_loop();
++        }
++        false
++    }
++
++    /// Takes over the SE from whatever firmware left running and configures
++    /// FIFO-mode 8N1 without flow control. The serial clock is left as
++    /// firmware programmed it unless `clock` gives the SE clock rate and baud.
++    pub fn init(&mut self, clock: Option<(u32, u32)>) -> Result<(), InitError> {
++        let protocol = self.protocol();
++        if protocol != PROTOCOL_UART {
++            return Err(InitError::NotUart { protocol });
++        }
++        let clk_cfg = match clock {
++            Some((se_clock_hz, baud)) => Some(
++                clock_divider(se_clock_hz, baud)
++                    .ok_or(InitError::NoClockDivider { se_clock_hz, baud })?,
++            ),
++            None => None,
++        };
++
++        if self.mmio.read(reg::STATUS) & STATUS_M_CMD_ACTIVE != 0 {
++            self.finish_tx();
++        }
++        self.abort_rx();
++
++        self.mmio.write(reg::GSI_EVENT_EN, 0);
++        self.mmio.write(reg::IRQ_EN, 0);
++        self.mmio.write(reg::M_IRQ_CLEAR, u32::MAX);
++        self.mmio.write(reg::S_IRQ_CLEAR, u32::MAX);
++
++        self.mmio.write(reg::TX_PACKING_CFG0, PACKING_CFG0);
++        self.mmio.write(reg::TX_PACKING_CFG1, PACKING_CFG1);
++        self.mmio.write(reg::RX_PACKING_CFG0, PACKING_CFG0);
++        self.mmio.write(reg::RX_PACKING_CFG1, PACKING_CFG1);
++        self.mmio.write(reg::RX_WATERMARK, RX_WATERMARK_WORDS);
++        self.mmio
++            .write(reg::RX_RFR_WATERMARK, RX_RFR_WATERMARK_WORDS);
++
++        let dma_mode = self.mmio.read(reg::DMA_MODE_EN);
++        if dma_mode & 1 != 0 {
++            self.mmio.write(reg::DMA_MODE_EN, dma_mode & !1);
++        }
++
++        self.mmio.write(reg::UART_TX_TRANS_CFG, UART_CTS_MASK);
++        self.mmio.write(reg::UART_TX_PARITY_CFG, 0);
++        self.mmio.write(reg::UART_RX_TRANS_CFG, 0);
++        self.mmio.write(reg::UART_RX_PARITY_CFG, 0);
++        self.mmio.write(reg::UART_TX_WORD_LEN, BITS_PER_CHAR);
++        self.mmio.write(reg::UART_RX_WORD_LEN, BITS_PER_CHAR);
++        self.mmio.write(reg::UART_TX_STOP_BIT_LEN, 0);
++
++        if let Some(div) = clk_cfg {
++            let value = SER_CLK_EN | (div << CLK_DIV_SHIFT);
++            self.mmio.write(reg::M_CLK_CFG, value);
++            self.mmio.write(reg::S_CLK_CFG, value);
++        }
++
++        self.start_rx();
++        self.tx_stalled = false;
++        Ok(())
++    }
++
++    /// Waits for the current TX command, aborting it if it never completes.
++    fn finish_tx(&mut self) {
++        if self.poll(reg::M_IRQ_STATUS, IRQ_CMD_DONE, true) {
++            self.mmio.write(reg::M_IRQ_CLEAR, IRQ_CMD_DONE);
++            return;
++        }
++        self.mmio.write(reg::M_CMD_CTRL, CMD_CTRL_ABORT);
++        self.poll(reg::M_IRQ_STATUS, IRQ_CMD_ABORT, true);
++        self.mmio
++            .write(reg::M_IRQ_CLEAR, IRQ_CMD_DONE | IRQ_CMD_ABORT);
++    }
++
++    fn abort_rx(&mut self) {
++        self.mmio.write(reg::S_CMD_CTRL, CMD_CTRL_ABORT);
++        self.poll(reg::S_CMD_CTRL, CMD_CTRL_ABORT, false);
++        self.mmio
++            .write(reg::S_IRQ_CLEAR, IRQ_CMD_DONE | IRQ_CMD_ABORT);
++        self.mmio.write(reg::FORCE_DEFAULT, 1);
++    }
++
++    fn start_rx(&mut self) {
++        self.mmio
++            .write(reg::S_CMD0, OPCODE_UART_START << OPCODE_SHIFT);
++    }
++
++    pub fn send(&mut self, byte: u8) {
++        if self.tx_stalled {
++            return;
++        }
++        self.mmio.write(reg::TX_WATERMARK, TX_WATERMARK_WORDS);
++        self.mmio.write(reg::UART_TX_TRANS_LEN, 1);
++        self.mmio
++            .write(reg::M_CMD0, OPCODE_UART_START << OPCODE_SHIFT);
++        if self.poll(reg::M_IRQ_STATUS, M_IRQ_TX_FIFO_WATERMARK, true) {
++            self.mmio.write(reg::TX_FIFO, u32::from(byte));
++            self.mmio.write(reg::M_IRQ_CLEAR, M_IRQ_TX_FIFO_WATERMARK);
++        } else {
++            self.tx_stalled = true;
++        }
++        self.finish_tx();
++    }
++
++    pub fn write(&mut self, buf: &[u8]) {
++        for &b in buf {
++            match b {
++                8 | 0x7F => {
++                    self.send(8);
++                    self.send(b' ');
++                    self.send(8);
++                }
++                b'\n' => {
++                    self.send(b'\r');
++                    self.send(b'\n');
++                }
++                _ => self.send(b),
++            }
++        }
++    }
++
++    /// Drains received bytes into `sink`; returns whether any arrived.
++    pub fn poll_rx(&mut self, mut sink: impl FnMut(u8)) -> bool {
++        if self.mmio.read(reg::STATUS) & STATUS_S_CMD_ACTIVE == 0 {
++            self.start_rx();
++        }
++
++        let mut received = false;
++        for _ in 0..RX_DRAIN_LIMIT {
++            let status = self.mmio.read(reg::RX_FIFO_STATUS);
++            let words = status & RX_FIFO_WC_MASK;
++            if words == 0 {
++                break;
++            }
++            let mut bytes = 4;
++            if words == 1 && status & RX_LAST != 0 {
++                let valid = (status >> RX_LAST_BYTE_VALID_SHIFT) & RX_LAST_BYTE_VALID_MASK;
++                if valid != 0 {
++                    bytes = valid.min(4);
++                }
++            }
++            let word = self.mmio.read(reg::RX_FIFO);
++            for &c in word.to_le_bytes().iter().take(bytes as usize) {
++                sink(c);
++            }
++            received = true;
++        }
++        received
++    }
++
++    pub fn receive(&mut self, token: &mut CleanLockToken) {
++        if self.poll_rx(|c| debug_input(c, token)) {
++            debug_notify(token);
++        }
++    }
++
++    /// Keeps SE interrupt delivery masked: the GIC virq for this SE's SPI
++    /// exceeds the u8 IRQ numbers `irq_trigger` accepts, so a delivered
++    /// interrupt would panic the console IRQ handler. RX stays polled.
++    pub fn enable_irq(&mut self) {
++        self.mmio.write(reg::IRQ_EN, 0);
++    }
++}
+diff --git a/src/devices/uart_qcom_geni/model.rs b/src/devices/uart_qcom_geni/model.rs
+new file mode 100644
+index 00000000..24f4dba5
+--- /dev/null
++++ b/src/devices/uart_qcom_geni/model.rs
+@@ -0,0 +1,139 @@
++//! Behavioural model of one GENI SE in FIFO UART mode, for host tests.
++
++use std::{cell::RefCell, collections::VecDeque, vec::Vec};
++
++use super::{reg, *};
++
++#[derive(Default)]
++struct State {
++    regs: Vec<u32>,
++    writes: Vec<(usize, u32)>,
++    tx: Vec<u8>,
++    rx: VecDeque<u8>,
++    tx_pending: u32,
++    tx_active: bool,
++    rx_armed: bool,
++    m_irq: u32,
++    s_irq: u32,
++}
++
++pub struct GeniModel {
++    state: RefCell<State>,
++    /// Never raise the TX watermark, as if the SE clock were gated.
++    pub stall_tx: bool,
++}
++
++impl GeniModel {
++    pub fn new(protocol: u32) -> Self {
++        let mut regs = vec![0; MIN_REGISTER_SPAN / 4];
++        regs[reg::FW_REVISION_RO / 4] = protocol << 8;
++        Self {
++            state: RefCell::new(State {
++                regs,
++                ..State::default()
++            }),
++            stall_tx: false,
++        }
++    }
++
++    pub fn set_reg(&self, offset: usize, value: u32) {
++        self.state.borrow_mut().regs[offset / 4] = value;
++    }
++
++    pub fn reg(&self, offset: usize) -> u32 {
++        self.state.borrow().regs[offset / 4]
++    }
++
++    pub fn set_tx_active(&self) {
++        self.state.borrow_mut().tx_active = true;
++    }
++
++    pub fn writes(&self) -> Vec<(usize, u32)> {
++        self.state.borrow().writes.clone()
++    }
++
++    pub fn clear_writes(&self) {
++        self.state.borrow_mut().writes.clear();
++    }
++
++    pub fn tx(&self) -> Vec<u8> {
++        self.state.borrow().tx.clone()
++    }
++
++    pub fn rx_armed(&self) -> bool {
++        self.state.borrow().rx_armed
++    }
++
++    pub fn inject_rx(&self, bytes: &[u8]) {
++        self.state.borrow_mut().rx.extend(bytes);
++    }
++}
++
++impl Mmio for GeniModel {
++    fn read(&self, offset: usize) -> u32 {
++        let mut s = self.state.borrow_mut();
++        match offset {
++            reg::STATUS => {
++                u32::from(s.tx_active) * STATUS_M_CMD_ACTIVE
++                    | u32::from(s.rx_armed) * STATUS_S_CMD_ACTIVE
++            }
++            reg::M_IRQ_STATUS => s.m_irq,
++            reg::S_IRQ_STATUS => s.s_irq,
++            reg::S_CMD_CTRL => 0,
++            reg::RX_FIFO_STATUS => {
++                if !s.rx_armed || s.rx.is_empty() {
++                    return 0;
++                }
++                let len = s.rx.len() as u32;
++                RX_LAST | ((len % 4) << RX_LAST_BYTE_VALID_SHIFT) | len.div_ceil(4)
++            }
++            reg::RX_FIFO => {
++                let mut word = [0u8; 4];
++                for byte in &mut word {
++                    match s.rx.pop_front() {
++                        Some(c) => *byte = c,
++                        None => break,
++                    }
++                }
++                u32::from_le_bytes(word)
++            }
++            _ => s.regs[offset / 4],
++        }
++    }
++
++    fn write(&mut self, offset: usize, value: u32) {
++        let s = self.state.get_mut();
++        s.writes.push((offset, value));
++        match offset {
++            reg::M_CMD0 if value >> OPCODE_SHIFT == OPCODE_UART_START => {
++                s.tx_pending = s.regs[reg::UART_TX_TRANS_LEN / 4];
++                s.tx_active = true;
++                if !self.stall_tx {
++                    s.m_irq |= M_IRQ_TX_FIFO_WATERMARK;
++                }
++            }
++            reg::TX_FIFO if s.tx_active => {
++                let take = s.tx_pending.min(4);
++                s.tx.extend_from_slice(&value.to_le_bytes()[..take as usize]);
++                s.tx_pending -= take;
++                if s.tx_pending == 0 {
++                    s.tx_active = false;
++                    s.m_irq |= IRQ_CMD_DONE;
++                }
++            }
++            reg::M_CMD_CTRL if value & CMD_CTRL_ABORT != 0 => {
++                s.tx_active = false;
++                s.tx_pending = 0;
++                s.m_irq |= IRQ_CMD_ABORT;
++            }
++            reg::S_CMD0 if value >> OPCODE_SHIFT == OPCODE_UART_START => s.rx_armed = true,
++            reg::S_CMD_CTRL if value & CMD_CTRL_ABORT != 0 => {
++                s.rx_armed = false;
++                s.s_irq |= IRQ_CMD_ABORT;
++            }
++            reg::M_IRQ_CLEAR => s.m_irq &= !value,
++            reg::S_IRQ_CLEAR => s.s_irq &= !value,
++            _ => s.regs[offset / 4] = value,
++        }
++    }
++}
+diff --git a/src/devices/uart_qcom_geni/tests.rs b/src/devices/uart_qcom_geni/tests.rs
+new file mode 100644
+index 00000000..163e9da5
+--- /dev/null
++++ b/src/devices/uart_qcom_geni/tests.rs
+@@ -0,0 +1,191 @@
++use std::vec::Vec;
++
++use super::{model::GeniModel, reg, *};
++
++fn port() -> SerialPort<GeniModel> {
++    SerialPort::new(GeniModel::new(PROTOCOL_UART))
++}
++
++fn count_writes(port: &SerialPort<GeniModel>, offset: usize) -> usize {
++    port.mmio()
++        .writes()
++        .iter()
++        .filter(|&&(o, _)| o == offset)
++        .count()
++}
++
++#[test]
++fn init_write_trace_matches_spec_sequence() {
++    let mut port = port();
++    assert_eq!(port.init(None), Ok(()));
++    assert_eq!(
++        port.mmio().writes(),
++        vec![
++            (reg::S_CMD_CTRL, CMD_CTRL_ABORT),
++            (reg::S_IRQ_CLEAR, IRQ_CMD_DONE | IRQ_CMD_ABORT),
++            (reg::FORCE_DEFAULT, 1),
++            (reg::GSI_EVENT_EN, 0),
++            (reg::IRQ_EN, 0),
++            (reg::M_IRQ_CLEAR, u32::MAX),
++            (reg::S_IRQ_CLEAR, u32::MAX),
++            (reg::TX_PACKING_CFG0, 0xf),
++            (reg::TX_PACKING_CFG1, 0),
++            (reg::RX_PACKING_CFG0, 0xf),
++            (reg::RX_PACKING_CFG1, 0),
++            (reg::RX_WATERMARK, 8),
++            (reg::RX_RFR_WATERMARK, 14),
++            (reg::UART_TX_TRANS_CFG, UART_CTS_MASK),
++            (reg::UART_TX_PARITY_CFG, 0),
++            (reg::UART_RX_TRANS_CFG, 0),
++            (reg::UART_RX_PARITY_CFG, 0),
++            (reg::UART_TX_WORD_LEN, 8),
++            (reg::UART_RX_WORD_LEN, 8),
++            (reg::UART_TX_STOP_BIT_LEN, 0),
++            (reg::S_CMD0, 0x0800_0000),
++        ]
++    );
++    assert!(port.mmio().rx_armed());
++}
++
++#[test]
++fn init_rejects_non_uart_firmware_without_touching_registers() {
++    let mut port = SerialPort::new(GeniModel::new(1));
++    assert_eq!(port.init(None), Err(InitError::NotUart { protocol: 1 }));
++    assert!(port.mmio().writes().is_empty());
++}
++
++#[test]
++fn init_aborts_a_tx_command_that_never_completes() {
++    let mut port = port();
++    port.mmio().set_tx_active();
++    assert_eq!(port.init(None), Ok(()));
++    let writes = port.mmio().writes();
++    assert_eq!(writes[0], (reg::M_CMD_CTRL, CMD_CTRL_ABORT));
++    assert_eq!(writes[1], (reg::M_IRQ_CLEAR, IRQ_CMD_DONE | IRQ_CMD_ABORT));
++}
++
++#[test]
++fn init_selects_fifo_mode() {
++    let mut port = port();
++    port.mmio().set_reg(reg::DMA_MODE_EN, 1);
++    assert_eq!(port.init(None), Ok(()));
++    assert_eq!(port.mmio().reg(reg::DMA_MODE_EN), 0);
++}
++
++#[test]
++fn init_programs_both_sequencer_clocks_when_rate_is_known() {
++    let mut port = port();
++    assert_eq!(port.init(Some((7_372_800, 115_200))), Ok(()));
++    assert_eq!(port.mmio().reg(reg::M_CLK_CFG), 0x21);
++    assert_eq!(port.mmio().reg(reg::S_CLK_CFG), 0x21);
++}
++
++#[test]
++fn init_leaves_firmware_clock_alone_without_a_rate() {
++    let mut port = port();
++    port.mmio().set_reg(reg::M_CLK_CFG, 0x21);
++    assert_eq!(port.init(None), Ok(()));
++    assert_eq!(count_writes(&port, reg::M_CLK_CFG), 0);
++    assert_eq!(count_writes(&port, reg::S_CLK_CFG), 0);
++}
++
++#[test]
++fn init_refuses_an_unreachable_baud_before_writing() {
++    let mut port = port();
++    assert_eq!(
++        port.init(Some((19_200_000, 115_200))),
++        Err(InitError::NoClockDivider {
++            se_clock_hz: 19_200_000,
++            baud: 115_200
++        })
++    );
++    assert!(port.mmio().writes().is_empty());
++}
++
++#[test]
++fn clock_divider_accepts_exact_and_near_rates_only() {
++    assert_eq!(clock_divider(7_372_800, 115_200), Some(2));
++    assert_eq!(clock_divider(14_745_600, 115_200), Some(4));
++    assert_eq!(clock_divider(48_000_000, 115_200), Some(13));
++    assert_eq!(clock_divider(19_200_000, 115_200), None);
++    assert_eq!(clock_divider(1_000, 115_200), None);
++    assert_eq!(clock_divider(7_372_800, 0), None);
++    assert_eq!(clock_divider(u32::MAX, 1), None);
++}
++
++#[test]
++fn write_sends_one_command_per_byte_and_expands_newline() {
++    let mut port = port();
++    port.init(None).unwrap();
++    port.mmio().clear_writes();
++
++    port.write(b"ok\n");
++
++    assert_eq!(port.mmio().tx(), b"ok\r\n");
++    assert_eq!(count_writes(&port, reg::M_CMD0), 4);
++    assert_eq!(count_writes(&port, reg::TX_FIFO), 4);
++    assert!(port
++        .mmio()
++        .writes()
++        .iter()
++        .filter(|&&(o, _)| o == reg::UART_TX_TRANS_LEN)
++        .all(|&(_, v)| v == 1));
++    assert_eq!(port.mmio().read(reg::M_IRQ_STATUS), 0);
++}
++
++#[test]
++fn send_aborts_when_the_tx_fifo_never_asks_for_data() {
++    let mut model = GeniModel::new(PROTOCOL_UART);
++    model.stall_tx = true;
++    let mut port = SerialPort::new(model);
++
++    port.send(b'x');
++
++    assert!(port.mmio().tx().is_empty());
++    assert_eq!(count_writes(&port, reg::TX_FIFO), 0);
++    assert_eq!(count_writes(&port, reg::M_CMD_CTRL), 1);
++    assert_eq!(port.mmio().read(reg::STATUS) & STATUS_M_CMD_ACTIVE, 0);
++
++    port.write(b"more");
++    assert_eq!(count_writes(&port, reg::M_CMD0), 1);
++}
++
++fn drain(port: &mut SerialPort<GeniModel>) -> Vec<u8> {
++    let mut out = Vec::new();
++    port.poll_rx(|c| out.push(c));
++    out
++}
++
++#[test]
++fn poll_rx_unpacks_full_and_partial_fifo_words() {
++    let mut port = port();
++    port.init(None).unwrap();
++    port.mmio().inject_rx(b"hello");
++    assert_eq!(drain(&mut port), b"hello");
++}
++
++#[test]
++fn poll_rx_treats_zero_valid_bytes_in_last_word_as_four() {
++    let mut port = port();
++    port.init(None).unwrap();
++    port.mmio().inject_rx(b"abcdefgh");
++    assert_eq!(drain(&mut port), b"abcdefgh");
++}
++
++#[test]
++fn poll_rx_rearms_an_idle_rx_sequencer() {
++    let mut port = port();
++    port.mmio().inject_rx(b"z");
++    assert!(!port.mmio().rx_armed());
++    assert_eq!(drain(&mut port), b"z");
++    assert!(port.mmio().rx_armed());
++    assert!(!port.poll_rx(|_| {}));
++}
++
++#[test]
++fn enable_irq_keeps_se_interrupt_delivery_masked() {
++    let mut port = port();
++    port.mmio().set_reg(reg::IRQ_EN, 0xc);
++    port.enable_irq();
++    assert_eq!(port.mmio().reg(reg::IRQ_EN), 0);
++}

@@ -1,0 +1,61 @@
+From 67404d77449159f7aa6d403ece9ed63db2476aa4 Mon Sep 17 00:00:00 2001
+From: claude-code <claude@macbook.local>
+Date: Sat, 31 Oct 2026 22:23:39 +0000
+Subject: [PATCH 34/37] aarch64: qcom SCM - read x1 result, pass 0x10 to
+ SET_DLOAD_MODE
+
+---
+ src/arch/aarch64/device/qcom_scm.rs | 15 ++++++++++-----
+ 1 file changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/src/arch/aarch64/device/qcom_scm.rs b/src/arch/aarch64/device/qcom_scm.rs
+index 223add9a..068a3454 100644
+--- a/src/arch/aarch64/device/qcom_scm.rs
++++ b/src/arch/aarch64/device/qcom_scm.rs
+@@ -22,6 +22,9 @@ const SCM_INFO_IS_CALL_AVAILABLE: u64 = 0x0601;
+ const SCM_BOOT_SET_DOWNLOAD_MODE: u64 = 0x0110;
+ #[cfg(feature = "qcom-dload-mode-clear")]
+ const SCM_BOOT_SET_DOWNLOAD_MODE_ID: u64 = 0x0200_0110;
++#[cfg(feature = "qcom-dload-mode-clear")]
++// Linux __qcom_scm_set_dload_mode: args[0] = QCOM_SCM_BOOT_SET_DLOAD_MODE (0x10).
++const SCM_BOOT_SET_DOWNLOAD_MODE_ARG: u64 = 0x10;
+ 
+ pub fn init(fdt: &Fdt<'_>) {
+     let present = fdt
+@@ -64,7 +67,7 @@ pub fn clear_download_mode() -> Result<(), &'static str> {
+         smc64(
+             SMC64_FAST_SIP | SCM_BOOT_SET_DOWNLOAD_MODE,
+             2,
+-            SCM_BOOT_SET_DOWNLOAD_MODE,
++            SCM_BOOT_SET_DOWNLOAD_MODE_ARG,
+             0,
+         )
+     };
+@@ -76,18 +79,20 @@ pub fn clear_download_mode() -> Result<(), &'static str> {
+ }
+ 
+ #[cfg(feature = "qcom-dload-mode-clear")]
++/// Returns (x0 status, x1 first result), as Linux qcom_scm-smc.c reads
++/// res->result[0] = smc_res.a1.
+ unsafe fn smc64(function_id: u64, arg_info: u64, arg0: u64, arg1: u64) -> (u64, u64) {
+     let mut result = function_id;
+-    let mut returned_arg0 = arg0;
++    let mut result1 = arg_info;
+     unsafe {
+         asm!(
+             "smc #0",
+             inout("x0") result,
+-            inout("x1") arg_info => _,
+-            inout("x2") returned_arg0,
++            inout("x1") result1,
++            inout("x2") arg0 => _,
+             inout("x3") arg1 => _,
+             options(nostack),
+         );
+     }
+-    (result, returned_arg0)
++    (result, result1)
+ }
+-- 
+2.43.0
+

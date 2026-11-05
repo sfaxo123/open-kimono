@@ -1,0 +1,11 @@
+{
+  "marker": "ram:~$",
+  "commands": [
+    {"qtest_set_irq_in": {"line": "vol-down", "level": 1}, "delay_ms": 1000},
+    {"qtest_set_irq_in": {"line": "vol-down", "level": 0}, "delay_ms": 3000},
+    {"qtest_set_irq_in": {"line": "vol-up", "level": 1}, "delay_ms": 500},
+    {"qtest_set_irq_in": {"line": "vol-up", "level": 0}, "delay_ms": 3000},
+    {"qtest_set_irq_in": {"line": "pwrkey", "level": 1}, "delay_ms": 500},
+    {"qtest_set_irq_in": {"line": "pwrkey", "level": 0}, "delay_ms": 3000}
+  ]
+}

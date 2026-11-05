@@ -1,0 +1,7 @@
+# GENI I2C12 FIFO subset (K9)
+
+SDM845 `i2c12` is `qcom,geni-i2c` at 0x00a90000; the OnePlus 6 DT requests 400 kHz. Its client is RMI4 at 7-bit address 0x20. The daemon may use firmware-left clocks and pinctrl only after a phone oracle verifies them. No DMA is used.
+
+OpenBSD `qciic_fdt.c` and FreeBSD `geni_iic.c` agree on TX/RX lengths (+0x26c/+0x270), master command (+0x600), IRQ status/clear (+0x610/+0x618), TX/RX FIFO (+0x700/+0x780), and FIFO status (+0x800/+0x804). Command opcodes are write=1 and read=2 in bits 31:27; 7-bit address is shifted 9; STOP_STRETCH bit 2 keeps the bus for a following read. A register read is a non-final write of the offset followed by a final read. Every FIFO and command wait is bounded. Reject invalid address, empty transfers, controller error IRQ, and timeout. On error, cancel the command before returning. A completed command clears its observed IRQ bits. This is a small polled, one-client profile; clock and pin setup need oracle validation.
+
+Sources (spec-only, no code copied): OpenBSD `sys/dev/fdt/qciic_fdt.c`, commit `20cb34434d36871c39729f7369062cba28fd06cb`, ISC, https://github.com/openbsd/src; FreeBSD `sys/dev/iicbus/controller/qcom/geni_iic.c`, commit `81f86c9a9417d7ad7445d46739e19a26ab916e6b`, BSD-2-Clause, https://github.com/freebsd/freebsd-src; Linux DT `sdm845.dtsi` and `sdm845-oneplus-common.dtsi`, commit `5b0764a53235d3c77e1ed674e836e1b3fe1a4b1f`, GPL-2.0, facts only.

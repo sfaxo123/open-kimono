@@ -1,0 +1,75 @@
+From 13c3c7bc72cfb04ddd156205b8c4c122c334f653 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursor-agent@localhost>
+Date: Mon, 26 Oct 2026 00:03:24 +0000
+Subject: [PATCH 3/3] ramboot: opt-in emulator touch services
+
+RAMBOOT_EMU_TOUCH=1 adds init.emu-touch.d: rmi4d with the qemu-oneplus6
+rmi4-s3706 Data1 layout (offset 0, 10 slots) and inputd with the pointer
+trace. The default ramboot initfs is unchanged and still has no rmi4d
+service.
+
+Agent: Cursor agent (EMU-TOUCH)
+Model: Auto
+Provider: Cursor
+---
+ Makefile                           | 3 +++
+ init.emu-touch.d/10_inputd.service | 7 +++++++
+ init.emu-touch.d/30_rmi4d.service  | 8 ++++++++
+ init.emu-touch.d/90_ramboot.target | 3 +++
+ 4 files changed, 21 insertions(+)
+ create mode 100644 init.emu-touch.d/10_inputd.service
+ create mode 100644 init.emu-touch.d/30_rmi4d.service
+ create mode 100644 init.emu-touch.d/90_ramboot.target
+
+diff --git a/Makefile b/Makefile
+index e2c76a84..f49bd3a6 100644
+--- a/Makefile
++++ b/Makefile
+@@ -156,5 +156,8 @@ ramboot-initfs:
+ 		"$(SRC_DIR)/init.initfs.d"/20_vesad.service \
+ 		"$(SRC_DIR)/init.initfs.d"/40_timeline_demo.service \
+ 		"$(SRC_DIR)/init.initfs.d"/90_ramboot.target "$(BUILD_DIR)/ramboot-initfs/lib/init.d/"
++	if [ -n "$(RAMBOOT_EMU_TOUCH)" ]; then \
++		cp "$(SRC_DIR)/init.emu-touch.d"/* "$(BUILD_DIR)/ramboot-initfs/lib/init.d/"; \
++	fi
+ 	$(CARGO_HOST) run --manifest-path "$(SRC_DIR)/initfs/tools/Cargo.toml" --bin redox-initfs-ar -- \
+ 		"$(BUILD_DIR)/ramboot-initfs" "$(TARGET_DIR)/bootstrap" -o "$(BUILD_DIR)/ramboot-initfs.img"
+diff --git a/init.emu-touch.d/10_inputd.service b/init.emu-touch.d/10_inputd.service
+new file mode 100644
+index 00000000..493e25be
+--- /dev/null
++++ b/init.emu-touch.d/10_inputd.service
+@@ -0,0 +1,7 @@
++[unit]
++description = "VT input and graphics multiplexer"
++
++[service]
++cmd = "inputd"
++envs = { INPUTD_TRACE_POINTER = "1" }
++type = { scheme = "input" }
+diff --git a/init.emu-touch.d/30_rmi4d.service b/init.emu-touch.d/30_rmi4d.service
+new file mode 100644
+index 00000000..633edfc4
+--- /dev/null
++++ b/init.emu-touch.d/30_rmi4d.service
+@@ -0,0 +1,8 @@
++[unit]
++description = "Emulator-only RMI4 touch producer for the QEMU -M oneplus6 rmi4-s3706 model"
++requires_weak = ["10_inputd.service"]
++
++[service]
++cmd = "rmi4d"
++args = ["--trace", "0", "10"]
++type = "oneshot_async"
+diff --git a/init.emu-touch.d/90_ramboot.target b/init.emu-touch.d/90_ramboot.target
+new file mode 100644
+index 00000000..7720b996
+--- /dev/null
++++ b/init.emu-touch.d/90_ramboot.target
+@@ -0,0 +1,3 @@
++[unit]
++description = "RAM-only boot shell with the emulator touch producer"
++requires_weak = ["10_inputd.service", "20_vesad.service", "30_ramsh.service", "30_spmid.service", "30_rmi4d.service", "40_timeline_demo.service"]
+-- 
+2.43.0
+

@@ -1,0 +1,10 @@
+# Hermetic cross-build: the aarch64-unknown-redox build runs inside the
+# cookbook `redox-base` container with no network and no shared cargo registry.
+# `cargo vendor --offline` writes the full dependency graph to
+# out/qemu-demo/vendor (worktree-local); regenerate with:
+#   cd apps/sandbox-demo && cargo vendor --offline ../../out/qemu-demo/vendor
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "../../out/qemu-demo/vendor"

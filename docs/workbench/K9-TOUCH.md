@@ -1,0 +1,9 @@
+# K9 touch driver workbench
+
+Scope: no phone access. `crates/geni-i2c/` provides bounded polled FIFO transfers on the `Mmio` trait; `crates/rmi4-touch/` scans the page-zero PDT and decodes a supplied F12 Data1 descriptor. The base branch contains local copies of those crates, a GENI diagnostic process, and an opt-in `rmi4d` pointer producer. These are not enabled in initfs.
+
+Commands from project worktree: `cargo test --manifest-path crates/geni-i2c/Cargo.toml --offline` (4 integration tests); `cargo test --manifest-path crates/rmi4-touch/Cargo.toml --offline` (5 integration tests). Base from the base checkout: `cargo test -p geni-i2c-core -p rmi4-touch-core --offline` (same 9 integration tests); `cargo check -p geni-i2cd -p rmi4d --offline` (Linux host stubs only). From another directory, select its pinned nightly explicitly with `cargo +nightly-2026-05-24`. Full command output, including a stable-toolchain failure and successful nightly retry, is in [`K9-TESTS.txt`](K9-TESTS.txt).
+
+Negative cases: invalid address/empty transfer, controller error with cancel, bounded FIFO timeout with cancel, missing F12, bad Data1 geometry, unconfigured Data1 refusal, non-finger/out-of-bounds suppression, F01 reset-state suppression. Positive cases: strict repeated-start GENI register read and PDT plus one-finger report.
+
+Unverified: actual s3706b F12 register-descriptor bytes and slot count; bus clocks/pinctrl/rail readiness; hardware IRQ TLMM 125 handling (current producer polls); Redox target compilation; QEMU boot/start; inputd pointer motion on device. The current `geni-i2cd` is an explicit diagnostic command, not yet a persistent shared bus scheme. `rmi4d` directly owns I2C12 and must not run concurrently with that diagnostic. Do not enable or auto-start either until those gates and ownership are resolved. The generic OrbClient pointer path reports first finger only.

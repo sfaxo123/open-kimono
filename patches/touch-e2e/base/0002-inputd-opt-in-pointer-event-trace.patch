@@ -1,0 +1,88 @@
+From d84758c32f1395f0168d65038c02bc9cc3cbd1f7 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursor-agent@localhost>
+Date: Mon, 26 Oct 2026 00:03:24 +0000
+Subject: [PATCH 2/3] inputd: opt-in pointer event trace
+
+INPUTD_TRACE_POINTER prints producer mouse/button events and how many
+consumers on the active VT received them, so emulator tests can prove a
+touch reached inputd. Unset, inputd behaves as before.
+
+Agent: Cursor agent (EMU-TOUCH)
+Model: Auto
+Provider: Cursor
+---
+ drivers/inputd/src/main.rs | 22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
+index 4d849c8f..c44ae7b9 100644
+--- a/drivers/inputd/src/main.rs
++++ b/drivers/inputd/src/main.rs
+@@ -87,6 +87,8 @@ struct InputScheme<'a> {
+ 
+     has_new_events: bool,
+     pending_activate: Option<usize>,
++    /// `INPUTD_TRACE_POINTER`: print producer pointer events for emulator tests.
++    trace_pointer: bool,
+ }
+ 
+ impl<'a> InputScheme<'a> {
+@@ -107,6 +109,7 @@ impl<'a> InputScheme<'a> {
+             rshift: false,
+             has_new_events: false,
+             pending_activate: None,
++            trace_pointer: std::env::var_os("INPUTD_TRACE_POINTER").is_some(),
+         }
+     }
+ 
+@@ -406,9 +409,20 @@ impl SchemeSync for InputScheme<'_> {
+             )
+         });
+ 
++        let mut traced = false;
+         for i in 0..events.len() {
+             let mut new_active_opt = None;
+             match events[i].to_option() {
++                EventOption::Mouse(mouse) if self.trace_pointer => {
++                    eprintln!("inputd: producer pointer x={} y={}", mouse.x, mouse.y);
++                    traced = true;
++                    continue;
++                }
++                EventOption::Button(button) if self.trace_pointer => {
++                    eprintln!("inputd: producer button left={}", button.left);
++                    traced = true;
++                    continue;
++                }
+                 EventOption::Key(mut key_event) => match key_event.scancode {
+                     f @ orbclient::K_F1..=orbclient::K_F10 if self.super_key => {
+                         new_active_opt = Some((f - 0x3A) as usize);
+@@ -467,6 +481,7 @@ impl SchemeSync for InputScheme<'_> {
+             )
+         };
+ 
++        let mut consumers = 0;
+         if let Some(active_vt) = self.active_vt {
+             for handle in self.handles.values_mut() {
+                 match handle {
+@@ -482,11 +497,18 @@ impl SchemeSync for InputScheme<'_> {
+ 
+                         pending.extend_from_slice(buf);
+                         *notified = false;
++                        consumers += 1;
+                     }
+                     _ => continue,
+                 }
+             }
+         }
++        if traced {
++            eprintln!(
++                "inputd: queued pointer event for {consumers} consumer(s) on VT {:?}",
++                self.active_vt
++            );
++        }
+ 
+         Ok(buf.len())
+     }
+-- 
+2.43.0
+

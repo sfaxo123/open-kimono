@@ -1,0 +1,1 @@
+{"seq":0,"ts_us":1793628221536781,"service":"agentd-smoke","payload":{"kind":"ag_ui","type":"CUSTOM","name":"track_a.smoke","value":{"arch":"aarch64","hostname":"oneplus-enchilada","libc":"musl","os_release":"7.1.0-rc1-sdm845","target":"aarch64-unknown-linux-musl"}}}

@@ -1,0 +1,256 @@
+From a299bf0e987af8261d000a00853b6759d3b0c04c Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Mon, 26 Oct 2026 00:21:33 +0000
+Subject: [PATCH 21/21] kernel: add opt-in bounded sleep IRQ diagnostics
+
+---
+ Cargo.toml                               |  5 ++
+ src/arch/aarch64/device/generic_timer.rs |  7 ++
+ src/arch/aarch64/interrupt/irq.rs        |  2 +
+ src/context/switch.rs                    |  3 +
+ src/main.rs                              |  4 ++
+ src/sleep_diag.rs                        | 81 ++++++++++++++++++++++++
+ src/syscall/time.rs                      | 45 +++++++++++++
+ 7 files changed, 147 insertions(+)
+ create mode 100644 src/sleep_diag.rs
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 46a72b41..c07d2be7 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -108,6 +108,11 @@ syscall_debug = []
+ 
+ sys_fdstat = []
+ 
++# Opt-in bounded diagnostics for the measured wyoming-probe guest hang:
++# IRQ/timer/schedule counters and a first-8 nanosleep trace. Off by default;
++# changes no scheduling, IRQ, or timer behavior when disabled.
++wy_sleep_diag = []
++
+ [profile.dev]
+ # Avoids having to define the eh_personality lang item and reduces kernel size
+ panic = "abort"
+diff --git a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/generic_timer.rs
+index 03d122b0..4d5d3620 100644
+--- a/src/arch/aarch64/device/generic_timer.rs
++++ b/src/arch/aarch64/device/generic_timer.rs
+@@ -100,6 +100,11 @@ pub unsafe fn init(fdt: &Fdt<'_>) {
+         }
+     );
+     let config = TIMER.call_once(|| config);
++    #[cfg(feature = "wy_sleep_diag")]
++    println!(
++        "WY_SLEEP timer_init freq={} reload_count={} hwirq={} virq={} use_virtual={}",
++        config.clk_freq, config.reload_count, config.hwirq, config.virq, config.use_virtual
++    );
+     program_current(config);
+     unsafe { IRQ_CHIP.irq_enable(config.virq) };
+ }
+@@ -207,6 +212,8 @@ pub(crate) fn handle(hwirq: u32, raw_iar: u32, token: &mut CleanLockToken) -> bo
+     }
+ 
+     let mut ctrl = read_ctrl(config);
++    #[cfg(feature = "wy_sleep_diag")]
++    crate::sleep_diag::note_timer_irq(ctrl.bits());
+     if ctrl.contains(TimerCtrlFlags::ISTATUS) {
+         ctrl.insert(TimerCtrlFlags::IMASK);
+         write_ctrl(config, ctrl);
+diff --git a/src/arch/aarch64/interrupt/irq.rs b/src/arch/aarch64/interrupt/irq.rs
+index 41c67e8f..31f24a58 100644
+--- a/src/arch/aarch64/interrupt/irq.rs
++++ b/src/arch/aarch64/interrupt/irq.rs
+@@ -11,6 +11,8 @@ use crate::{
+ 
+ unsafe fn dispatch() {
+     let (raw_iar, hwirq, virq) = irqchip::acknowledge_root();
++    #[cfg(feature = "wy_sleep_diag")]
++    crate::sleep_diag::note_irq(hwirq);
+     if ipi::handle(hwirq, raw_iar) {
+         return;
+     }
+diff --git a/src/context/switch.rs b/src/context/switch.rs
+index 6e570c28..9ea7b8ea 100644
+--- a/src/context/switch.rs
++++ b/src/context/switch.rs
+@@ -303,6 +303,9 @@ fn schedule(
+     }
+     */
+ 
++    #[cfg(feature = "wy_sleep_diag")]
++    crate::sleep_diag::note_schedule(schedule_time);
++
+     {
+         // Alarm (previously in update_runnable)
+         let mut wakeups = percpu.switch_internals.tmp_wakeups.borrow_mut();
+diff --git a/src/main.rs b/src/main.rs
+index a29621fa..557c5c50 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -97,6 +97,10 @@ mod syscall;
+ /// Time
+ mod time;
+ 
++/// Bounded opt-in diagnostics for the measured wyoming-probe guest hang.
++#[cfg(feature = "wy_sleep_diag")]
++mod sleep_diag;
++
+ #[cfg_attr(not(test), global_allocator)]
+ static ALLOCATOR: allocator::Allocator = allocator::Allocator;
+ 
+diff --git a/src/sleep_diag.rs b/src/sleep_diag.rs
+new file mode 100644
+index 00000000..cd5eb5bc
+--- /dev/null
++++ b/src/sleep_diag.rs
+@@ -0,0 +1,81 @@
++//! Bounded, opt-in (`wy_sleep_diag`) diagnostics for the measured
++//! wyoming-probe guest hang. Off by default; when enabled this module only
++//! increments relaxed atomics and prints a bounded trace around the probe's
++//! nanosleep calls. It never changes scheduling, IRQ, or timer behavior,
++//! updates counters without locks or allocations. Serial snapshots must be
++//! called outside context locks.
++
++use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
++
++/// Total root IRQ dispatches acknowledged (after acknowledge_root).
++static IRQ_TOTAL: AtomicU64 = AtomicU64::new(0);
++/// Last raw hwirq number seen by root dispatch.
++static IRQ_LAST_HWIRQ: AtomicU32 = AtomicU32::new(0);
++/// Timer IRQs that matched the generic_timer config filter.
++static TIMER_IRQ_MATCHED: AtomicU64 = AtomicU64::new(0);
++/// Last timer control-register bits read before the handler masks ISTATUS.
++static TIMER_LAST_CTRL: AtomicU32 = AtomicU32::new(0);
++/// Number of scheduler scans (schedule() entries, before the Alarm block).
++static SCHED_SCANS: AtomicU64 = AtomicU64::new(0);
++/// Last schedule_time seen by schedule (ns, saturated to u64).
++static SCHED_LAST_TIME: AtomicU64 = AtomicU64::new(0);
++
++/// Bound on traced nanosleep requests for wyoming-probe contexts.
++const TRACE_LIMIT: u64 = 8;
++/// Number of trace requests already issued (pre-switch).
++static TRACE_COUNT: AtomicU64 = AtomicU64::new(0);
++
++#[inline]
++pub fn note_irq(hwirq: u32) {
++    IRQ_TOTAL.fetch_add(1, Ordering::Relaxed);
++    IRQ_LAST_HWIRQ.store(hwirq, Ordering::Relaxed);
++}
++
++#[inline]
++pub fn note_timer_irq(ctrl_bits: u32) {
++    TIMER_IRQ_MATCHED.fetch_add(1, Ordering::Relaxed);
++    TIMER_LAST_CTRL.store(ctrl_bits, Ordering::Relaxed);
++}
++
++#[inline]
++pub fn note_schedule(schedule_time: u128) {
++    SCHED_SCANS.fetch_add(1, Ordering::Relaxed);
++    SCHED_LAST_TIME.store(schedule_time.min(u64::MAX as u128) as u64, Ordering::Relaxed);
++}
++
++/// A sequence ID for the first `TRACE_LIMIT` matching requests. Callers must
++/// ensure this is only consulted for contexts whose name matches the probe.
++#[inline]
++pub fn trace_request() -> Option<u64> {
++    let prev = TRACE_COUNT.fetch_add(1, Ordering::Relaxed);
++    if prev < TRACE_LIMIT {
++        Some(prev)
++    } else {
++        // Do not consume budget past the bound.
++        TRACE_COUNT.fetch_sub(1, Ordering::Relaxed);
++        None
++    }
++}
++
++/// Snapshot of all counters, for bounded serial prints.
++#[inline]
++pub fn counters() -> (u64, u32, u64, u32, u64, u64) {
++    (
++        IRQ_TOTAL.load(Ordering::Relaxed),
++        IRQ_LAST_HWIRQ.load(Ordering::Relaxed),
++        TIMER_IRQ_MATCHED.load(Ordering::Relaxed),
++        TIMER_LAST_CTRL.load(Ordering::Relaxed),
++        SCHED_SCANS.load(Ordering::Relaxed),
++        SCHED_LAST_TIME.load(Ordering::Relaxed),
++    )
++}
++
++/// One-line snapshot with the stable WY_SLEEP prefix. Callers must not hold
++/// context locks when calling this.
++#[inline]
++pub fn print_counters(tag: &str) {
++    let (irq, hw, tirq, ctrl, scans, stime) = counters();
++    println!(
++        "WY_SLEEP {tag} irq={irq} last_hwirq={hw} tirq={tirq} tctrl={ctrl:#010x} scans={scans} sched_time={stime}"
++    );
++}
+diff --git a/src/syscall/time.rs b/src/syscall/time.rs
+index 69044638..660f8127 100644
+--- a/src/syscall/time.rs
++++ b/src/syscall/time.rs
+@@ -36,6 +36,29 @@ pub fn nanosleep(
+     let start = time::monotonic(token);
+     let end = start + req.to_nanos();
+ 
++    #[cfg(feature = "wy_sleep_diag")]
++    let wy_trace = {
++        // Copy identity, then release both guards before any serial output.
++        let (matched, pid, debug_id) = {
++            let context_lock = context::current();
++            let guard = context_lock.read(token.token());
++            (guard.name.contains("wyoming-probe"), guard.pid, guard.debug_id)
++        };
++        let ticket = if matched {
++            crate::sleep_diag::trace_request().map(|id| (id, pid, debug_id))
++        } else {
++            None
++        };
++        if let Some((id, pid, debug_id)) = ticket {
++            println!(
++                "WY_SLEEP req id={} pid={} debug_id={} tv_sec={} tv_nsec={} start={} end={}",
++                id, pid, debug_id, req.tv_sec, req.tv_nsec, start, end
++            );
++            crate::sleep_diag::print_counters("req");
++        }
++        ticket
++    };
++
+     {
+         let context_lock = context::current();
+         let context = context_lock.upgradeable_read(token.token());
+@@ -43,6 +66,18 @@ pub fn nanosleep(
+         if let Some((tctl, pctl, _)) = context.sigcontrol()
+             && tctl.currently_pending_unblocked(pctl) != 0
+         {
++            #[cfg(feature = "wy_sleep_diag")]
++            {
++                drop(context);
++                drop(context_lock);
++                if let Some((id, pid, debug_id)) = wy_trace {
++                    println!(
++                        "WY_SLEEP early_eintr id={} pid={} debug_id={}",
++                        id, pid, debug_id
++                    );
++                    crate::sleep_diag::print_counters("early_eintr");
++                }
++            }
+             return Err(Error::new(EINTR));
+         }
+         let mut context = context.upgrade();
+@@ -60,6 +95,16 @@ pub fn nanosleep(
+         .take()
+         .is_some();
+ 
++    #[cfg(feature = "wy_sleep_diag")]
++    if let Some((id, pid, debug_id)) = wy_trace {
++        // The wake guard has dropped; pair this return with its request.
++        println!(
++            "WY_SLEEP ret id={} pid={} debug_id={} now={} interrupted={}",
++            id, pid, debug_id, time::monotonic(token), was_interrupted
++        );
++        crate::sleep_diag::print_counters("ret");
++    }
++
+     if let Some(rem_buf) = rem_buf_opt {
+         let current = time::monotonic(token);
+ 

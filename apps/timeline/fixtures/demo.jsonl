@@ -1,0 +1,28 @@
+{"seq":1,"ts_us":1764000000000000,"payload":{"kind":"op6","type":"mic_started","device":"mic0"}}
+{"seq":2,"ts_us":1764000000120000,"payload":{"kind":"op6","type":"mic_frame","level":0.05}}
+{"seq":3,"ts_us":1764000000240000,"payload":{"kind":"op6","type":"mic_frame","level":0.42}}
+{"seq":4,"ts_us":1764000000360000,"payload":{"kind":"op6","type":"mic_frame","level":0.71}}
+{"seq":5,"ts_us":1764000000480000,"payload":{"kind":"op6","type":"mic_frame","level":0.63}}
+{"seq":6,"ts_us":1764000000600000,"payload":{"kind":"op6","type":"mic_frame","level":0.18}}
+{"seq":7,"ts_us":1764000000900000,"payload":{"kind":"op6","type":"stt_partial","engine":"whisper-homelab","text":"navigate"}}
+{"seq":8,"ts_us":1764000001200000,"payload":{"kind":"op6","type":"stt_partial","engine":"whisper-homelab","text":"navigate me"}}
+{"seq":9,"ts_us":1764000001500000,"payload":{"kind":"op6","type":"stt_partial","engine":"whisper-homelab","text":"navigate me home"}}
+{"seq":10,"ts_us":1764000001800000,"payload":{"kind":"op6","type":"stt_final","engine":"whisper-homelab","text":"Navigate me home.","confidence":0.93,"latency_us":412000}}
+{"seq":11,"ts_us":1764000001900000,"payload":{"kind":"op6","type":"text_cleaned","raw":"Navigate me home.","cleaned":"navigate to home"}}
+{"seq":12,"ts_us":1764000002000000,"trace_id":"7a1b2c3d4e5f60718293a4b5c6d7e8f9","span_id":"000000000000000a","payload":{"kind":"gen_ai","event":"span_start","name":"chat qwen3.8","attributes":{"gen_ai.operation.name":"chat","gen_ai.provider.name":"homelab","gen_ai.request.model":"qwen3.8","gen_ai.request.stream":true}}}
+{"seq":13,"ts_us":1764000002100000,"payload":{"kind":"ag_ui","type":"REASONING_START","messageId":"r1"}}
+{"seq":14,"ts_us":1764000002250000,"payload":{"kind":"ag_ui","type":"REASONING_MESSAGE_CONTENT","messageId":"r1","delta":"Home is the saved place (48.85, 2.35). "}}
+{"seq":15,"ts_us":1764000002400000,"payload":{"kind":"ag_ui","type":"REASONING_MESSAGE_CONTENT","messageId":"r1","delta":"Offline maps cover this area, so no network needed. "}}
+{"seq":16,"ts_us":1764000002550000,"payload":{"kind":"ag_ui","type":"REASONING_MESSAGE_CONTENT","messageId":"r1","delta":"Starting the map engine and GPS only."}}
+{"seq":17,"ts_us":1764000002650000,"payload":{"kind":"ag_ui","type":"REASONING_END","messageId":"r1"}}
+{"seq":18,"ts_us":1764000002700000,"payload":{"kind":"ag_ui","type":"TOOL_CALL_START","toolCallId":"t1","toolCallName":"navigate_map"}}
+{"seq":19,"ts_us":1764000002800000,"payload":{"kind":"ag_ui","type":"TOOL_CALL_ARGS","toolCallId":"t1","delta":"{\"to\":\"home\"}"}}
+{"seq":20,"ts_us":1764000002850000,"payload":{"kind":"ag_ui","type":"TOOL_CALL_END","toolCallId":"t1"}}
+{"seq":21,"ts_us":1764000003000000,"payload":{"kind":"ag_ui","type":"TOOL_CALL_RESULT","messageId":"m1","toolCallId":"t1","content":{"route_km":4.2,"eta_min":12}}}
+{"seq":22,"ts_us":1764000003100000,"payload":{"kind":"op6","type":"power_change","component":"gps","state":"on","reason":"navigation active"}}
+{"seq":23,"ts_us":1764000003200000,"payload":{"kind":"op6","type":"service_started","service":"maps","generation":1,"reason":"navigation requested"}}
+{"seq":24,"ts_us":1764000003300000,"payload":{"kind":"op6","type":"wake_lock_acquired","holder":"maps","deadline_us":1764000603300000,"max_us":600000000}}
+{"seq":25,"ts_us":1764000003400000,"payload":{"kind":"op6","type":"handoff","destination":"homelab:route-cache","reason":"traffic overlay needs the homelab","status":"started"}}
+{"seq":26,"ts_us":1764000004200000,"payload":{"kind":"op6","type":"handoff","destination":"homelab:route-cache","reason":"overlay fetched, 12 KB","status":"completed"}}
+{"seq":27,"ts_us":1764000004400000,"trace_id":"7a1b2c3d4e5f60718293a4b5c6d7e8f9","span_id":"000000000000000a","payload":{"kind":"gen_ai","event":"span_end","name":"chat qwen3.8","status":"ok","attributes":{"gen_ai.usage.input_tokens":312,"gen_ai.usage.output_tokens":96}}}
+{"seq":28,"ts_us":1764000004500000,"payload":{"kind":"op6","type":"mic_stopped","reason":"utterance complete"}}

@@ -1,0 +1,24 @@
+[package]
+name = "timeline"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "C4 open-kimono timeline app (task docs/TASKS-WAVE1.md C4): one black+orange screen fed by a trace-events JSONL stream — mic level, live transcript, cleaned text, streaming reasoning, tool calls, services/power. OrbClient SDL backend for Linux dev; headless render + PNG for evidence."
+
+[lib]
+name = "timeline"
+path = "src/lib.rs"
+
+[[bin]]
+name = "timeline"
+path = "src/main.rs"
+
+[[bin]]
+name = "timeline-demo-publish"
+path = "src/publish.rs"
+
+[dependencies]
+trace-events = { path = "../../crates/trace-events" }
+orbclient = "0.4.6"
+serde_json = "1"
+flate2 = "1"

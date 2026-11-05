@@ -1,0 +1,356 @@
+E1-EXP-1 — rtl8139 INTx NIC-swap boot (emulator only)
+=====================================================
+
+Run window: 2026-10-24, 11:04–11:31 PM PT (all machine timestamps below are UTC)
+Worktree:   $HOME/Developer/experiments/redox-oneplus6-intx   branch intx/e1-exp-1 (from main ac1f535)
+Plan:       docs/workbench/INTX-NET-FEASIBILITY.md §3 (merged 565d2fc) — read in full, followed as written
+Driver:     scripts/qemu-demo/e1-intx-swap.sh  (worktree-local copy of the scripts/e1-qemu.sh chain)
+Raw proof:  out/integration/intx-ledger.tsv, intx-attempt-{1..4}.txt, intx-attempt-{1..4}-serial.txt,
+            intx-attempt-{3,4}-nicscope.txt, intx-precheck-*.{dtb,dts,log}, intx-qtree.txt
+
+Legend: [V] verified from the captured serial · [U] unproven in this run · [F] negative result
+
+
+BOTTOM LINE
+------------
+[V]  The INTx hypothesis holds at the driver level. With the NIC swapped to rtl8139, pcid
+     spawns rtl8139d, the driver prints its banner WITH an interrupt spec, the kernel opens
+     the DTB interrupt-map phandle IRQ (`open_phandle_irq virq=37`), and the driver then
+     sits in its interrupt-read loop. No MSI-X panic, no "no interrupts supported at all",
+     no "no legacy interrupts supported", no "failed to open IRQ file". This is the first
+     recorded execution of the pcid interrupt-map → /scheme/irq/phandle-* → kernel
+     open_phandle_irq → GICv3 SPI path anywhere in this tree.
+[V]  The network scheme DOES register for the swapped NIC. Inside the guest the live scheme
+     list contains `/scheme/network.pci-0000-00-02.0_rtl8139` — exactly the `network.<name>`
+     per-daemon form the feasibility plan predicted, naming the rtl8139 at pci-0000-00-02.0.
+     Proven in the post-budget probe (attempt 5, see POST-BUDGET PROBE), not in attempts 3-4.
+[U]  Whether dhcpd gets a lease (plan marker 4). No dhcpd or smolnetd line appears in ANY of
+     the five boots, so a lease is still unproven: a registered scheme is not traffic.
+[F]  This is NOT a working network stack. The swap proves the interrupt path and the scheme
+     registration — nothing above that is demonstrated. No claim is made about the phone,
+     about a production transport bug, or about rtl8139 being usable.
+
+
+THE ONE CHANGE
+--------------
+scripts/e1-qemu.sh was NOT touched. The worktree copy differs from it by exactly one device:
+
+  -    -device virtio-net-pci,netdev=e1net,bootindex=1 \
+  +    -device rtl8139,netdev=e1net,bootindex=1 \
+
+Exact command line actually executed (attempts 3 and 4, identical apart from the console
+interaction described under HOST-SIDE INTERACTIONS):
+
+  timeout --signal=TERM --kill-after=5 90 qemu-system-aarch64 \
+    -machine virt,acpi=off,gic-version=3 -cpu max -smp 1 -m 2048 \
+    -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
+    -drive if=none,id=e1disk,file=$HOME/Developer/forks/redox/redox/build/aarch64/desktop-minimal/e1-live.iso,format=raw \
+    -device virtio-blk-pci,drive=e1disk,bootindex=2 \
+    -device ramfb -dtb $HOME/Developer/experiments/redox-oneplus6-intx/out/integration/simplefb-virt.dtb \
+    -netdev user,id=e1net,tftp=$HOME/Developer/forks/redox/bootloader-e1/build/tftp-live,bootfile=bootaa64.efi \
+    -device rtl8139,netdev=e1net,bootindex=1 \
+    -display none -serial stdio \
+    -monitor unix:$HOME/Developer/experiments/redox-oneplus6-intx/out/integration/intx-swap-monitor.sock,server,nowait
+
+Machine flags, the ISO drive, ramfb, -dtb, the user-netdev (same tftp dir + bootfile) and the
+bootindex layout are byte-identical to scripts/e1-qemu.sh. forks/ was mounted read-only in
+practice: nothing under $HOME/Developer/forks/redox was written.
+
+Image + DTB identity (unchanged across all four attempts):
+  e1-live.iso        268435456 B  sha256 c02012eaa182800cc7ed937e0e3ebf7b436f2af3e9dacb5c57bb00c89df361bc
+  simplefb-virt.dtb     7800 B    sha256 9f72dcd07e6a3798c692eb03ff3b0db99010300fc966397306afa60e5b8050c6
+                                   (built in this worktree's out/: dumpdtb of the bare virt machine
+                                    + fdtoverlay of docs/workbench/K8B-SIMPLEFB.dts, as boot.sh does)
+
+
+VERBATIM MARKER LINES
+---------------------
+attempt 3 (out/integration/intx-attempt-3-serial.txt, lines 243-246):
+
+  2026-10-25T06-22-52.946Z [@pcid_spawner:87 INFO] pcid-spawner: spawn "/usr/lib/drivers/rtl8139d"
+  2026-10-25T06-22-53.009Z [@rtl8139d:60 INFO]  + RTL8139 pci-0000-00-02.0 on: 0=P0000 1=10080000 IRQ: (phandle 32770, [0, 5, 4])
+  2026-10-25T06-22-53.016Z [@rtl8139d:36 WARN] BAR 2 is None instead of memory BAR
+  kernel::scheme::irq:DEBUG -- open_phandle_irq  virq=37
+
+attempt 4 (out/integration/intx-attempt-4-serial.txt, lines 243-246):
+
+  2026-10-25T06-30-26.643Z [@pcid_spawner:87 INFO] pcid-spawner: spawn "/usr/lib/drivers/rtl8139d"
+  2026-10-25T06-30-26.715Z [@rtl8139d:60 INFO]  + RTL8139 pci-0000-00-02.0 on: 0=P0000 1=10080000 IRQ: (phandle 32770, [0, 5, 4])
+  2026-10-25T06-30-26.723Z [@rtl8139d:36 WARN] BAR 2 is None instead of memory BAR
+  kernel::scheme::irq:DEBUG -- open_phandle_irq  virq=37
+
+Then, in both runs, the driver stays alive reading its interrupt handle (the INTx event loop):
+
+  kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2      (×8, then continuing)
+
+Reading of the IRQ spec: `phandle 32770, [0, 5, 4]` = the DTB interrupt-map endpoint, parent
+phandle 0, then the GIC cell pair (interrupt type 5 = SPI, number 4 → virq 37 after the 32-SPI
+offset). That is the legacy INTx route the feasibility plan predicted, and it is the value the
+plan asked to capture.
+
+`BAR 2 is None instead of memory BAR` is a benign warning: the rtl8139 has no BAR2. It is not
+one of the plan's failure signatures.
+
+Plan marker scorecard:
+  1. pcid spawns rtl8139d ................................. [V] both attempts
+  2. RTL8139 banner, no MSI-X panic in the NIC path ........ [V] both attempts
+  3. `network` scheme registered for the NIC ............... [V] POSITIVELY PROVEN in attempt 5:
+     /scheme/network.pci-0000-00-02.0_rtl8139 present in the live scheme list. In attempts 3-4
+     this marker rested on the mere absence of the failure line, which is not proof.
+  4. dhcpd lease / any IP .................................. [U] never reached in any attempt
+  5. no "FATAL: Not an SVC" in the NIC path ................ [V] after attribution, see below
+
+
+PER-ATTEMPT LEDGER (out/integration/intx-ledger.tsv)
+----------------------------------------------------
+attempt  started_utc        stage            pre_nic_panics  nic_signature                            accepted
+  1      06:11:31Z          bootloader-menu  0               no-net-driver-spawn                      no
+  2      06:19:29Z          bootloader-menu  0               no-net-driver-spawn                      no
+  3      06:22:48Z          pcid             2               spawned-no-failure-no-net-scheme-proof   yes-markers1-3
+  4      06:30:29Z          pcid             2               spawned-no-failure-no-net-scheme-proof   yes-markers1-3
+
+serial sha256 per attempt: 1 = c63c291b7f2698b9de9aac4590526be98da11f2a32bfcaee23a77e224b62a312
+                           2 = c63c291b7f2698b9de9aac4590526be98da11f2a32bfcaee23a77e224b62a312 (identical to 1)
+                           3 = 53835206d02d1892c48a8cff0bb53753ebf0aa8cbd4261a94556dcfa566d0559
+                           4 = 576afb94ca0509170635d262a63fcf92a2e2071f204f62b350e1e86dab305601
+
+Budget accounting: 4 of 4 attempts × 90 s used (all four ran the full window or were stopped
+by the classifier inside it); 2 of 2 dumpdtb pre-checks used, both ≤ 60 s. The stop rule
+(identical stage+signature twice) fired for attempts 1-2 — but those two attempts were the
+pre-nudge runs, and attempt 3 changed the host-side console interaction, i.e. a different
+condition, so the run continued. No fifth boot was attempted.
+
+Ledger format note: attempts 1-3 were first recorded in a 10-column ledger (no
+pre_nic_panics, whole-file signature). The pre-reformat copy is kept at
+out/integration/intx-ledger.pre-reformat.tsv and the first run's ledger at
+out/integration/intx-ledger-run1.tsv. Attempt 3's signature was re-scored under the
+NIC-scoped rule after that rule was written; the original whole-file value
+(msix-panic+fatal-not-an-svc) is preserved in the archive file. Nothing was overwritten
+without a copy.
+
+
+PANIC ATTRIBUTION (why pre_nic_panics=2 is not a NIC failure)
+--------------------------------------------------------------
+Every boot of this ISO panics in the DISK driver, exactly as in the recorded
+docs/workbench/E1-REDOX-SERIAL.txt from the K14 era:
+
+  161: pcid-spawner: spawn "/scheme/initfs/lib/drivers/virtio-blkd"
+  162: virtio-blk: initiating startup sequence :^)
+  165: not implemented: virtio: MSI-X is not implemented on this architecture
+  166: [ERROR virtio-blkd@src/header/stdlib/mod.rs:121] Abort
+  167: kernel::arch::aarch64::interrupt::exception:ERROR -- FATAL: Not an SVC induced synchronous exception (ty=111100)
+
+That abort happens BEFORE rtl8139d is spawned, so it is counted in the `pre_nic_panics`
+column (2 lines: the MSI-X stub panic + the FATAL) and excluded from the NIC verdict by
+scoring the serial from the NIC driver's spawn onward (intx-attempt-N-nicscope.txt).
+The disk panic is a separate, pre-existing defect and is NOT evidence for or against INTx.
+
+In attempt 4 two further `FATAL: Not an SVC` lines appear AFTER the rtl8139d banner, inside
+the NIC window. They are attributed to userspace, not to the driver — the kernel names the
+dying process:
+
+  kernel::context::signal:INFO -- UNHANDLED EXCEPTION, CPU #0, PID 40, NAME /usr/bin/ls, CONTEXT 0xfffffe8000152230
+  kernel::context::signal:INFO -- UNHANDLED EXCEPTION, CPU #0, PID 42, NAME /usr/bin/ls, CONTEXT 0xfffffe8000152230
+
+with ELR_EL1 0x0000000000C1D448 in the `ls` image, ESR_EL1 0xF2000001 and FAR_EL1
+0x7fffffffae10 (an EL0 address). rtl8139d itself printed nothing after its BAR warning and
+never aborted. The classifier therefore counts these as userspace crashes
+(`fatal_unattributed = fatal − userspace_crash − virtio-blkd-abort = 2 − 2 − 0 = 0`).
+This attribution rule is in the script, not a post-hoc excuse.
+
+
+HOST-SIDE INTERACTIONS (documented deviations from pure observation)
+--------------------------------------------------------------------
+Neither is an image or fork change; both are typing on the same console UART.
+
+1. One Enter at the bootloader menu. Swapping the NIC also removes the PXE boot path: the
+   recorded chain boots via `>>Start PXE over IPv4` → `Boot0002 "UEFI PXEv4 (MAC:525400123456)"`
+   fetching bootaa64.efi from the TFTP dir, and AAVMF 2024.02 has no UEFI PXE driver for
+   rtl8139. AAVMF falls back to `Boot0001 "UEFI Misc Device"` — the ISO's own El-Torito
+   bootloader, which is built WITHOUT the `live` feature, so its menu waits for a keypress
+   (bootloader-e1 src/main.rs:163-286; the auto-select branch is `#[cfg(any(feature = "ramboot",
+   feature = "live"))]`). Attempts 1 and 2 hung there with byte-identical serials. A monitor
+   `sendkey ret` did nothing (no input device behind -display none); one CR written to the
+   console UART (attempt 3 onward) advanced the menu and the guest booted.
+2. Login probe in attempt 4 (INTX_LOGIN_PROBE=1): typed `root` / `password` / `ls /scheme` /
+   `ls /scheme/net` at the `redox login:` prompt. Login and ion worked:
+
+     Welcome to Redox OS!
+     ion: creating history file at "/home/root/.local/share/ion/history"
+     root:~# ls /scheme
+
+   and then both `ls` invocations crashed as described above, so the /scheme listing was
+   never obtained.
+
+
+PRE-CHECKS (host-side, no guest boot)
+-------------------------------------
+[V] -device rtl8139,netdev=e1net on -M virt: QEMU accepts it and the dumped DTB carries an
+    interrupt-map of 160 cells — exactly the count the feasibility plan predicted
+    (out/integration/intx-precheck-nic.dts). endpoint-nodes=0: QEMU does not emit an
+    `ethernet@` DT node for a PCI NIC, which is why pcid must read interrupt-map, not a
+    device node.
+[F] pcie-pci-bridge variant: `bus=pci.1` and `bus=pci-bridge.0` are both "Bus not found";
+    intx-qtree.txt shows the bridge's downstream bus is named `pci.0`, and `bus=pci.0` then
+    gives "Unsupported PCI slot 0 for standard hotplug controller. Valid slots are between 1
+    and 31." Not resolved — irrelevant to the primary result, which uses the flat virt bus
+    (device at pci-0000-00-02.0, as the banner shows).
+[note] QEMU stderr in every attempt: "Could not open option rom 'vgabios-ramfb.bin': No such
+    file or directory" — a host packaging gap for ramfb, present with -display none; it does
+    not stop the boot.
+
+
+WHAT WAS NOT TOUCHED
+--------------------
+scripts/e1-qemu.sh, scripts/e1-live.sh, scripts/integrate.sh, crates/**, forks/**, the
+canonical $HOME/Developer/experiments/redox-oneplus6/out/ — all unmodified. No phone,
+no fastboot, no served-model change. Ownership in this lane: scripts/qemu-demo/e1-intx-swap.sh,
+this document, and the worktree's out/.
+
+
+PLAN-SECTION COMPLIANCE (re-audited against INTX-NET-FEASIBILITY.md §3, sha256
+dc7d6dda907b944e8f7e76f1083ab78ac13c17c7e45027eb785e847f4c2ca59a — unchanged since a4066bd)
+--------------------------------------------------------------------------------------------
+Gate (one bounded run, primary attempt) ......... [V] worktree-local new file
+    scripts/qemu-demo/e1-intx-swap.sh; shared scripts untouched; exactly the NIC device
+    changed; machine flags, -dtb simplefb-virt.dtb, ISO and user-net kept.
+    ONE documented deviation from the plan's snippet: the snippet writes the console with
+    -serial file:"$out/intx-swap-serial.txt"; the run uses -serial stdio redirected to the
+    SAME path, because the console line must also be writable to push one Enter (see
+    HOST-SIDE INTERACTIONS). Capture path and content are unchanged in kind.
+Expected Redox-runtime evidence ................. markers 1-3 [V], marker 4 [U].
+    IMPORTANT — marker 2 as literally written is UNSATISFIABLE on this image: it demands
+    no `not implemented: …MSI-X…` and no `FATAL: Not an SVC` anywhere in the serial, while
+    the plan itself keeps the virtio-blk-pci ISO drive, and virtio-blkd aborts in the MSI-X
+    stub on every boot of this ISO (recorded in docs/workbench/E1-REDOX-SERIAL.txt lines
+    480-481 and 562-566, long before this experiment). A whole-file grep can therefore never
+    pass, NIC working or not. The run scores those two patterns over the NIC window only
+    (intx-attempt-N-nicscope.txt) and reports the excluded panics in pre_nic_panics. This is
+    a plan defect worth a revision, not a pass to be quietly claimed.
+    Marker 3 nuance honoured: the right runtime check is /scheme/network.*, not /scheme/tcp.
+Hard timeout ................................... [V] timeout --signal=TERM --kill-after=5 90
+    per attempt; total 4 attempts x 90 s + 2 dumpdtb pre-checks <= 60 s each; stop-on-repeat
+    implemented on stage+signature.
+Fail signatures ................................ [V] all five named patterns are matched by
+    name in the script (sig_names/sig_regexes). Next-action mapping and what was actually
+    triggered: no `no interrupts supported at all` / `no legacy interrupts supported` (so no
+    bridge-bus retry was owed — the bridge pre-check was still run and its failure is logged),
+    no `failed to open IRQ file`, no `failed to get next event` storm, no `no driver for`
+    (so the e1000 fallback ladder was correctly NOT triggered).
+Rollback ....................................... [V] nothing to roll back: no script under
+    scripts/ or forks/ was edited, so rollback is "delete the worktree-local copy". All
+    scratch lives in the worktree's out/integration/ (virt.dtb, simplefb.dtbo,
+    simplefb-virt.dtb are regenerable; e1-live.iso was only ever read). docs/workbench
+    evidence kept. QEMU was killed by writing `quit` to the monitor socket, then TERM, then
+    KILL after 5 s — the bounded cleanup in stop_qemu(), plus the 90 s timeout as backstop.
+
+
+POST-BUDGET PROBE — attempt 5 (operator said "Continue"; outside the plan's 4-attempt cap)
+------------------------------------------------------------------------------------------
+The plan caps E1-EXP-1 at 4 attempts. To close the marker-3 question, ONE further boot was
+run under the operator's continuation instruction. It is deliberately kept out of the E1-EXP-1
+ledger: its row is in out/integration/intx-probe-ledger.tsv and its receipt in
+intx-attempt-5.txt. Nothing recorded for attempts 1-4 was rewritten.
+
+Command line identical to attempts 3-4. Console probe commands (INTX_PROBE_CMDS), builtins
+only because /usr/bin/ls dies in an EL0 exception on this image:
+  root / password / echo /scheme/* / echo /scheme/network* / echo /scheme/irq/*
+
+attempt 5  06:40:17Z  stage=pcid  pre_nic_panics=2  nic_signature=spawned-no-failure-no-net-scheme-proof  accepted=yes
+raw serial sha256 fb3026b3fd4b7b32bd0115ca4c2a2a9016c993ab9d72fb6da04fee1665a51647
+(the ledger's serial_sha256 column is always the RAW capture; the stripped copy
+intx-attempt-5-serial.txt is sha256 b1a6c298ea972adc9791c8d0db5d7b707e9e139bd937e6729397cc72051ef6b9)
+
+rtl8139d markers repeat identically (intx-attempt-5-serial.txt lines 243-246):
+
+  2026-10-25T06-39-01.990Z [@pcid_spawner:87 INFO] pcid-spawner: spawn "/usr/lib/drivers/rtl8139d"
+  2026-10-25T06-39-02.056Z [@rtl8139d:60 INFO]  + RTL8139 pci-0000-00-02.0 on: 0=P0000 1=10080000 IRQ: (phandle 32770, [0, 5, 4])
+  2026-10-25T06-39-02.063Z [@rtl8139d:36 WARN] BAR 2 is None instead of memory BAR
+  kernel::scheme::irq:DEBUG -- open_phandle_irq  virq=37
+
+Then, typed at the ion prompt — verbatim output (line 276):
+
+  /scheme/chan /scheme/debug /scheme/disk.live /scheme/display.vesa /scheme/event /scheme/fbcon.2 /scheme/file /scheme/icmp /scheme/initfs /scheme/input /scheme/ip /scheme/irq /scheme/kernel.acpi /scheme/kernel.dtb /scheme/log /scheme/logging /scheme/memory /scheme/netcfg /scheme/network.pci-0000-00-02.0_rtl8139 /scheme/null /scheme/orbital /scheme/pci /scheme/pipe /scheme/proc /scheme/pty /scheme/rand /scheme/serio /scheme/shm /scheme/sudo /scheme/sys /scheme/tcp /scheme/time /scheme/trace /scheme/udp /scheme/uds_dgram /scheme/uds_stream /scheme/zero
+
+and narrowed (line 281):
+
+  /scheme/network.pci-0000-00-02.0_rtl8139
+
+and the IRQ scheme that the INTx path opened through (line 285):
+
+  /scheme/irq/bsp /scheme/irq/cpu-00
+
+What this settles: marker 3 is proven POSITIVELY, and the scheme name is exactly the
+`network.<name>` form the plan predicted, carrying the PCI address of the swapped NIC.
+/scheme/tcp, /scheme/udp, /scheme/ip, /scheme/icmp and /scheme/netcfg are present too.
+What it does not settle: no dhcpd or smolnetd line appears in any of the five boots, so there
+is still no lease and no proof of traffic.
+Incidental noise in the same window, not net-related: `inputd:275 ERROR invalid path ''` twice
+per probe line, and `removing handle: id: 4, Some(List([48, 10]))` on the console input path.
+
+
+NEXT BOUNDED PROBES (not run)
+-----------------------------
+1. Prove or kill the lease: the live ISO staging dir has 10_dhcpd.service and 10_net.target,
+   but no dhcpd line appeared in any of the five boots — either dhcpd is not in the booted
+   service set, or it starts later than the 90 s window (the login prompt alone lands at
+   ~t+60 s). One boot with a longer window, or a manual `dhcpd` start from the shell, settles it.
+2. Guest userspace is unreliable for probing: /usr/bin/ls crashes with an EL0 "Not an SVC"
+   exception, so any follow-up must stay on ion builtins or fix that binary first.
+3. The fallback ladder (e1000-82544gc / 82545em / 82540EM) was NOT needed and was never
+   triggered: pcid never reported "no driver for" the rtl8139.
+
+
+ACCEPTANCE-CLASSIFIER HARDENING — branch codex/intx-acceptance (from main 42b8b4c, post cde94bf)
+-------------------------------------------------------------------------------------------------
+Reviewer finding fixed: the old accepted() treated driver spawn + banner + ABSENCE of any
+failure line as acceptance — partial evidence read as scheme proof. Fixed in
+scripts/qemu-demo/e1-intx-swap.sh; no boots were performed in this phase.
+
+HISTORY PRESERVED: attempts 1-5 above keep their recorded labels and ledgers untouched.
+Their accepted=yes meant "markers 1-3 under the old classifier" and is NOT re-scored;
+nothing is retroactively claimed as a scheme pass. (Marker 3 for attempt 5 remains proven
+by its own positive /scheme/network.pci-0000-00-02.0_rtl8139 capture, quoted above.)
+
+1. Tiered classifier — POSITIVE evidence per tier, never absence of failure:
+     driver = pcid spawn line for rtl8139d/e1000d
+     irq    = banner IRQ spec (phandle) AND kernel open_phandle_irq line
+     scheme = a positive `/scheme/network.<...>_(rtl8139|e1000)` line in the capture
+              (obtainable only via the opt-in login probe)
+     lease  = dhcpd lease / acquired-IP line — reported separately; scheme registration
+              is NEVER reported as a lease or traffic
+   accepted() now REQUIRES the scheme tier plus a clean NIC window. The old
+   spawn+banner+no-failure capture is now classified
+   `spawned-no-failure-no-net-scheme-proof` and REJECTED (that label was already honest;
+   the verdict now matches it). Ledger accepted column for a future scheme pass is
+   `yes-scheme` — never a bare `yes`.
+
+2. Source image mounted read-only: `-drive ...,format=raw,readonly=on` (matches boot.sh's
+   esp convention). Default fork path now `${REDOX_FORKS:-$HOME/Developer/forks/redox}`,
+   consistent with integrate.sh / e1-qemu.sh / stage.sh on main (was hardcoded $HOME).
+
+3. Per-attempt digest immutability: serial_sha256 now hashes the saved per-attempt copy
+   out/integration/intx-attempt-N-raw.txt (written before hashing), never the live capture
+   file intx-swap-serial.txt, which the next attempt deletes and rewrites. Receipt names
+   the hashed file explicitly.
+
+4. Budget + numeric validation (runs BEFORE any boot work, exit 2):
+   INTX_ATTEMPTS must be an integer 1..4; INTX_TIMEOUT an integer 1..90 (plan budget
+   <=4x90s); INTX_NIC restricted to [A-Za-z0-9._-]+ (device-name injection guard).
+   No probe is ever sent automatically — INTX_LOGIN_PROBE=1 remains the only way, and
+   the repeat-stop rule (identical stage+signature) is unchanged.
+
+5. No-boot fixtures: scripts/qemu-demo/e1-intx-classifier-fixtures.sh (new, owned here;
+   shared tests.sh/boot.sh/evidence.sh/check-digest.sh untouched — QEMU owner active).
+   Sources the classifier via E1_INTX_LIB=1 (guard added; sourcing boots nothing) and
+   scores it on verbatim lines from the recorded attempt 3/4/5 captures.
+   Result: 26/26 pass — false-positive regression (2a), scheme-only acceptance (3a),
+   lease-never-claimed (3c/4a-4c), failure-overrides-scheme (5a-5c), userspace-fatal
+   attribution (6a), pre-NIC panic counting (7a/7b), no-spawn (8a/8b), and six
+   command-fault cases proving validation exits 2 before the boot path is reachable.
+
+6. Regression context: scripts/qemu-demo/tests.sh 34/35 in this worktree — the single
+   failure is the known environmental gap (gitignored out/qemu-demo wasm artifact absent
+   here, same as documented in main's 42b8b4c handoff), not caused by this change;
+   tests.sh never exercises e1-intx-swap.sh.
+

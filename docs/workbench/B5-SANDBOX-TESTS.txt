@@ -1,0 +1,77 @@
+# B5 crates/sandbox — test evidence
+date: 2026-10-24T23:49:01Z
+branch: crates/sandbox @ 535c2d7
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+
+$ cargo test --offline
+     Running unittests src/lib.rs (target/debug/deps/sandbox-a81206e00b87e2b5)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/grants.rs (target/debug/deps/grants-5c2f8bae44122d6f)
+test unknown_import_is_refused_at_load ... ok
+test expired_grant_is_refused ... ok
+test kv_set_without_grant_is_refused ... ok
+test log_without_grant_is_refused ... ok
+test kv_quota_is_a_return_code ... ok
+test revoked_grant_is_refused_while_running ... ok
+test kv_set_with_grant_writes_only_the_service_namespace ... ok
+test grant_valid_before_expiry ... ok
+test kv_is_scoped_per_service_on_a_shared_backend ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/hello.rs (target/debug/deps/hello-202c472af23c27d6)
+test loaded_event_lists_requested_capabilities ... ok
+test bad_trace_name_is_refused ... ok
+test missing_entry_point_is_reported_without_stopping ... ok
+test hello_service_emits_a_trace_event ... ok
+test service_runs_again_after_success_with_a_fresh_budget ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/limits.rs (target/debug/deps/limits-506799b655b57579)
+test invalid_bytes_are_refused ... ok
+test initial_memory_over_cap_is_refused_at_load ... ok
+test table_over_cap_is_refused_at_load ... ok
+test start_function_is_refused ... ok
+test oversize_message_is_refused_before_allocation ... ok
+test unbounded_recursion_traps_without_harming_the_host ... ok
+test host_calls_cost_fuel_so_log_spam_stops ... ok
+test out_of_bounds_pointer_is_refused ... ok
+test memory_growth_past_cap_fails_and_is_recorded ... ok
+test runaway_loop_is_stopped_by_fuel ... ok
+test runaway_loop_is_stopped_with_default_budget ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+     Running tests/rust_guest.rs (target/debug/deps/rust_guest-c26f885008af44fe)
+test rust_built_service_without_kv_set_is_refused ... ok
+test rust_built_service_runs_with_its_grants ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/timers.rs (target/debug/deps/timers-a73d72d1aa03566e)
+test clock_never_goes_backwards ... ok
+test timer_without_grant_is_refused ... ok
+test pending_timer_cap_is_a_return_code ... ok
+test timer_fires_on_timer_with_its_token_when_due ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+$ cargo test --offline --release
+     Running unittests src/lib.rs (target/release/deps/sandbox-0b83498061b4e334)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/grants.rs (target/release/deps/grants-db69357b9f477972)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/hello.rs (target/release/deps/hello-9103471a1747d765)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/limits.rs (target/release/deps/limits-7f647ea0dcf3d8a6)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/rust_guest.rs (target/release/deps/rust_guest-2d12462b823a98bb)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/timers.rs (target/release/deps/timers-59a4b34570082f6b)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+$ cargo clippy --offline --all-targets
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s
+
+$ cargo build --offline --no-default-features --target aarch64-unknown-uefi --release
+    Finished `release` profile [optimized] target(s) in 1.46s
+
+$ guests/hello-rs: cargo build --release --offline
+    Finished `release` profile [optimized] target(s) in 0.01s
+size: 1433 bytes
+ade98b90d6f85193673516d8765b47840454d5eecd4af612d5012ea29f37a012  target/wasm32-unknown-unknown/release/hello_rs.wasm

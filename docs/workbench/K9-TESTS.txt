@@ -1,0 +1,183 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running unittests src/lib.rs (crates/geni-i2c/target/debug/deps/geni_i2c_core-6eff3c2103d83efe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/fifo.rs (crates/geni-i2c/target/debug/deps/fifo-c92c6bfcb6a4e6cd)
+
+running 4 tests
+test controller_error_cancels ... ok
+test invalid_transfer_makes_no_access ... ok
+test repeated_start_register_read_replays ... ok
+test fifo_timeout_is_bounded_and_cancels ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests geni_i2c_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running unittests src/lib.rs (crates/rmi4-touch/target/debug/deps/rmi4_touch_core-d60dff6cfa84835c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/touch.rs (crates/rmi4-touch/target/debug/deps/touch-8c8632165367cbab)
+
+running 5 tests
+test ignores_nonfinger_and_out_of_bounds ... ok
+test missing_f12_and_bad_layout_fail ... ok
+test no_unverified_f12_read ... ok
+test reset_status_suppresses_report ... ok
+test scans_pdt_and_decodes_one_finger ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rmi4_touch_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+warning: drivers/hwd/Cargo.toml: `default-features` is ignored for libredox, since `default-features` was not specified for `workspace.dependencies.libredox`; overriding workspace `default-features` to false requires Rust 1.99+ and the 2024 edition
+warning: `hwd` (manifest) generated 1 warning
+   Compiling mmio-replay v0.1.0 ($HOME/Developer/forks/redox/base-k9/drivers/mmio-replay)
+   Compiling geni-i2c-core v0.1.0 ($HOME/Developer/forks/redox/base-k9/drivers/geni-i2c-core)
+   Compiling rmi4-touch-core v0.1.0 ($HOME/Developer/forks/redox/base-k9/drivers/rmi4-touch-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.94s
+     Running unittests src/lib.rs ($HOME/Developer/forks/redox/base-k9/target/debug/deps/geni_i2c_core-cfc7e2d60a1b21eb)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/fifo.rs ($HOME/Developer/forks/redox/base-k9/target/debug/deps/fifo-7c857661560e1473)
+
+running 4 tests
+test controller_error_cancels ... ok
+test invalid_transfer_makes_no_access ... ok
+test repeated_start_register_read_replays ... ok
+test fifo_timeout_is_bounded_and_cancels ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs ($HOME/Developer/forks/redox/base-k9/target/debug/deps/rmi4_touch_core-39e5208969a51982)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/touch.rs ($HOME/Developer/forks/redox/base-k9/target/debug/deps/touch-1debdb54e13b6332)
+
+running 5 tests
+test no_unverified_f12_read ... ok
+test reset_status_suppresses_report ... ok
+test ignores_nonfinger_and_out_of_bounds ... ok
+test missing_f12_and_bad_layout_fail ... ok
+test scans_pdt_and_decodes_one_finger ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests geni_i2c_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rmi4_touch_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+warning: drivers/hwd/Cargo.toml: `default-features` is ignored for libredox, since `default-features` was not specified for `workspace.dependencies.libredox`; overriding workspace `default-features` to false requires Rust 1.99+ and the 2024 edition
+warning: `hwd` (manifest) generated 1 warning
+   Compiling libc v0.2.189
+   Compiling autocfg v1.5.1
+    Checking bitflags v2.13.1
+    Checking plain v0.2.3
+   Compiling cfg-if v1.0.4
+   Compiling version-compare v0.1.1
+    Checking numtoa v0.2.4
+    Checking iana-time-zone v0.1.65
+   Compiling sdl2 v0.38.0
+    Checking log v0.4.34
+    Checking smallvec v1.16.0
+    Checking mmio-replay v0.1.0 ($HOME/Developer/forks/redox/base-k9/drivers/mmio-replay)
+   Compiling anyhow v1.0.104
+   Compiling orbclient v0.4.6
+    Checking lazy_static v1.5.0
+    Checking bitflags v1.3.2
+    Checking redox_syscall v0.9.5
+   Compiling sdl2-sys v0.38.0
+    Checking geni-i2c-core v0.1.0 ($HOME/Developer/forks/redox/base-k9/drivers/geni-i2c-core)
+    Checking rmi4-touch-core v0.1.0 ($HOME/Developer/forks/redox/base-k9/drivers/rmi4-touch-core)
+   Compiling num-traits v0.2.19
+    Checking chrono v0.4.45
+    Checking libredox v0.1.25
+    Checking termion v4.0.6
+    Checking redox-scheme v0.12.0
+error[E0554]: `#![feature]` may not be used on the stable release channel
+ --> $HOME/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/redox-scheme-0.12.0/src/lib.rs:2:1
+  |
+2 | #![feature(linked_list_cursors)] // advisory_flock.rs
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0554`.
+error: could not compile `redox-scheme` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+warning: $HOME/Developer/forks/redox/base-k9/drivers/hwd/Cargo.toml: `default-features` is ignored for libredox, since `default-features` was not specified for `workspace.dependencies.libredox`, this could become a hard error in the future
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running unittests src/lib.rs ($HOME/Developer/forks/redox/base-k9/target/debug/deps/geni_i2c_core-1d89ea293ce843f9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/fifo.rs ($HOME/Developer/forks/redox/base-k9/target/debug/deps/fifo-3f6ea79912bc3ca0)
+
+running 4 tests
+test controller_error_cancels ... ok
+test repeated_start_register_read_replays ... ok
+test fifo_timeout_is_bounded_and_cancels ... ok
+test invalid_transfer_makes_no_access ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs ($HOME/Developer/forks/redox/base-k9/target/debug/deps/rmi4_touch_core-3d0f83b4987a2c4b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/touch.rs ($HOME/Developer/forks/redox/base-k9/target/debug/deps/touch-a104270423ac0c66)
+
+running 5 tests
+test ignores_nonfinger_and_out_of_bounds ... ok
+test no_unverified_f12_read ... ok
+test missing_f12_and_bad_layout_fail ... ok
+test scans_pdt_and_decodes_one_finger ... ok
+test reset_status_suppresses_report ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests geni_i2c_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rmi4_touch_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+warning: $HOME/Developer/forks/redox/base-k9/drivers/hwd/Cargo.toml: `default-features` is ignored for libredox, since `default-features` was not specified for `workspace.dependencies.libredox`, this could become a hard error in the future
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s

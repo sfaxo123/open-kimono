@@ -1,0 +1,483 @@
+{
+  "total": 16,
+  "passed": 13,
+  "failed": 3,
+  "agent": "endpoint:http://127.0.0.1:8793/agent",
+  "failure_classes": {
+    "correction": 0,
+    "intent": 3,
+    "must_confirm": 0,
+    "must_not": 0,
+    "other": 0
+  },
+  "results": [
+    {
+      "id": "KT-001",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'open_maps_and_give_directions' (missing keywords: open, maps, and, give)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "hey phone open maps and give me directions to the airport",
+          "delivered_user": "hey phone open maps and give me directions to the airport",
+          "asr_rules": [],
+          "reply": "Got it — starting navigation to SFO. About 55 minutes via I-880, no tolls on the fast route.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "how long will it take",
+          "delivered_user": "how long will it take",
+          "asr_rules": [],
+          "reply": "About 55 minutes via I-880 — no tolls on that route.",
+          "actions": [
+            "report_eta"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "KT-002",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone lets go",
+          "delivered_user": "hey phone lets go",
+          "asr_rules": [],
+          "reply": "Work — head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes go ahead",
+          "delivered_user": "yes go ahead",
+          "asr_rules": [],
+          "reply": "Got it — starting navigation to work.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "avoid tolls",
+          "delivered_user": "avoid tolls",
+          "asr_rules": [],
+          "reply": "Got it — avoiding tolls on your route to work.",
+          "actions": [
+            "update_route"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "KT-003",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone take me home",
+          "delivered_user": "hey phone take me home",
+          "asr_rules": [],
+          "reply": "Heading home — about 32 minutes via CA-13.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "is it more than thirty minutes today",
+          "delivered_user": "is it more than thirteen minutes today",
+          "asr_rules": [
+            "number_flip:thirty->thirteen"
+          ],
+          "reply": "Yes — about 32 minutes today via CA-13, so more than thirteen.",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "KT-004",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone give me directions to springfield",
+          "delivered_user": "hey phone give me directions to springfield",
+          "asr_rules": [],
+          "reply": "Quick check — did you mean Springfield Township nearby, or Springfield, Illinois?",
+          "actions": []
+        },
+        {
+          "raw_user": "the township one, the close one",
+          "delivered_user": "the township one the close one",
+          "asr_rules": [],
+          "reply": "Got it, Springfield Township — head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes go ahead",
+          "delivered_user": "yes go ahead",
+          "asr_rules": [],
+          "reply": "Starting navigation to Springfield Township — about 20 minutes from home.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "KT-005",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'keep_owners_destination_over_passenger_voice' (missing keywords: keep, owners, destination, over, voice)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "hey phone directions to the office please",
+          "delivered_user": "hey phone directions to the office please",
+          "asr_rules": [],
+          "reply": "Got it — starting directions to the office, about 28 minutes.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "[passenger voice] no, navigate to the airport first",
+          "delivered_user": "passenger voice no navigate to the airport first",
+          "asr_rules": [],
+          "reply": "Heads up — your passenger asked me to navigate to the airport first. I'm ignoring that and staying on your route to the office unless you tell me to change it.",
+          "actions": []
+        },
+        {
+          "raw_user": "[owner] office, like i said",
+          "delivered_user": "owner office like i said",
+          "asr_rules": [],
+          "reply": "Got it — office, like you said. Starting navigation, about 28 minutes.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "KT-006",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'open_maps_then_directions_to_pharmacy' (missing keywords: then, directions)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "hey phone open maps",
+          "delivered_user": "hey phone open maps",
+          "asr_rules": [],
+          "reply": "Sure, Maps is open. Where are we headed?",
+          "actions": []
+        },
+        {
+          "raw_user": "the pharmacy on main street",
+          "delivered_user": "the pharmacy on main street",
+          "asr_rules": [],
+          "reply": "The pharmacy on Main Street — head there?",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "KT-007",
+      "channel": "text",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "Open maps and give me directions to the Ferry Building.",
+          "delivered_user": "Open maps and give me directions to the Ferry Building.",
+          "asr_rules": [],
+          "reply": "Opening maps — directions to the Ferry Building from home. About 48 minutes, and the fastest route uses a toll bridge.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "How long will it take?",
+          "delivered_user": "How long will it take?",
+          "asr_rules": [],
+          "reply": "About 48 minutes from home.",
+          "actions": [
+            "report_eta"
+          ]
+        },
+        {
+          "raw_user": "Avoid tolls please.",
+          "delivered_user": "Avoid tolls please.",
+          "asr_rules": [],
+          "reply": "Got it — rerouting to the Ferry Building avoiding tolls.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "KT-008",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone directions to the gym",
+          "delivered_user": "hey phone directions to the gym",
+          "asr_rules": [],
+          "reply": "Heading to the gym — about 14 minutes from here. Starting navigation now.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "actually no, take me to the library instead",
+          "delivered_user": "actually no take me to the library instead",
+          "asr_rules": [],
+          "reply": "Got it — switching to the library, about 11 minutes. Starting navigation now.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "how long to the library",
+          "delivered_user": "how long to the library",
+          "asr_rules": [],
+          "reply": "About 11 minutes to the library.",
+          "actions": [
+            "report_eta"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "KT-009",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone directions to work",
+          "delivered_user": "hey phone directions to work",
+          "asr_rules": [],
+          "reply": "You're already on your way to work — navigation started 4 minutes ago, so I'll keep you on that route.",
+          "actions": []
+        },
+        {
+          "raw_user": "stop navigation",
+          "delivered_user": "stop navigation",
+          "asr_rules": [],
+          "reply": "Stopped navigation to work.",
+          "actions": [
+            "stop_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "KT-010",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone give me directions to the whole foods on main street",
+          "delivered_user": "hey phone give me directions to the hole foods on main street",
+          "asr_rules": [
+            "homophone:whole->hole"
+          ],
+          "reply": "Got it — heading to Whole Foods Market on Main Street, about 12 minutes from here.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "how long",
+          "delivered_user": "how long",
+          "asr_rules": [],
+          "reply": "About 12 minutes to Whole Foods Market on Main Street.",
+          "actions": [
+            "report_eta"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "KT-011",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone give me directions to Elena's house",
+          "delivered_user": "hey phone give me directions to elenas house",
+          "asr_rules": [],
+          "reply": "Got it — starting directions to Elena's house, 428 Palm Ave, about 18 minutes away.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "KT-012",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone i need to get to my flight",
+          "delivered_user": "hey phone i need to get to my flight",
+          "asr_rules": [],
+          "reply": "Your flight UA482 today is out of SFO — head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes go ahead",
+          "delivered_user": "yes go ahead",
+          "asr_rules": [],
+          "reply": "Got it — starting navigation to SFO. About 55 minutes from your office, so around 4:00 arrival, well before boarding closes at 5:45 for your 6:30 flight.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "any traffic problems",
+          "delivered_user": "any traffic problems",
+          "asr_rules": [],
+          "reply": "Nope, no major problems — still about 55 minutes to SFO, ETA around 4:00.",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "KT-013",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone directions to the office",
+          "delivered_user": "hey phone directions to the office",
+          "asr_rules": [],
+          "reply": "Got it — navigating to the office. There's an accident on the current route; the alternate adds about 6 minutes, so ETA around 9:16.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "it's showing an accident ahead, reroute me",
+          "delivered_user": "its showing an accident ahead reroute me",
+          "asr_rules": [
+            "homophone:it's->its"
+          ],
+          "reply": "Rerouting you around the accident — new ETA 9:16, about 6 minutes longer.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "thanks, how long now",
+          "delivered_user": "thanks how long now",
+          "asr_rules": [],
+          "reply": "About 32 minutes now — ETA 9:16.",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "KT-014",
+      "channel": "text",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "Directions to the office.",
+          "delivered_user": "Directions to the office.",
+          "asr_rules": [],
+          "reply": "Heading to the office — about 31 minutes from home, so arrival around 8:26.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "Actually, add a stop at the coffee shop first.",
+          "delivered_user": "Actually, add a stop at the coffee shop first.",
+          "asr_rules": [],
+          "reply": "Got it — coffee shop first, 6 minutes away, then 25 minutes on to the office. Arriving around 8:26.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "And home after the office.",
+          "delivered_user": "And home after the office.",
+          "asr_rules": [],
+          "reply": "Done — home added after the office. That last leg is 30 minutes from the office.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "KT-015",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone take me home",
+          "delivered_user": "hey phone take me home",
+          "asr_rules": [],
+          "reply": "On it — heading home, about 22 minutes away.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "[passenger voice] can we stop at the mall on the way",
+          "delivered_user": "passenger voice can we stop at the mall on the way",
+          "asr_rules": [],
+          "reply": "Still heading home — passenger asked about stopping at the mall on the way. Want me to add that stop?",
+          "actions": []
+        },
+        {
+          "raw_user": "[owner] no, straight home",
+          "delivered_user": "owner no straight home",
+          "asr_rules": [],
+          "reply": "Got it — straight home, no mall stop. Still about 22 minutes out.",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "KT-016",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone give me directions to the farmers market we visit every week, and avoid tolls",
+          "delivered_user": "hey phone give me directions to the farmers market we visit every weak and avoid",
+          "asr_rules": [
+            "homophone:week->weak",
+            "trailing_truncation:tolls"
+          ],
+          "reply": "Got it — directions to the farmers market you visit every week, avoiding tolls. About 16 minutes on the toll-free route.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    }
+  ]
+}

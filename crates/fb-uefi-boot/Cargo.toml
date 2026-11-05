@@ -1,0 +1,25 @@
+[package]
+name = "fb-uefi-boot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fb-write = { path = "../fb-write" }
+geni-uart = { path = "../geni-uart" }
+uefi = { version = "0.41", features = ["alloc", "global_allocator", "logger", "panic_handler"] }
+
+[[bin]]
+name = "fb-uefi-boot"
+path = "src/main.rs"
+required-features = ["efi-bin"]
+
+# HW-24: the `uefi` panic-handler/allocator/logger lang items belong to the
+# EFI binary only. Host `cargo test` otherwise links the *bin* test harness
+# (std) together with those uefi-provided lang items and fails on duplicate
+# `panic_impl`. So the bin is gated behind a default-on feature that host
+# tests disable (`cargo test --no-default-features`); the lib target carries
+# just the pure uartpath glue.
+
+[features]
+default = ["efi-bin"]
+efi-bin = []

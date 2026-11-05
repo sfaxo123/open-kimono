@@ -1,0 +1,63 @@
+//! Host harness over source-extracted PLIC items (see ../extract.py).
+//! `old` = git d752e98 plic.rs, `new` = worktree plic.rs (optionally mutated by
+//! a negative control). Both use the real syscall Io/Mmio/MmioPtr text with only
+//! the volatile read/write boundary routed through `hook`.
+
+use core::num::NonZero;
+
+pub mod hook;
+
+pub mod io {
+    use core::{
+        mem::MaybeUninit,
+        ops::{BitAnd, BitOr, Not},
+        ptr,
+    };
+    include!(concat!(env!("PLIC_GEN_DIR"), "/io.rs"));
+}
+
+pub trait PlicOps {
+    fn irq_ack(&mut self) -> u32;
+    fn irq_eoi(&mut self, irq_num: u32);
+    fn irq_enable(&mut self, irq_num: u32);
+    fn irq_disable(&mut self, irq_num: u32);
+}
+
+pub trait Adapter {
+    fn fresh() -> Self;
+    fn set_fields(&mut self, ndev: usize, context: usize);
+    fn install(&mut self, addr: usize);
+    fn init_tail(&mut self);
+}
+
+pub trait Accessor {
+    unsafe fn at(base: usize) -> Self;
+    fn set_priority(&mut self, irq: usize, priority: usize);
+    fn pending(&mut self, irq_lane: usize) -> u32;
+    fn enable(&mut self, context: usize, irq: NonZero<usize>, enable: bool);
+    fn set_priority_threshold(&mut self, context: usize, priority: usize);
+    fn claim(&mut self, context: usize) -> Option<NonZero<usize>>;
+    fn complete(&mut self, context: usize, claim: NonZero<usize>);
+}
+
+pub fn require_send<T: Send>() {}
+pub fn require_sync<T: Sync>() {}
+
+macro_rules! plic_module {
+    ($name:ident, $file:literal, $send:ident, $sync:ident) => {
+        pub mod $name {
+            use crate::io::{Io, Mmio, MmioPtr};
+            use core::{marker::PhantomData, mem, num::NonZero};
+            const PHYS_OFFSET: usize = 0;
+            include!(concat!(env!("PLIC_GEN_DIR"), $file));
+
+            #[cfg($send)]
+            const _: fn() = crate::require_send::<Plic>;
+            #[cfg($sync)]
+            const _: fn() = crate::require_sync::<Plic>;
+        }
+    };
+}
+
+plic_module!(old, "/old.rs", plic_assert_send_old, plic_assert_sync_old);
+plic_module!(new, "/new.rs", plic_assert_send_new, plic_assert_sync_new);

@@ -1,0 +1,340 @@
+From 030c284fb7e3425ced0001b1fa47d79739a2f4e2 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:27:07 +0000
+Subject: [PATCH 07/21] irq: carry IRQ numbers wider than u8 through the irq
+ scheme
+
+DT irqchips hand out virqs up to 1024, but irq_trigger, the irq scheme
+handles and the dtb reservation helpers took a u8. trigger_virq truncated
+the virq with `as u8`, open_phandle_irq rejected any virq above 223, and the
+aarch64/riscv64 console handlers unwrapped a u8 conversion, so a GICv3 SPI
+such as SDM845 GENI uart9 (SPI 354, virq 386) would panic on delivery.
+
+Use u16 for scheme IRQ numbers (x86 vectors stay u8), size the DT queue
+table from the irqchip descriptor count, drop out-of-range triggers instead
+of indexing past the table, keep full phandles in phandle handles, and stop
+irq_iter_for from truncating hwirqs.
+
+Co-Authored-By: Cursor <noreply@cursor.com>
+Co-Authored-By: Codex <noreply@openai.com>
+---
+ src/arch/aarch64/device/generic_timer.rs |   4 +-
+ src/arch/aarch64/device/serial.rs        |   4 +-
+ src/arch/riscv64/device/serial.rs        |   4 +-
+ src/dtb/irqchip.rs                       |  54 +++++++++-
+ src/scheme/irq.rs                        | 122 +++++++++++++++++++----
+ 5 files changed, 160 insertions(+), 28 deletions(-)
+
+diff --git a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/generic_timer.rs
+index 374ba068..9c8b0316 100644
+--- a/src/arch/aarch64/device/generic_timer.rs
++++ b/src/arch/aarch64/device/generic_timer.rs
+@@ -222,8 +222,8 @@ pub(crate) fn handle(hwirq: u32, raw_iar: u32, token: &mut CleanLockToken) -> bo
+     if cpu_id == crate::cpu_set::LogicalCpuId::BSP {
+         timeout::trigger(token);
+ 
+-        if let Ok(irq) = u8::try_from(config.virq) {
+-            irq_trigger(irq.into(), token);
++        if let Ok(irq) = u16::try_from(config.virq) {
++            irq_trigger(irq, token);
+         }
+     }
+     context::switch::tick(token);
+diff --git a/src/arch/aarch64/device/serial.rs b/src/arch/aarch64/device/serial.rs
+index df576845..841166e6 100644
+--- a/src/arch/aarch64/device/serial.rs
++++ b/src/arch/aarch64/device/serial.rs
+@@ -20,7 +20,9 @@ impl InterruptHandler for Com1Irq {
+         unsafe {
+             // FIXME add_irq accepts a u8 as irq number
+             // PercpuBlock::current().stats.add_irq(irq);
+-            irq_trigger(irq.try_into().unwrap(), token);
++            if let Ok(irq) = u16::try_from(irq) {
++                irq_trigger(irq, token);
++            }
+             IRQ_CHIP.irq_eoi(irq);
+         }
+     }
+diff --git a/src/arch/riscv64/device/serial.rs b/src/arch/riscv64/device/serial.rs
+index f0981529..8e72b550 100644
+--- a/src/arch/riscv64/device/serial.rs
++++ b/src/arch/riscv64/device/serial.rs
+@@ -20,7 +20,9 @@ impl InterruptHandler for Com1Irq {
+         unsafe {
+             // FIXME add_irq accepts a u8 as irq number
+             // PercpuBlock::current().stats.add_irq(irq);
+-            irq_trigger(irq.try_into().unwrap(), token);
++            if let Ok(irq) = u16::try_from(irq) {
++                irq_trigger(irq, token);
++            }
+             IRQ_CHIP.irq_eoi(irq);
+         }
+     }
+diff --git a/src/dtb/irqchip.rs b/src/dtb/irqchip.rs
+index 3b40bd0b..db62cde8 100644
+--- a/src/dtb/irqchip.rs
++++ b/src/dtb/irqchip.rs
+@@ -423,10 +423,13 @@ impl IrqChipList {
+     }
+ }
+ 
++/// Number of virqs; the irq scheme keeps one event queue per virq.
++pub const IRQ_DESC_COUNT: usize = 2048;
++
+ pub struct IrqChipCore {
+     //TODO: support multi level interrupt constrollers
+     pub irq_chip_list: IrqChipList,
+-    pub irq_desc: [IrqDesc; 2048],
++    pub irq_desc: [IrqDesc; IRQ_DESC_COUNT],
+ }
+ 
+ impl IrqChipCore {
+@@ -647,10 +650,10 @@ impl IrqChipCore {
+             .position(|x| x.phandle == phandle)
+     }
+ 
+-    pub fn irq_iter_for(&self, ic_idx: u32) -> impl Iterator<Item = u8> + '_ {
++    pub fn irq_iter_for(&self, ic_idx: u32) -> impl Iterator<Item = u32> + '_ {
+         self.irq_desc.iter().filter_map(move |x| {
+             if x.basic.ic_idx == ic_idx as usize {
+-                Some(x.basic.ic_irq as u8)
++                Some(x.basic.ic_irq)
+             } else {
+                 None
+             }
+@@ -678,7 +681,7 @@ const INIT_IRQ_DESC: IrqDesc = IrqDesc {
+ };
+ pub static mut IRQ_CHIP: IrqChipCore = IrqChipCore {
+     irq_chip_list: IrqChipList { chips: Vec::new() },
+-    irq_desc: [INIT_IRQ_DESC; 2048],
++    irq_desc: [INIT_IRQ_DESC; IRQ_DESC_COUNT],
+ };
+ 
+ pub fn init(fdt: &Fdt) {
+@@ -729,3 +732,46 @@ pub fn available_irqs_iter(_cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> +
+     error!("available_irqs_iter has been called");
+     0..0
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use core::sync::atomic::{AtomicU32, Ordering};
++
++    static SEEN: AtomicU32 = AtomicU32::new(0);
++
++    struct Record;
++
++    impl InterruptHandler for Record {
++        fn irq_handler(&mut self, irq: u32, _token: &mut CleanLockToken) {
++            SEEN.store(irq, Ordering::SeqCst);
++        }
++    }
++
++    #[test]
++    fn registered_handler_sees_the_full_virq() {
++        let mut core = alloc::boxed::Box::new(IrqChipCore {
++            irq_chip_list: IrqChipList { chips: Vec::new() },
++            irq_desc: [INIT_IRQ_DESC; IRQ_DESC_COUNT],
++        });
++        core.irq_desc[386].handler = Some(Box::new(Record));
++        let mut token = unsafe { CleanLockToken::new() };
++
++        core.trigger_virq(386, &mut token);
++
++        assert_eq!(SEEN.load(Ordering::SeqCst), 386);
++    }
++
++    #[test]
++    fn irq_iter_for_keeps_hwirqs_above_255() {
++        let mut core = alloc::boxed::Box::new(IrqChipCore {
++            irq_chip_list: IrqChipList { chips: Vec::new() },
++            irq_desc: [INIT_IRQ_DESC; IRQ_DESC_COUNT],
++        });
++        for (i, desc) in core.irq_desc.iter_mut().enumerate() {
++            desc.basic.ic_idx = 1;
++            desc.basic.ic_irq = i as u32;
++        }
++        assert_eq!(core.irq_iter_for(1).nth(386), Some(386));
++    }
++}
+diff --git a/src/scheme/irq.rs b/src/scheme/irq.rs
+index 20006b8f..4b7e5a83 100644
+--- a/src/scheme/irq.rs
++++ b/src/scheme/irq.rs
+@@ -40,8 +40,9 @@ use crate::{
+ /// IRQ queues
+ #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+ const IRQ_QUEUE_LEN: usize = 224;
++/// One queue per irqchip virq, so a GIC SPI such as 354 (virq 386) has a slot.
+ #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+-const IRQ_QUEUE_LEN: usize = 2048;
++const IRQ_QUEUE_LEN: usize = crate::dtb::irqchip::IRQ_DESC_COUNT;
+ pub(super) static COUNTS: Mutex<[usize; IRQ_QUEUE_LEN]> = Mutex::new([0; IRQ_QUEUE_LEN]);
+ static HANDLES: RwLock<L1, HandleMap<Handle>> = RwLock::new(HandleMap::new());
+ 
+@@ -55,10 +56,7 @@ const BASE_IRQ_COUNT: u16 = 16;
+ ///
+ /// Since these are non-sharable, they must be opened with O_CREAT, which then reserves them. They
+ /// are only freed when the file descriptor is closed.
+-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+-const TOTAL_IRQ_COUNT: u16 = 224;
+-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+-const TOTAL_IRQ_COUNT: u16 = 2048;
++const TOTAL_IRQ_COUNT: u16 = IRQ_QUEUE_LEN as u16;
+ 
+ const INO_TOPLEVEL: u64 = 0x8002_0000_0000_0000;
+ const INO_AVAIL: u64 = 0x8000_0000_0000_0000;
+@@ -96,7 +94,7 @@ enum Handle {
+     },
+     Avail(LogicalCpuId),
+     TopLevel,
+-    Phandle(u8, Vec<u8>),
++    Phandle(u32, Vec<u8>),
+     Bsp,
+ }
+ 
+@@ -113,6 +111,25 @@ impl Handle {
+             _ => None,
+         }
+     }
++
++    fn path(&self) -> Option<String> {
++        Some(match self {
++            Handle::Irq { irq, .. } => format!("irq:{}", irq),
++            Handle::Bsp => "irq:bsp".to_owned(),
++            Handle::Avail(cpu_id) => format!("irq:cpu-{:2x}", cpu_id.get()),
++            Handle::Phandle(phandle, _) => format!("irq:phandle-{}", phandle),
++            Handle::TopLevel => "irq:".to_owned(),
++            _ => return None,
++        })
++    }
++}
++
++/// Maps an irqchip virq to the number the scheme hands out.
++#[cfg_attr(not(dtb), allow(dead_code))]
++fn scheme_irq_number(virq: usize) -> Option<u16> {
++    u16::try_from(virq)
++        .ok()
++        .filter(|&irq| irq < TOTAL_IRQ_COUNT)
+ }
+ 
+ static CPUS: Once<Vec<u8>> = Once::new();
+@@ -224,10 +241,7 @@ impl IrqScheme {
+                 let irq_number = IRQ_CHIP
+                     .irq_xlate(ic_idx, addr.as_slice())
+                     .or(Err(Error::new(ENOENT)))?;
+-                let irq_number = u16::try_from(irq_number).or(Err(Error::new(ENOENT)))?;
+-                if irq_number >= TOTAL_IRQ_COUNT {
+-                    return Err(Error::new(ENOENT));
+-                }
++                let irq_number = scheme_irq_number(irq_number).ok_or(Error::new(ENOENT))?;
+                 debug!("open_phandle_irq  virq={}", irq_number);
+                 let reservation = if flags & O_STAT == 0 {
+                     let cpu_id = LogicalCpuId::BSP;
+@@ -345,7 +359,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
+                     if has_any {
+                         let data = String::new();
+                         (
+-                            Handle::Phandle(phandle as u8, data.into_bytes()),
++                            Handle::Phandle(phandle as u32, data.into_bytes()),
+                             InternalFlags::POSITIONED,
+                         )
+                     } else {
+@@ -577,15 +591,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
+         let handles_guard = HANDLES.read(token.token());
+         let handle = handles_guard.get(id)?;
+ 
+-        let scheme_path = match handle {
+-            Handle::Irq { irq, .. } => format!("irq:{}", irq),
+-            Handle::Bsp => "irq:bsp".to_owned(),
+-            Handle::Avail(cpu_id) => format!("irq:cpu-{:2x}", cpu_id.get()),
+-            Handle::Phandle(phandle, _) => format!("irq:phandle-{}", phandle),
+-            Handle::TopLevel => "irq:".to_owned(),
+-            _ => return Err(Error::new(EBADF)),
+-        }
+-        .into_bytes();
++        let scheme_path = handle.path().ok_or(Error::new(EBADF))?.into_bytes();
+ 
+         buf.copy_common_bytes_from_slice(&scheme_path)
+     }
+@@ -632,3 +638,79 @@ impl crate::scheme::KernelScheme for IrqScheme {
+         }
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::percpu::PercpuBlock;
++
++    /// The scheme's handle lock consults the current CPU block.
++    fn token() -> CleanLockToken {
++        let cpu =
++            alloc::boxed::Box::leak(alloc::boxed::Box::new(PercpuBlock::init(LogicalCpuId::BSP)));
++        PercpuBlock::set_mock_current(cpu);
++        unsafe { CleanLockToken::new() }
++    }
++
++    #[test]
++    fn trigger_counts_a_virq_above_255() {
++        let mut token = token();
++        let before = COUNTS.lock()[386];
++        irq_trigger(386, &mut token);
++        assert_eq!(COUNTS.lock()[386], before + 1);
++    }
++
++    #[test]
++    fn trigger_ignores_a_virq_without_a_queue() {
++        let mut token = token();
++        irq_trigger(TOTAL_IRQ_COUNT, &mut token);
++        irq_trigger(u16::MAX, &mut token);
++    }
++
++    #[test]
++    fn scheme_numbers_cover_sdm845_spis() {
++        // GENI uart9 is SPI 354: virq 354 + 32 on a GIC whose range starts at 0.
++        assert_eq!(scheme_irq_number(386), Some(386));
++        assert_eq!(
++            scheme_irq_number(IRQ_QUEUE_LEN - 1),
++            Some(TOTAL_IRQ_COUNT - 1)
++        );
++        assert_eq!(scheme_irq_number(IRQ_QUEUE_LEN), None);
++        assert_eq!(scheme_irq_number(usize::MAX), None);
++    }
++
++    #[test]
++    fn irq_handle_path_round_trips_a_wide_number() {
++        let handle = Handle::Irq {
++            ack: AtomicUsize::new(0),
++            irq: 386,
++            reservation: None,
++        };
++        let path = handle.path().unwrap();
++        assert_eq!(path, "irq:386");
++        assert_eq!(u16::from_str(&path["irq:".len()..]), Ok(386));
++        assert_eq!(handle.as_irq_handle().map(|(_, irq)| irq), Some(386));
++    }
++
++    #[cfg(dtb)]
++    #[test]
++    fn every_irqchip_virq_has_a_queue() {
++        let descs = unsafe { (*core::ptr::addr_of!(IRQ_CHIP)).irq_desc.len() };
++        assert_eq!(IRQ_QUEUE_LEN, descs);
++    }
++
++    #[cfg(dtb)]
++    #[test]
++    fn unhandled_virq_above_255_reaches_its_queue() {
++        let mut token = token();
++        let before = COUNTS.lock()[387];
++        unsafe { (*core::ptr::addr_of_mut!(IRQ_CHIP)).trigger_virq(387, &mut token) };
++        assert_eq!(COUNTS.lock()[387], before + 1);
++    }
++
++    #[test]
++    fn phandle_path_keeps_phandles_above_255() {
++        let handle = Handle::Phandle(0x1234, Vec::new());
++        assert_eq!(handle.path().unwrap(), "irq:phandle-4660");
++    }
++}

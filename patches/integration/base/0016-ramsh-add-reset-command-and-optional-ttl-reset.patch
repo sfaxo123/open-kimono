@@ -1,0 +1,104 @@
+From a6e734ca27ed75e4138d51f71ba3d43ab8218959 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 31 Oct 2026 21:26:32 +0000
+Subject: [PATCH] ramsh: add reset command and optional RAM boot TTL reset
+
+Add a ramsh reboot command that opens the kernel reset endpoint and an opt-in
+REDOX_RAMBOOT_TTL countdown that logs its duration before resetting.
+
+Agent: Codex
+Host: 3090
+Session: codex:01a193d7-050d-7ce0-8ae2-c123e25fe012
+Model: gpt-6-luna
+Provider: openai
+---
+  ramsh/src/main.rs | 45 ++++++++++++++++++++++++++++++++++++++++++++-
+  1 file changed, 44 insertions(+), 1 deletion(-)
+
+diff --git a/ramsh/src/main.rs b/ramsh/src/main.rs
+index ea5b9178..045d0157 100644
+--- a/ramsh/src/main.rs
++++ b/ramsh/src/main.rs
+@@ -2,6 +2,8 @@
+ 
+ use std::fs;
+ use std::io::{self, BufRead, Write};
++use std::thread;
++use std::time::{Duration, Instant};
+ 
+ use libredox::flag::{O_RDONLY, O_WRONLY};
+ 
+@@ -15,6 +17,7 @@ fn run() -> io::Result<()> {
+     let mut line = String::new();
+     let mut out = io::stdout().lock();
+     writeln!(out, "Redox RAM shell. Type help for commands.")?;
++    start_ttl_reset();
+     loop {
+         write!(out, "ram:~$ ")?;
+         out.flush()?;
+@@ -28,7 +31,7 @@ fn run() -> io::Result<()> {
+         } else {
+             match command {
+                 "" => {}
+-                "help" => writeln!(out, "help echo pwd ls cat exit")?,
++                "help" => writeln!(out, "help echo pwd ls cat reboot exit")?,
+                 "pwd" => writeln!(out, "/scheme/initfs")?,
+                 "ls" => {
+                     for entry in fs::read_dir("/scheme/initfs")? {
+@@ -36,6 +39,11 @@ fn run() -> io::Result<()> {
+                     }
+                 }
+                 "exit" => break,
++                "reboot" => {
++                    writeln!(out, "RAMBOOT: reset via PSCI in 0s")?;
++                    out.flush()?;
++                    request_psci_reset();
++                }
+                 _ if command.starts_with("cat ") => {
+                     let path = command[4..].trim();
+                     if path.starts_with('/') && !path.starts_with("/scheme/initfs/") {
+@@ -55,6 +63,41 @@ fn run() -> io::Result<()> {
+     Ok(())
+ }
+ 
++fn start_ttl_reset() {
++    let Ok(value) = std::env::var("REDOX_RAMBOOT_TTL") else {
++        return;
++    };
++    let Ok(seconds) = value.parse::<u64>() else {
++        eprintln!("RAMBOOT: invalid REDOX_RAMBOOT_TTL; automatic reset disabled");
++        return;
++    };
++
++    thread::spawn(move || {
++        if let Ok(console) = libredox::Fd::open("/scheme/debug/no-preserve", O_WRONLY, 0) {
++            let message = format!("RAMBOOT: reset via PSCI in {seconds}s\n");
++            let _ = console.write(message.as_bytes());
++        }
++        // thread::sleep never wakes on the RAM boot kernel (R-1 emulator
++        // evidence), so poll the monotonic clock and yield until the deadline.
++        let deadline = Instant::now() + Duration::from_secs(seconds);
++        while Instant::now() < deadline {
++            thread::yield_now();
++        }
++        request_psci_reset();
++    });
++}
++
++fn request_psci_reset() {
++    match libredox::Fd::open("/scheme/sys/kstop", O_WRONLY, 0) {
++        Ok(mut reset) => {
++            if let Err(err) = reset.write(b"reset") {
++                eprintln!("RAMBOOT: PSCI reset request failed: {err}");
++            }
++        }
++        Err(err) => eprintln!("RAMBOOT: PSCI reset request failed: {err}"),
++    }
++}
++
+ fn main() {
+     if let Err(err) = run() {
+         eprintln!("ramsh: {err}");
+-- 
+2.43.0
+

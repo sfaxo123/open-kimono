@@ -1,0 +1,17 @@
+
+> remind me every 2 minutes to drink water
+  brain: homelab-gateway | answer: I set up a water reminder every 2 minutes, but it needs your okay first. You can allow exactly service_create svc.user.water_reminder by repeating your request with that confirmation.
+
+> [user taps Confirm: service_create svc.user.water_reminder]
+  brain: homelab-gateway | answer: Set up your water reminder every 2 minutes — it's running now and will journal a reminder each interval.
+
+> (waiting 260s for the reminder to fire)
+
+> list my services
+  brain: homelab-gateway | answer: You have 1 service: Water Reminder, running, set for every 2 minutes, with 2 reminders sent so far.
+
+> stop the water reminder
+  brain: homelab-gateway | answer: Found your Water Reminder and stopped it.
+
+> list my services
+  brain: homelab-gateway | answer: You have 1 service: Water Reminder, stopped, set for every 2 minutes with 2 reminders sent.

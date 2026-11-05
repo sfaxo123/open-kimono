@@ -1,0 +1,42 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH 12/12] spmid: log sampled and delivered button events
+
+diff --git a/drivers/spmid/src/main.rs b/drivers/spmid/src/main.rs
+--- a/drivers/spmid/src/main.rs
++++ b/drivers/spmid/src/main.rs
+@@ -114,6 +114,7 @@
+         let mut input: Option<ProducerHandle> = None;
+         let mut buttons = Buttons::new(true);
+         let mut last_error = None;
++        let mut last_levels = None;
+         loop {
+             let levels = match arb.sample() {
+                 Ok(levels) => {
+@@ -130,11 +131,15 @@
+                     continue;
+                 }
+             };
++            if last_levels != Some(levels) {
++                eprintln!("spmid: sampled buttons {levels:?}");
++                last_levels = Some(levels);
++            }
+             for edge in buttons.update(levels) {
+-                let scancode = match edge.button {
+-                    Button::Power => K_POWER,
+-                    Button::VolumeDown => K_VOLUME_DOWN,
+-                    Button::VolumeUp => K_VOLUME_UP,
++                let (scancode, name) = match edge.button {
++                    Button::Power => (K_POWER, "power"),
++                    Button::VolumeDown => (K_VOLUME_DOWN, "vol-down"),
++                    Button::VolumeUp => (K_VOLUME_UP, "vol-up"),
+                 };
+                 if input.is_none() {
+                     input = Some(ProducerHandle::new()?);
+@@ -148,6 +153,7 @@
+                         }
+                         .to_event(),
+                     )?;
++                    eprintln!("spmid: inputd key {name} pressed={}", edge.pressed);
+                 }
+             }
+             thread::sleep(Duration::from_millis(50));

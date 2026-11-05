@@ -1,0 +1,171 @@
+From 3e15c2819caa7e14e1e4b2ff758a41cbc58a7311 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Mon, 26 Oct 2026 03:49:16 +0000
+Subject: [PATCH 2/2] doc: record OnePlus 6 headless build and emulator proof
+
+Agent: Codex
+Model: GPT-6
+Provider: OpenAI
+Refs: OnePlus 6 headless USB
+---
+ doc/board/qualcomm/oneplus6-headless.rst | 148 +++++++++++++++++++++++
+ 1 file changed, 148 insertions(+)
+ create mode 100644 doc/board/qualcomm/oneplus6-headless.rst
+
+diff --git a/doc/board/qualcomm/oneplus6-headless.rst b/doc/board/qualcomm/oneplus6-headless.rst
+new file mode 100644
+index 00000000..bbc13976
+--- /dev/null
++++ b/doc/board/qualcomm/oneplus6-headless.rst
+@@ -0,0 +1,148 @@
++OnePlus 6 headless USB boot variant
++==================================
++
++Status
++------
++
++The image at ``$HOME/artifacts/handoff/oneplus-redox-20261024/phone-boot/u-boot-headless/u-boot-enchilada-headless.img``
++is built and passed the virtual-phone missing-UDC test. It has **not** been
++run on the real phone. The original v0 image and build are untouched. This
++variant is intended for RAM boot with ABL ``fastboot boot``, not flashing.
++
++The one DWC3 gadget can expose either fastboot or CDC-ACM at a time. Fastboot
++is the unattended default: after the existing ``scsi scan`` preboot and a
++one-second bootdelay, the screen shows a three-second menu with fastboot
++selected. Without input, it runs ``fastboot -l 0xa0000000 -s 0x6000000 usb 0``.
++The second menu entry enables ``usbacm`` on stdin, stdout, and stderr alongside
++``serial`` / ``button-kbd`` / ``vidconsole``. It is a selectable alternative,
++not active during fastboot. This matters because this fork's
++``acm_stdio_start()`` waits until the host opens the ACM port; enabling ACM
++before fastboot could block the unattended path indefinitely. The fastboot
++command parser accepts ``-l`` and ``-s`` only before ``usb 0``.
++
++Changes and configuration
++-------------------------
++
++``board/qualcomm/qcom-phone-headless.env`` is a copy of the phone environment
++with only these behavior changes:
++
++* ``bootdelay``: ``0`` -> ``1``; ``bootretry``: ``1`` -> ``-1``.
++* ``fastboot``: dynamic buffer -> fixed ``0xa0000000`` / ``0x6000000`` RAM
++  staging window.
++* ``bootcmd``: EFI boot manager then indefinite menu -> ``bootmenu 3`` with
++  ``bootmenu_default=0``.
++* Menu entry 0 is fastboot, entry 3 is EFI boot; entry 1 retains the ACM
++  console action. All other menu actions and ``preboot=scsi scan`` remain.
++
++``board/qualcomm/qcom-phone-headless.config`` selects the new environment.
++Compared with the prior built ``.config``, the sole Kconfig difference is::
++
++    -CONFIG_ENV_DEFAULT_ENV_TEXT_FILE="board/qualcomm/qcom-phone.env"
++    +CONFIG_ENV_DEFAULT_ENV_TEXT_FILE="board/qualcomm/qcom-phone-headless.env"
++
++The build still has ``CONFIG_USB_FUNCTION_ACM=y``,
++``CONFIG_USB_FUNCTION_FASTBOOT=y``, ``CONFIG_FASTBOOT_OEM_RUN=y`` and
++``CONFIG_FASTBOOT_CMD_OEM_CONSOLE=y``. ``cmd/fastboot.c`` parses the staging
++flags; ``drivers/fastboot/fb_usb.c`` returns when no UDC is found.
++
++Build and package receipt
++-------------------------
++
++These commands ran from this U-Boot worktree. ``OUT`` is a new directory.
++The starting ``.config`` was copied from the existing phone build so its
++toolchain and other options remained the same. The Ubuntu host-tools path
++provides bison, flex and m4 without installing packages::
++
++    OUT=$HOME/artifacts/handoff/oneplus-redox-20261024/phone-boot/u-boot-headless
++    OLD=$HOME/artifacts/handoff/oneplus-redox-20261024/phone-boot
++    cp "$OLD/u-boot-build/.config" "$OUT/.config"
++    scripts/config --file "$OUT/.config" --set-str ENV_DEFAULT_ENV_TEXT_FILE board/qualcomm/qcom-phone-headless.env
++    export PATH="$OLD/host-tools/usr/bin:$PATH"
++    export BISON_PKGDATADIR="$OLD/host-tools/usr/share/bison"
++    export M4="$OLD/host-tools/usr/bin/m4"
++    make O="$OUT" ARCH=arm CROSS_COMPILE=aarch64-linux-gnu- olddefconfig > "$OUT/config.log" 2>&1
++    make O="$OUT" ARCH=arm CROSS_COMPILE=aarch64-linux-gnu- -j8 > "$OUT/build.log" 2>&1
++    cp "$OLD/sdm845-oneplus-enchilada.dtb" "$OUT/"
++    gzip -n -9 -c "$OUT/u-boot-nodtb.bin" > "$OUT/u-boot-nodtb.bin.gz"
++    cat "$OUT/u-boot-nodtb.bin.gz" "$OUT/sdm845-oneplus-enchilada.dtb" > "$OUT/u-boot-nodtb.bin.gz-dtb"
++    sed '/^from gki.generate_gki_certificate import generate_gki_certificate$/d' "$OLD/host-tools/usr/bin/mkbootimg" > "$OUT/mkbootimg.py"
++    python3 "$OUT/mkbootimg.py" --kernel "$OUT/u-boot-nodtb.bin.gz-dtb" --output "$OUT/u-boot-enchilada-headless.img" --pagesize 4096 --base 0 --kernel_offset 0x8000 --ramdisk_offset 0x01000000 --second_offset 0x00f00000 --tags_offset 0x100 --header_version 0
++
++``mkbootimg.py`` is the same Ubuntu 1:34.0.4-1build3 build-only copy used for
++v0, with its unavailable optional GKI signing import removed. These exact
++options reproduced the old v0 image byte for byte before packaging the new
++payload (SHA-256 ``2f86f373c21d3eb083624844db3ed002d674edea52eadf86ce3a08c34ab89f72``).
++``unpack_bootimg`` confirms ``ANDROID!``, header 0, page size 4096, kernel
++address ``0x8000``, and its extracted kernel compares equal to the new
++gzip-plus-DTB payload. The new image SHA-256 is
++``ca2e6d245033fca2387b15115b62cf492c966daee9907f7f1b990a3598a9ee67``.
++
++Virtual phone receipt
++---------------------
++
++The emulator is ``$HOME/Developer/forks/qemu-oneplus6/build/qemu-system-aarch64``
++with ``-M oneplus6 -m 4G``. As in its ``run-m7-uboot.py`` pattern, the test
++appended a disposable DTB to the raw U-Boot binary, patched
++``/memory@80000000/reg`` to the emulator's 4 GiB bank, and loaded the result
++at ``0x80008000``. The first attempt left both USB nodes enabled and reached
++the menu, but QEMU's unmodelled USB controller then caused a synchronous
++abort in ``dwc3_qcom_select_utmi_clk``. For the acceptance run, only the
++disposable emulator DTB marked ``/soc@0/usb@a6f8800`` and
++``/soc@0/usb@a8f8800`` disabled. The packaged phone DTB was not changed.
++The final run used::
++
++    cp "$OUT/sdm845-oneplus-enchilada.dtb" "$OUT/qemu-enchilada.dtb"
++    fdtput -t x "$OUT/qemu-enchilada.dtb" /memory@80000000 reg 0 0x80000000 1 0
++    fdtput -t s "$OUT/qemu-enchilada.dtb" /soc@0/usb@a6f8800 status disabled
++    fdtput -t s "$OUT/qemu-enchilada.dtb" /soc@0/usb@a8f8800 status disabled
++    cat "$OUT/u-boot-nodtb.bin" "$OUT/qemu-enchilada.dtb" > "$OUT/qemu-u-boot-with-ram.bin"
++    timeout --signal=TERM --kill-after=2s 40s $HOME/Developer/forks/qemu-oneplus6/build/qemu-system-aarch64 -M oneplus6 -m 4G -display none -monitor none -serial file:"$OUT/qemu-serial-no-usb.log" -no-reboot -device loader,file="$OUT/qemu-u-boot-with-ram.bin",addr=0x80008000,cpu-num=0,force-raw=on -d unimp -D "$OUT/qemu-unimp-no-usb.log"
++
++The 40-second timeout ended an idle prompt (exit 124). The serial log contains::
++
++    U-Boot 2026.10-g8649a54d301a
++    Model: OnePlus 6
++    Hit any key to stop autoboot: 1
++    *** U-Boot Boot Menu ***
++    1. Enable fastboot mode
++    2. Enable serial console gadget
++    Hit any key to stop autoboot: 3 ... 2 ... 1
++    No USB device found
++    USB init failed: -19
++    =>
++
++No key was injected. The final log has no ``Synchronous Abort`` or U-Boot
++reset error. UFS probe errors are expected from the emulator's incomplete
++storage model. QEMU does not prove that the real phone enumerates fastboot or
++ACM; that remains a hardware acceptance step outside this work.
++
++Mac-side agent commands for a later authorized phone session
++-------------------------------------------------------------
++
++These are commands for the Mac that owns the phone USB cable. They were **not**
++run here. The agent must confirm the target from ``fastboot devices`` before
++RAM boot, and again after U-Boot re-enumerates::
++
++    FB="$HOME/tools/platform-tools/fastboot"
++    mkdir -p "$HOME/op6-headless"
++    scp 3090:$HOME/artifacts/handoff/oneplus-redox-20261024/phone-boot/u-boot-headless/u-boot-enchilada-headless.img "$HOME/op6-headless/"
++    scp 3090:$HOME/artifacts/handoff/oneplus-redox-20261024/phone-boot/efi-diag.efi "$HOME/op6-headless/"
++    "$FB" devices
++    "$FB" boot "$HOME/op6-headless/u-boot-enchilada-headless.img"
++    "$FB" devices
++    "$FB" getvar version-bootloader
++    "$FB" stage "$HOME/op6-headless/efi-diag.efi"
++    "$FB" oem run:'bootefi 0xa0000000 ${fdtcontroladdr}'
++
++For environment control while U-Boot fastboot is active, use, for example::
++
++    "$FB" oem run:'setenv agent_probe ok'
++    "$FB" oem run:'printenv agent_probe'
++    "$FB" oem console
++
++Do not set stdin/stdout/stderr to ``usbacm`` through ``oem run`` during an
++active fastboot session: changing the single gadget would remove the host's
++control channel. Select the ACM menu entry from the screen before fastboot
++starts if that mode is needed. After the EFI diagnostic, observe its result
++before staging another payload. No flash or partition command is part of this
++procedure.
+-- 
+2.43.0
+

@@ -1,0 +1,599 @@
+From: Remy <remy@localhost>
+Subject: [PATCH] aarch64: APSS watchdog handoff - disarm at end of device init, or leave armed on request
+
+REVIEW-20261031-2230 F-4: the bootloader arms the APSS
+watchdog before handoff (P3: wdt dev + wdt start in the
+U-Boot boot command), its hardware fuse is ~32 s (the qcom
+driver clamps 300000 ms to its 32003 ms maximum), and
+U-Boot's servicing stops at handoff - so unpetted it bites
+~32 s into every boot. New module qcom_wdt (feature
+qcom-wdt-handoff, default OFF): FDT discovery of the
+watchdog@17980000 node (KPSS layout via the compatible
+fallback both the fork's U-Boot driver and Linux bind;
+APCS-TMR layouts recognized and refused; reg span must
+cover the register block), and at the END of device init -
+the healthy point - it takes ownership: REDOX_WDT_MODE=leave
+(bootloader patch 0006) leaves the watchdog armed for
+stall tests; anything else disarms by clearing only the
+WDT_EN enable bit (read-modify-write, readback-verified).
+Fail-safe throughout: a failed disarm warns and boots on,
+and patch 0042 makes even that bite land in the normal boot
+path. No petting in this patch. Host tests 9/9 (layout
+selection, env parsing, EN math, disarm/leave transactions).
+
+Agent: Remy (root of record)
+Model: Muse Wonder (muse-wonder-1.0)
+Provider: Meta
+
+---
+diff --git a/Cargo.toml b/Cargo.toml
+index 1b260d7b..f1b94c13 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -104,6 +104,7 @@ system76_ec_debug = []
+ x86_kvm_pv = []
+ qcom-dload-mode-clear = []
+ qcom-pon-reboot-reason = []
++qcom-wdt-handoff = []
+ 
+ debugger = ["syscall_debug"]
+ syscall_debug = []
+diff --git a/src/arch/aarch64/device/mod.rs b/src/arch/aarch64/device/mod.rs
+index 2cacaab7..c440265d 100644
+--- a/src/arch/aarch64/device/mod.rs
++++ b/src/arch/aarch64/device/mod.rs
+@@ -6,6 +6,7 @@ pub mod irqchip;
+ pub mod psci;
+ pub mod qcom_pon;
+ pub mod qcom_scm;
++pub mod qcom_wdt;
+ pub mod rtc;
+ pub mod serial;
+ 
+@@ -51,6 +52,7 @@ pub unsafe fn init_devicetree(fdt: &Fdt) {
+         psci::init(fdt);
+         qcom_scm::init(fdt);
+         qcom_pon::init(fdt);
++        qcom_wdt::init(fdt);
+         info!("CPU TOPOLOGY INIT");
+         cpu::init_topology(fdt);
+         info!("IRQCHIP INIT");
+@@ -62,6 +64,15 @@ pub unsafe fn init_devicetree(fdt: &Fdt) {
+         serial::init(fdt);
+         info!("RTC INIT");
+         rtc::init(fdt);
++        // P3 F-4 (REVIEW-20261031-2230): the bootloader may have armed
++        // the APSS watchdog before handoff (~32 s hardware fuse, no
++        // servicing once U-Boot exits). Device init is complete at
++        // this point - the healthy point for this phase - so the
++        // kernel takes ownership of the watchdog now: disarm it
++        // (normal images) or deliberately leave it armed
++        // (REDOX_WDT_MODE=leave stall-test images).
++        #[cfg(feature = "qcom-wdt-handoff")]
++        qcom_wdt::handoff();
+     }
+ }
+ 
+diff --git a/src/arch/aarch64/device/qcom_wdt.rs b/src/arch/aarch64/device/qcom_wdt.rs
+new file mode 100644
+index 00000000..3070c0f6
+--- /dev/null
++++ b/src/arch/aarch64/device/qcom_wdt.rs
+@@ -0,0 +1,517 @@
++//! Narrow Qualcomm APSS watchdog handoff support (SDM845).
++//!
++//! The bootloader now arms the APSS watchdog before handing over to
++//! Redox (P3 phase 1: `wdt dev watchdog@17980000; wdt start 300000`
++//! prepended to the U-Boot boot command). The hardware fuse is short:
++//! the qcom driver clamps the requested timeout to its maximum tick
++//! count (0xFFFFF ticks, ~32 s at the sleep clock) and U-Boot's
++//! servicing stops at handoff, so an armed watchdog bites ~32 s into
++//! the boot unless the kernel takes ownership (REVIEW-20261031-2230
++//! F-4). This module is that handoff. At the end of device init it
++//! either DISARMS the watchdog (normal images; the TTL/reset
++//! machinery owns the timeline from there) or deliberately LEAVES it
++//! armed (stall-test images, whose bite must land in the installed
++//! system — the early download-mode cookie clear, patch 0042, makes
++//! that true). No petting here; a later phase may add a petter.
++//!
++//! Register facts are taken from the drivers this boot chain
++//! actually runs, not from memory. The node's fallback compatible
++//! "qcom,kpss-wdt" selects the KPSS register layout in both the
++//! fork's U-Boot driver (drivers/watchdog/qcom-wdt.c in the U-Boot
++//! fork: reg_offset_data_kpss at lines 41–47, qcom_wdt_stop at
++//! 89–100, the start path's writel(BIT(0), WDT_EN) at line 84) and
++//! Linux (drivers/watchdog/qcom-wdt.c: reg_offset_data_kpss,
++//! QCOM_WDT_ENABLE = BIT(0), qcom_wdt_stop writel(0, WDT_EN),
++//! qcom_wdt_is_running reads WDT_EN & QCOM_WDT_ENABLE, and
++//! qcom_wdt_of_table maps "qcom,kpss-wdt" to that layout). The node
++//! itself is watchdog@17980000 in the pinned DTB, compatible
++//! "qcom,apss-wdt-sdm845", "qcom,kpss-wdt", reg 0x17980000/0x1000
++//! (Linux arch/arm64/boot/dts/qcom/sdm845.dtsi, node at line 5370).
++//!
++//! Everything here is opt-in (Cargo feature `qcom-wdt-handoff`,
++//! default OFF, mirroring `qcom-pon-reboot-reason`) and fail-safe: a
++//! failed disarm is a warning, never a boot blocker — the worst case
++//! is the pre-existing behaviour (an unpetted bite), which the early
++//! cookie clear now lands in the normal boot path. The mode arrives
++//! in the kernel environment (REDOX_WDT_MODE, forwarded by
++//! bootloader patch 0006, travelling exactly like
++//! REDOX_RAMBOOT_TTL): `leave` leaves the watchdog armed; `disarm`,
++//! an absent key, or any other value disarms — disarm is the
++//! default because normal images never set the key.
++//!
++//! One deliberate deviation from the reference drivers: Linux and
++//! U-Boot stop the watchdog by writing literal 0 to WDT_EN. We
++//! clear only the enable bit (read-modify-write, preserving any
++//! other bits) and verify the enable bit reads back clear. The
++//! enable bit is the only bit either driver defines, so the two
++//! are equivalent on this hardware, and preserving unknown bits is
++//! the conservative choice for a register we do not fully own.
++//!
++//! The pure layer (register constants, compatible/layout
++//! selection, env parsing, EN read-modify-write math, and the
++//! handoff transaction against the abstract WdtBus surface) has no
++//! kernel dependencies and is host-tested at the bottom of this
++//! file; the kernel glue (FDT discovery, MMIO) is
++//! `#[cfg(not(test))]` so this file also compiles standalone under
++//! `rustc --test`.
++
++#[cfg(not(test))]
++use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
++
++// ---------------------------------------------------------------------------
++// Pure layer: register constants and layout selection.
++// ---------------------------------------------------------------------------
++
++/// WDT_RST offset in the KPSS layout (pet/restart strobe; unused here).
++pub const WDT_RST_OFFSET: usize = 0x4;
++/// WDT_EN offset in the KPSS layout.
++pub const WDT_EN_OFFSET: usize = 0x8;
++/// WDT_STS offset in the KPSS layout.
++pub const WDT_STS_OFFSET: usize = 0xC;
++/// WDT_BARK_TIME offset in the KPSS layout.
++pub const WDT_BARK_TIME_OFFSET: usize = 0x10;
++/// WDT_BITE_TIME offset in the KPSS layout.
++pub const WDT_BITE_TIME_OFFSET: usize = 0x14;
++/// The enable bit in WDT_EN (Linux QCOM_WDT_ENABLE; the U-Boot start
++/// path writes BIT(0), its stop path writes 0 and verifies).
++pub const WDT_ENABLE: u32 = 1 << 0;
++/// Smallest reg span covering the register block (BITE_TIME + 4).
++/// A node whose FDT reg span is smaller is not driven at all.
++pub const WDT_REG_SPAN_MIN: usize = WDT_BITE_TIME_OFFSET + 4;
++
++/// Watchdog register layouts. Only KPSS is implemented: it is the
++/// layout every compatible on the SDM845 node resolves to.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Layout {
++    Kpss,
++}
++
++/// Classify one DT compatible string. Outer `None` = not a qcom
++/// watchdog string we recognize; `Some(None)` = a known qcom
++/// watchdog whose layout this module does NOT implement;
++/// `Some(Some(layout))` = known and supported.
++pub fn classify_compatible(compatible: &str) -> Option<Option<Layout>> {
++    match compatible {
++        // sdm845.dtsi: compatible = "qcom,apss-wdt-sdm845", "qcom,kpss-wdt".
++        "qcom,apss-wdt-sdm845" | "qcom,kpss-wdt" => Some(Some(Layout::Kpss)),
++        // Linux qcom_wdt_of_table maps these to reg_offset_data_apcs_tmr,
++        // whose WDT_EN sits at +0x40, not +0x8 — driving them with KPSS
++        // offsets would write the wrong registers, so they are refused.
++        "qcom,kpss-timer" | "qcom,scss-timer" => Some(None),
++        _ => None,
++    }
++}
++
++/// Pick the layout for a node's compatible list, in list order —
++/// the first-match-wins rule OF matching uses: an unrecognized
++/// string is skipped (a specific string must not shadow a known
++/// fallback), and the first recognized string decides, even when
++/// it names an unsupported layout.
++pub fn select_layout(compatibles: &[&str]) -> Option<Layout> {
++    for compatible in compatibles {
++        match classify_compatible(compatible) {
++            Some(layout) => return layout,
++            None => continue,
++        }
++    }
++    None
++}
++
++// ---------------------------------------------------------------------------
++// Pure layer: mode from the kernel environment, and EN math.
++// ---------------------------------------------------------------------------
++
++/// Boot-environment key selecting the handoff mode. It reaches the
++/// kernel exactly the way REDOX_RAMBOOT_TTL does: a build-time
++/// option of the Redox bootloader (bootloader patch 0006, mirroring
++/// 0004's `option_env!` mechanism) written as a `KEY=value` line
++/// into the kernel environment, which kernel code reads via
++/// `crate::startup::init_env`.
++pub const MODE_ENV_KEY: &[u8] = b"REDOX_WDT_MODE";
++
++/// What the kernel does with an armed watchdog at the handoff.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Mode {
++    /// Clear WDT_EN's enable bit and verify (normal images).
++    Disarm,
++    /// Leave the watchdog exactly as the bootloader armed it
++    /// (stall-test images).
++    Leave,
++}
++
++/// Parse the handoff mode out of the bootloader environment
++/// (`KEY=value` lines). Only the exact value `leave` selects
++/// Leave; `disarm`, an absent key, or any other value selects
++/// Disarm, so the default posture of every image that does not
++/// explicitly opt into a stall test is a disarmed watchdog.
++pub fn parse_mode(env: &[u8]) -> Mode {
++    for line in env.split(|byte| *byte == b'\n') {
++        let line = if line.last() == Some(&b'\r') {
++            &line[..line.len() - 1]
++        } else {
++            line
++        };
++        if line.len() > MODE_ENV_KEY.len()
++            && &line[..MODE_ENV_KEY.len()] == MODE_ENV_KEY
++            && line[MODE_ENV_KEY.len()] == b'='
++        {
++            let value = &line[MODE_ENV_KEY.len() + 1..];
++            if value == b"leave" {
++                return Mode::Leave;
++            }
++            return Mode::Disarm;
++        }
++    }
++    Mode::Disarm
++}
++
++/// WDT_EN value with the watchdog disarmed: the enable bit clear,
++/// every other bit preserved.
++pub const fn en_disarmed(current: u32) -> u32 {
++    current & !WDT_ENABLE
++}
++
++/// Whether a WDT_EN value has the watchdog armed (the inverse of
++/// Linux qcom_wdt_is_running's check).
++pub const fn en_is_armed(en: u32) -> bool {
++    en & WDT_ENABLE != 0
++}
++
++// ---------------------------------------------------------------------------
++// Pure layer: the handoff transaction against an abstract bus.
++// ---------------------------------------------------------------------------
++
++/// The register surface the handoff needs, over the watchdog's
++/// single FDT reg region. The kernel implementation performs
++/// volatile MMIO; host tests substitute a fake register file.
++pub trait WdtBus {
++    fn read32(&mut self, offset: usize) -> u32;
++    fn write32(&mut self, offset: usize, value: u32);
++}
++
++/// The result of a handoff: the WDT_EN value observed on entry and
++/// the value in effect afterwards (the post-write readback for
++/// Disarm; the observed value, untouched, for Leave).
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct HandoffOutcome {
++    pub en_before: u32,
++    pub en_after: u32,
++}
++
++/// Perform the handoff against an abstracted watchdog. For Disarm:
++/// read WDT_EN, write it back with the enable bit clear, read back
++/// and require the enable bit clear (the readback half of U-Boot's
++/// qcom_wdt_stop, applied to the bit rather than the whole register
++/// because the write is a read-modify-write). For Leave: observe
++/// only — no write of any kind reaches the hardware.
++pub fn handoff_with_bus<B: WdtBus>(bus: &mut B, mode: Mode) -> Result<HandoffOutcome, &'static str> {
++    let en_before = bus.read32(WDT_EN_OFFSET);
++    match mode {
++        Mode::Leave => Ok(HandoffOutcome {
++            en_before,
++            en_after: en_before,
++        }),
++        Mode::Disarm => {
++            bus.write32(WDT_EN_OFFSET, en_disarmed(en_before));
++            let en_after = bus.read32(WDT_EN_OFFSET);
++            if en_is_armed(en_after) {
++                return Err("watchdog WDT_EN readback still shows the enable bit set");
++            }
++            Ok(HandoffOutcome {
++                en_before,
++                en_after,
++            })
++        }
++    }
++}
++
++// ---------------------------------------------------------------------------
++// Kernel glue (excluded from the standalone host-test build).
++// ---------------------------------------------------------------------------
++
++#[cfg(not(test))]
++static WDT_AVAILABLE: AtomicBool = AtomicBool::new(false);
++/// Virtual (phys_to_virt) base of the watchdog reg region, from the FDT.
++#[cfg(not(test))]
++static WDT_BASE_VIRT: AtomicUsize = AtomicUsize::new(0);
++
++/// Discover the APSS watchdog from the FDT. The base comes from the
++/// device tree, never from a hard-coded literal, so a DT change
++/// fails safe (feature reports unavailable) instead of writing to a
++/// wrong address. The address is translated through the DT `ranges`
++/// chain and converted with the kernel's physical map, which
++/// already registers every /soc child's reg ranges as device memory
++/// (crate::dtb register_dev_memory_ranges runs before device init),
++/// so it remains mapped at handoff time.
++#[cfg(not(test))]
++pub fn init(fdt: &crate::dtb::Fdt<'_>) {
++    use crate::memory::{RmmA, RmmArch};
++    use rmm::PhysicalAddress;
++
++    let found = probe(fdt);
++    if let Some(base) = found {
++        WDT_BASE_VIRT.store(
++            RmmA::phys_to_virt(PhysicalAddress::new(base)).data(),
++            Ordering::Release,
++        );
++    }
++    WDT_AVAILABLE.store(found.is_some(), Ordering::Release);
++    if found.is_some() {
++        info!("Qualcomm APSS watchdog node found; handoff remains opt-in");
++    }
++}
++
++/// FDT probe behind init(): returns the translated CPU-physical
++/// base of the watchdog reg region, for the first enabled node
++/// whose compatible list selects the KPSS layout and whose reg
++/// span covers the register block.
++#[cfg(not(test))]
++fn probe(fdt: &crate::dtb::Fdt<'_>) -> Option<usize> {
++    use fdt::properties::{values::StringList, Status};
++
++    for node in fdt.all_compatible(&[
++        "qcom,apss-wdt-sdm845",
++        "qcom,kpss-wdt",
++        "qcom,kpss-timer",
++        "qcom,scss-timer",
++    ]) {
++        if !matches!(node.property::<Status>(), None | Some(Status::OKAY)) {
++            continue;
++        }
++        let compatibles: alloc::vec::Vec<alloc::string::String> = node
++            .raw_property("compatible")
++            .and_then(|prop| prop.as_value::<StringList>().ok())
++            .map(|list| list.iter().map(alloc::string::ToString::to_string).collect())
++            .unwrap_or_default();
++        let refs: alloc::vec::Vec<&str> =
++            compatibles.iter().map(alloc::string::String::as_str).collect();
++        if select_layout(&refs) != Some(Layout::Kpss) {
++            continue;
++        }
++        let Some(reg) = node.reg() else { continue };
++        let Some(first) = reg.iter::<usize, usize>().next() else { continue };
++        let Ok(region) = first else { continue };
++        if region.len < WDT_REG_SPAN_MIN {
++            continue;
++        }
++        return crate::dtb::translate_mmio_address(fdt, &node, &region);
++    }
++    None
++}
++
++/// Volatile-MMIO WdtBus over the kernel's physical map.
++#[cfg(not(test))]
++struct MmioBus {
++    base: usize,
++}
++
++#[cfg(not(test))]
++impl WdtBus for MmioBus {
++    fn read32(&mut self, offset: usize) -> u32 {
++        unsafe { core::ptr::read_volatile((self.base + offset) as *const u32) }
++    }
++
++    fn write32(&mut self, offset: usize, value: u32) {
++        unsafe { core::ptr::write_volatile((self.base + offset) as *mut u32, value) }
++    }
++}
++
++/// Take ownership of the bootloader-armed watchdog at the end of
++/// device init, according to REDOX_WDT_MODE. Called once from
++/// init_devicetree (feature-gated at the call site). Every outcome
++/// is logged here and boot continues either way: a failed disarm
++/// leaves the pre-existing behaviour (a bite inside ~32 s), which
++/// the early cookie clear (patch 0042) lands in the normal boot
++/// path rather than CrashDump Mode.
++#[cfg(all(not(test), feature = "qcom-wdt-handoff"))]
++pub fn handoff() {
++    if !WDT_AVAILABLE.load(Ordering::Acquire) {
++        warn!("qcom WDT handoff failed: no enabled Qualcomm APSS watchdog (KPSS layout) device-tree node");
++        return;
++    }
++    let mode = parse_mode(crate::startup::init_env());
++    let mut bus = MmioBus {
++        base: WDT_BASE_VIRT.load(Ordering::Acquire),
++    };
++    match handoff_with_bus(&mut bus, mode) {
++        Ok(outcome) => {
++            match mode {
++                Mode::Disarm => { info!("qcom WDT: disarmed at kernel handoff"); }
++                Mode::Leave => { info!("qcom WDT: left armed at kernel handoff (REDOX_WDT_MODE=leave; bite in <=32 s if unpetted, WDT_EN was {:#x})", outcome.en_before); }
++            }
++        }
++        Err(reason) => { warn!("qcom WDT handoff failed: {}", reason); }
++    }
++}
++
++// ---------------------------------------------------------------------------
++// Host tests (standalone: rustc --test on this file).
++// ---------------------------------------------------------------------------
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::collections::HashMap;
++
++    /// Fake watchdog register file. `stick` controls whether writes
++    /// take effect: with stick = false a write is recorded but the
++    /// stored value does not change, modelling a disarm the
++    /// hardware refuses (the readback must then fail the handoff).
++    struct FakeBus {
++        regs: HashMap<usize, u32>,
++        writes: std::vec::Vec<(usize, u32)>,
++        stick: bool,
++    }
++
++    impl FakeBus {
++        fn with_en(en: u32) -> Self {
++            let mut bus = Self {
++                regs: HashMap::new(),
++                writes: std::vec::Vec::new(),
++                stick: true,
++            };
++            bus.regs.insert(WDT_EN_OFFSET, en);
++            bus
++        }
++    }
++
++    impl WdtBus for FakeBus {
++        fn read32(&mut self, offset: usize) -> u32 {
++            *self.regs.get(&offset).unwrap_or(&0)
++        }
++
++        fn write32(&mut self, offset: usize, value: u32) {
++            self.writes.push((offset, value));
++            if self.stick {
++                self.regs.insert(offset, value);
++            }
++        }
++    }
++
++    #[test]
++    fn layout_selection_sdm845_node() {
++        // The exact compatible list of the pinned DTB's node.
++        assert_eq!(
++            select_layout(&["qcom,apss-wdt-sdm845", "qcom,kpss-wdt"]),
++            Some(Layout::Kpss)
++        );
++        assert_eq!(select_layout(&["qcom,kpss-wdt"]), Some(Layout::Kpss));
++        assert_eq!(select_layout(&["qcom,apss-wdt-sdm845"]), Some(Layout::Kpss));
++    }
++
++    #[test]
++    fn layout_selection_refusals_and_order() {
++        // APCS TMR nodes are known but unsupported -> no layout.
++        assert_eq!(select_layout(&["qcom,kpss-timer"]), None);
++        assert_eq!(select_layout(&["qcom,scss-timer"]), None);
++        // First recognized string wins: a TMR string ahead of a KPSS
++        // fallback refuses, exactly as OF matching would bind the
++        // TMR layout.
++        assert_eq!(select_layout(&["qcom,kpss-timer", "qcom,kpss-wdt"]), None);
++        // Unrecognized strings are skipped, not decisive.
++        assert_eq!(
++            select_layout(&["qcom,apss-wdt-future", "qcom,kpss-wdt"]),
++            Some(Layout::Kpss)
++        );
++        assert_eq!(select_layout(&["vendor,other-wdt"]), None);
++        assert_eq!(select_layout(&[]), None);
++    }
++
++    #[test]
++    fn en_math_preserves_other_bits() {
++        assert_eq!(en_disarmed(0), 0);
++        assert_eq!(en_disarmed(1), 0);
++        assert_eq!(en_disarmed(0xFFFF_FFFF), 0xFFFF_FFFE);
++        assert_eq!(en_disarmed(0x101), 0x100);
++        assert!(!en_is_armed(0));
++        assert!(en_is_armed(1));
++        assert!(!en_is_armed(0xFFFF_FFFE));
++        assert!(en_is_armed(0xFFFF_FFFF));
++    }
++
++    #[test]
++    fn env_parse() {
++        assert_eq!(
++            parse_mode(b"REDOX_RAMBOOT=1\nREDOX_WDT_MODE=leave\n"),
++            Mode::Leave
++        );
++        assert_eq!(parse_mode(b"REDOX_WDT_MODE=disarm\n"), Mode::Disarm);
++        // Absent key: disarm is the default posture.
++        assert_eq!(parse_mode(b"REDOX_RAMBOOT_TTL=60\n"), Mode::Disarm);
++        assert_eq!(parse_mode(b""), Mode::Disarm);
++        // Unknown values disarm too (only exact "leave" leaves).
++        assert_eq!(parse_mode(b"REDOX_WDT_MODE=pet\n"), Mode::Disarm);
++        assert_eq!(parse_mode(b"REDOX_WDT_MODE=LEAVE\n"), Mode::Disarm);
++        assert_eq!(parse_mode(b"REDOX_WDT_MODE=\n"), Mode::Disarm);
++        // The key must start the line.
++        assert_eq!(parse_mode(b"XREDOX_WDT_MODE=leave\n"), Mode::Disarm);
++        // CRLF endings are tolerated.
++        assert_eq!(parse_mode(b"REDOX_WDT_MODE=leave\r\n"), Mode::Leave);
++    }
++
++    #[test]
++    fn handoff_disarm_writes_and_verifies() {
++        let mut bus = FakeBus::with_en(1);
++        let outcome = handoff_with_bus(&mut bus, Mode::Disarm);
++        assert_eq!(
++            outcome,
++            Ok(HandoffOutcome {
++                en_before: 1,
++                en_after: 0
++            })
++        );
++        assert_eq!(bus.writes, [(WDT_EN_OFFSET, 0)]);
++    }
++
++    #[test]
++    fn handoff_disarm_preserves_unrelated_en_bits() {
++        let mut bus = FakeBus::with_en(0x101);
++        let outcome = handoff_with_bus(&mut bus, Mode::Disarm);
++        assert_eq!(
++            outcome,
++            Ok(HandoffOutcome {
++                en_before: 0x101,
++                en_after: 0x100
++            })
++        );
++        assert_eq!(bus.writes, [(WDT_EN_OFFSET, 0x100)]);
++    }
++
++    #[test]
++    fn handoff_disarm_when_not_armed_is_ok() {
++        let mut bus = FakeBus::with_en(0);
++        assert_eq!(
++            handoff_with_bus(&mut bus, Mode::Disarm),
++            Ok(HandoffOutcome {
++                en_before: 0,
++                en_after: 0
++            })
++        );
++    }
++
++    #[test]
++    fn handoff_disarm_readback_failure_is_an_error() {
++        let mut bus = FakeBus::with_en(1);
++        bus.stick = false; // the write does not take effect
++        assert_eq!(
++            handoff_with_bus(&mut bus, Mode::Disarm),
++            Err("watchdog WDT_EN readback still shows the enable bit set")
++        );
++        // Exactly one write was attempted; no retry.
++        assert_eq!(bus.writes.len(), 1);
++    }
++
++    #[test]
++    fn handoff_leave_touches_nothing() {
++        let mut bus = FakeBus::with_en(1);
++        let outcome = handoff_with_bus(&mut bus, Mode::Leave);
++        assert_eq!(
++            outcome,
++            Ok(HandoffOutcome {
++                en_before: 1,
++                en_after: 1
++            })
++        );
++        assert!(bus.writes.is_empty());
++    }
++}

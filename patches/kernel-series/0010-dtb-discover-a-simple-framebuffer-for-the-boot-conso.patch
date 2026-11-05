@@ -1,0 +1,758 @@
+From 0d572443bc955d12812e8210d812326fb2d6f6c7 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sun, 25 Oct 2026 00:25:33 +0000
+Subject: [PATCH 10/21] dtb: discover a simple-framebuffer for the boot console
+
+Prefer enabled /chosen children, fall back to any enabled node (vendor
+trees reference cont_splash_mem from outside /chosen). Resolve the base
+through memory-region before reg, convert the DT byte stride to pixels,
+and accept only a8r8g8b8/x8r8g8b8. Properties are read raw so a malformed
+node is rejected instead of panicking the parser this early in boot.
+
+check_placement() refuses a buffer outside the bootloader's identity map,
+over the kernel's own boot data, or in RAM the bootloader reported free
+without a reserved-memory node claiming it.
+
+Co-Authored-By: Cursor <noreply@cursor.com>
+---
+ src/dtb/mod.rs                               |   2 +
+ src/dtb/simplefb.rs                          | 414 +++++++++++++++++++
+ src/dtb/testdata/simplefb-cases.dtb          | Bin 0 -> 2164 bytes
+ src/dtb/testdata/simplefb-cases.dts          | 135 ++++++
+ src/dtb/testdata/simplefb-op6.dtb            | Bin 0 -> 569 bytes
+ src/dtb/testdata/simplefb-op6.dts            |  38 ++
+ src/dtb/testdata/simplefb-outside-chosen.dtb | Bin 0 -> 772 bytes
+ src/dtb/testdata/simplefb-outside-chosen.dts |  48 +++
+ 8 files changed, 637 insertions(+)
+ create mode 100644 src/dtb/simplefb.rs
+ create mode 100644 src/dtb/testdata/simplefb-cases.dtb
+ create mode 100644 src/dtb/testdata/simplefb-cases.dts
+ create mode 100644 src/dtb/testdata/simplefb-op6.dtb
+ create mode 100644 src/dtb/testdata/simplefb-op6.dts
+ create mode 100644 src/dtb/testdata/simplefb-outside-chosen.dtb
+ create mode 100644 src/dtb/testdata/simplefb-outside-chosen.dts
+
+diff --git a/src/dtb/mod.rs b/src/dtb/mod.rs
+index 66721bfc..6549ceee 100644
+--- a/src/dtb/mod.rs
++++ b/src/dtb/mod.rs
+@@ -1,6 +1,8 @@
+ #[cfg(dtb)]
+ pub mod irqchip;
+ pub mod serial;
++#[cfg(dtb)]
++pub mod simplefb;
+ 
+ #[cfg(dtb)]
+ use crate::dtb::irqchip::IrqCell;
+diff --git a/src/dtb/simplefb.rs b/src/dtb/simplefb.rs
+new file mode 100644
+index 00000000..8f0937e8
+--- /dev/null
++++ b/src/dtb/simplefb.rs
+@@ -0,0 +1,414 @@
++//! Discovery of a firmware-initialized `simple-framebuffer` (binding
++//! `display/simple-framebuffer.yaml`) for the kernel boot console.
++//!
++//! Enabled children of `/chosen` are preferred, as in Linux, U-Boot and the
++//! OnePlus 6 tree; otherwise the first enabled node anywhere is used. The base
++//! comes from the first `memory-region` phandle if present, otherwise `reg`.
++//! Properties are read raw so that a malformed node is rejected instead of
++//! panicking the parser this early in boot.
++
++use core::fmt;
++
++use fdt::properties::PHandle;
++
++use crate::dtb::{Fdt, FdtNode};
++
++const PAGE_SIZE: usize = 4096;
++const COMPATIBLE: &str = "simple-framebuffer";
++
++/// A framebuffer in the 32 bpp BGRA layout of `a8r8g8b8` / `x8r8g8b8`.
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub struct SimpleFb {
++    pub phys: usize,
++    pub width: usize,
++    pub height: usize,
++    /// Pixels per scanline; the device tree states it in bytes.
++    pub stride: usize,
++}
++
++impl SimpleFb {
++    /// Bytes of the visible framebuffer, which may be smaller than its region.
++    pub fn size(&self) -> usize {
++        self.stride * self.height * 4
++    }
++}
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub enum SimpleFbError {
++    MissingProperty(&'static str),
++    UnsupportedFormat,
++    BadMemoryRegion,
++    BadGeometry,
++    RegionTooSmall { needed: usize, region: usize },
++    Unaligned(usize),
++}
++
++impl fmt::Display for SimpleFbError {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        match self {
++            Self::MissingProperty(name) => write!(f, "missing property '{name}'"),
++            Self::UnsupportedFormat => write!(f, "format is not a8r8g8b8 or x8r8g8b8"),
++            Self::BadMemoryRegion => write!(f, "memory-region does not resolve to a reg"),
++            Self::BadGeometry => write!(f, "inconsistent width/height/stride"),
++            Self::RegionTooSmall { needed, region } => {
++                write!(f, "needs {needed:#x} bytes but its region is {region:#x}")
++            }
++            Self::Unaligned(phys) => write!(f, "base {phys:#x} is not page aligned"),
++        }
++    }
++}
++
++/// Returns `None` when the tree has no enabled `simple-framebuffer` node.
++pub fn find(dt: &Fdt) -> Option<Result<SimpleFb, SimpleFbError>> {
++    let in_chosen = dt.find_node("/chosen").and_then(|chosen| {
++        chosen
++            .children()
++            .iter()
++            .find(|node| is_simplefb(node) && is_available(node))
++    });
++    let node = in_chosen.or_else(|| {
++        dt.all_nodes()
++            .map(|(_, node)| node)
++            .find(|node| is_simplefb(node) && is_available(node))
++    })?;
++    Some(parse_node(dt, node))
++}
++
++fn is_simplefb(node: &FdtNode) -> bool {
++    node.raw_property("compatible").is_some_and(|prop| {
++        prop.value
++            .split(|&b| b == 0)
++            .any(|name| name == COMPATIBLE.as_bytes())
++    })
++}
++
++fn is_available(node: &FdtNode) -> bool {
++    match node.raw_property("status") {
++        None => true,
++        Some(prop) => matches!(prop.as_value::<&str>(), Ok("okay" | "ok")),
++    }
++}
++
++fn u32_prop(node: &FdtNode, name: &'static str) -> Result<usize, SimpleFbError> {
++    node.raw_property(name)
++        .and_then(|prop| prop.as_value::<u32>().ok())
++        .map(|value| value as usize)
++        .ok_or(SimpleFbError::MissingProperty(name))
++}
++
++fn first_reg(node: &FdtNode) -> Option<(usize, usize)> {
++    let entry = node.reg()?.iter::<usize, usize>().next()?.ok()?;
++    Some((entry.address, entry.len))
++}
++
++pub(super) fn parse_node(dt: &Fdt, node: FdtNode) -> Result<SimpleFb, SimpleFbError> {
++    let width = u32_prop(&node, "width")?;
++    let height = u32_prop(&node, "height")?;
++    let stride_bytes = u32_prop(&node, "stride")?;
++    let format = node
++        .raw_property("format")
++        .and_then(|prop| prop.as_value::<&str>().ok())
++        .ok_or(SimpleFbError::MissingProperty("format"))?;
++    if !matches!(format, "a8r8g8b8" | "x8r8g8b8") {
++        return Err(SimpleFbError::UnsupportedFormat);
++    }
++
++    let (phys, region) = match node.raw_property("memory-region") {
++        Some(prop) => {
++            let phandle = prop
++                .value
++                .get(..4)
++                .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
++                .ok_or(SimpleFbError::BadMemoryRegion)?;
++            dt.root()
++                .resolve_phandle(PHandle::new(phandle))
++                .and_then(|region| first_reg(&region))
++                .ok_or(SimpleFbError::BadMemoryRegion)?
++        }
++        None => first_reg(&node).ok_or(SimpleFbError::MissingProperty("reg"))?,
++    };
++
++    let row_bytes = width.checked_mul(4).ok_or(SimpleFbError::BadGeometry)?;
++    if width == 0 || height == 0 || stride_bytes % 4 != 0 || stride_bytes < row_bytes {
++        return Err(SimpleFbError::BadGeometry);
++    }
++    let fb = SimpleFb {
++        phys,
++        width,
++        height,
++        stride: stride_bytes / 4,
++    };
++    if fb.size() > region {
++        return Err(SimpleFbError::RegionTooSmall {
++            needed: fb.size(),
++            region,
++        });
++    }
++    if phys % PAGE_SIZE != 0 {
++        return Err(SimpleFbError::Unaligned(phys));
++    }
++    Ok(fb)
++}
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub enum PlacementError {
++    /// Not covered by the bootloader's identity map, so not writable yet.
++    OutsideBootMap,
++    /// Overlaps the kernel, its stack, env, DTB, memory map or initfs.
++    OverlapsBootData { base: usize, size: usize },
++    /// Lies in RAM the bootloader reported as free (where its own data lives)
++    /// without a device tree carve-out claiming it.
++    InFreeMemory { base: usize, size: usize },
++}
++
++impl fmt::Display for PlacementError {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        match self {
++            Self::OutsideBootMap => write!(f, "outside the boot identity map"),
++            Self::OverlapsBootData { base, size } => {
++                write!(f, "overlaps boot data {base:#x}+{size:#x}")
++            }
++            Self::InFreeMemory { base, size } => write!(
++                f,
++                "in free RAM {base:#x}+{size:#x} without a reserved-memory node"
++            ),
++        }
++    }
++}
++
++fn overlaps(a: (usize, usize), b: (usize, usize)) -> bool {
++    let (a_end, b_end) = (a.0.saturating_add(a.1), b.0.saturating_add(b.1));
++    a.1 != 0 && b.1 != 0 && a.0 < b_end && b.0 < a_end
++}
++
++fn contains(outer: (usize, usize), inner: (usize, usize)) -> bool {
++    outer.0 <= inner.0 && inner.0.saturating_add(inner.1) <= outer.0.saturating_add(outer.1)
++}
++
++/// Decide whether the console may write to `fb` before the kernel has its own
++/// memory map. All ranges are `(base, size)`.
++pub fn check_placement(
++    fb: &SimpleFb,
++    map_limit: usize,
++    boot_data: &[(usize, usize)],
++    free: impl Iterator<Item = (usize, usize)>,
++    dt_reserved: &[(usize, usize)],
++) -> Result<(), PlacementError> {
++    let range = (fb.phys, fb.size());
++    if fb.phys.saturating_add(fb.size()) > map_limit {
++        return Err(PlacementError::OutsideBootMap);
++    }
++    if let Some(&(base, size)) = boot_data.iter().find(|&&data| overlaps(range, data)) {
++        return Err(PlacementError::OverlapsBootData { base, size });
++    }
++    let carved_out = dt_reserved.iter().any(|&region| contains(region, range));
++    if !carved_out && let Some((base, size)) = free.into_iter().find(|&area| overlaps(range, area))
++    {
++        return Err(PlacementError::InFreeMemory { base, size });
++    }
++    Ok(())
++}
++
++/// Fixed `/reserved-memory` and memreserve ranges, up to `N` of them.
++pub fn reserved_ranges<const N: usize>(
++    dt: &Fdt,
++    raw_data: &[u8],
++) -> arrayvec::ArrayVec<(usize, usize), N> {
++    let mut ranges = arrayvec::ArrayVec::new();
++    super::visit_fixed_reserved_memory_ranges(dt, raw_data, |base, size| {
++        let _ = ranges.try_push((base, size));
++    });
++    ranges
++}
++
++#[cfg(test)]
++mod tests {
++    use super::{check_placement, find, parse_node, PlacementError, SimpleFb, SimpleFbError};
++    use crate::dtb::tests::AlignedDtb;
++
++    static OP6_DTB: &AlignedDtb<569> = &AlignedDtb(*include_bytes!("testdata/simplefb-op6.dtb"));
++    static CASES_DTB: &AlignedDtb<2164> =
++        &AlignedDtb(*include_bytes!("testdata/simplefb-cases.dtb"));
++    static OUTSIDE_DTB: &AlignedDtb<772> =
++        &AlignedDtb(*include_bytes!("testdata/simplefb-outside-chosen.dtb"));
++
++    const OP6: SimpleFb = SimpleFb {
++        phys: 0x9d40_0000,
++        width: 1080,
++        height: 2280,
++        stride: 1080,
++    };
++    const GIB: usize = 0x4000_0000;
++
++    fn case(name: &str) -> Result<SimpleFb, SimpleFbError> {
++        let fdt = CASES_DTB.fdt();
++        let node = fdt.find_node(&format!("/cases/{name}")).unwrap();
++        parse_node(&fdt, node)
++    }
++
++    #[test]
++    fn op6_framebuffer_comes_from_the_splash_carve_out() {
++        let fb = find(&OP6_DTB.fdt()).unwrap().unwrap();
++        assert_eq!(fb, OP6);
++        assert_eq!(fb.size(), 1080 * 2280 * 4);
++    }
++
++    /// UEFI and U-Boot edit the DTB in place with libfdt, leaving FDT_NOP tags.
++    #[test]
++    fn nop_tags_before_chosen_are_skipped() {
++        const FDT_NOP: u32 = 4;
++        let words: Vec<u32> = OP6_DTB
++            .0
++            .chunks(4)
++            .map(|c| {
++                let mut word = [0; 4];
++                word[..c.len()].copy_from_slice(c);
++                u32::from_be_bytes(word)
++            })
++            .collect();
++        let header = |i: usize| words[i] as usize / 4;
++        let (off_struct, off_strings) = (header(2), header(3));
++        let chosen = (off_struct..off_strings)
++            .find(|&i| words[i] == 1 && words[i + 1].to_be_bytes() == *b"chos")
++            .unwrap();
++        let nops = 13;
++        let mut patched: Vec<u32> = words[..chosen].to_vec();
++        patched.extend(std::iter::repeat_n(FDT_NOP, nops));
++        patched.extend_from_slice(&words[chosen..]);
++        for field in [1, 3, 9] {
++            patched[field] += 4 * nops as u32;
++        }
++        let bytes: Vec<u32> = patched.iter().map(|w| w.to_be()).collect();
++        let fdt = crate::dtb::Fdt::new(&bytes).unwrap();
++        assert_eq!(find(&fdt), Some(Ok(OP6)));
++    }
++
++    #[test]
++    fn disabled_chosen_node_is_skipped_for_the_next_one() {
++        let fb = find(&CASES_DTB.fdt()).unwrap().unwrap();
++        assert_eq!(
++            fb,
++            SimpleFb {
++                phys: 0xbc43_0000,
++                width: 800,
++                height: 600,
++                stride: 800,
++            }
++        );
++    }
++
++    #[test]
++    fn node_outside_chosen_referencing_the_splash_is_found() {
++        let fb = find(&OUTSIDE_DTB.fdt()).unwrap().unwrap();
++        assert_eq!(
++            fb,
++            SimpleFb {
++                height: 1140,
++                ..OP6
++            }
++        );
++    }
++
++    #[test]
++    fn tree_without_a_framebuffer_yields_none() {
++        static MMIO_DTB: &AlignedDtb<1190> = &AlignedDtb(*include_bytes!("testdata/mmio.dtb"));
++        assert_eq!(find(&MMIO_DTB.fdt()), None);
++    }
++
++    #[test]
++    fn padded_stride_is_converted_to_pixels() {
++        let fb = case("padded").unwrap();
++        assert_eq!((fb.width, fb.stride), (1080, 1088));
++    }
++
++    #[test]
++    fn memory_region_overrides_reg() {
++        assert_eq!(case("region-overrides-reg").unwrap().phys, 0x9d40_0000);
++    }
++
++    #[test]
++    fn malformed_nodes_are_rejected() {
++        assert_eq!(case("r5g6b5"), Err(SimpleFbError::UnsupportedFormat));
++        assert_eq!(case("short-stride"), Err(SimpleFbError::BadGeometry));
++        assert_eq!(
++            case("too-small"),
++            Err(SimpleFbError::RegionTooSmall {
++                needed: 1080 * 2280 * 4,
++                region: 0x10_0000,
++            })
++        );
++        assert_eq!(
++            case("unaligned"),
++            Err(SimpleFbError::Unaligned(0x5e00_0100))
++        );
++        assert_eq!(case("dangling"), Err(SimpleFbError::BadMemoryRegion));
++        assert_eq!(
++            case("no-height"),
++            Err(SimpleFbError::MissingProperty("height"))
++        );
++        assert_eq!(case("no-base"), Err(SimpleFbError::MissingProperty("reg")));
++    }
++
++    #[test]
++    fn reserved_splash_inside_the_boot_map_is_accepted() {
++        let free = [(0x8000_0000, 0x1d40_0000), (0xa000_0000, 0x1000_0000)];
++        let reserved = [(0x9d40_0000, 0x0240_0000)];
++        let boot_data = [(0xb000_0000, 0x10_0000)];
++        assert_eq!(
++            check_placement(&OP6, 8 * GIB, &boot_data, free.into_iter(), &reserved),
++            Ok(())
++        );
++    }
++
++    #[test]
++    fn firmware_reserved_buffer_outside_free_ram_needs_no_carve_out() {
++        let free = [(0x4000_0000, 0x7c43_0000)];
++        let fb = SimpleFb {
++            phys: 0xbc43_0000,
++            width: 800,
++            height: 600,
++            stride: 800,
++        };
++        assert_eq!(
++            check_placement(&fb, 8 * GIB, &[], free.into_iter(), &[]),
++            Ok(())
++        );
++    }
++
++    #[test]
++    fn framebuffer_in_free_ram_without_carve_out_is_refused() {
++        let free = [(0x8000_0000, 0x4000_0000)];
++        assert_eq!(
++            check_placement(&OP6, 8 * GIB, &[], free.into_iter(), &[]),
++            Err(PlacementError::InFreeMemory {
++                base: 0x8000_0000,
++                size: 0x4000_0000,
++            })
++        );
++    }
++
++    #[test]
++    fn framebuffer_over_boot_data_is_refused_even_when_reserved() {
++        let reserved = [(0x9d40_0000, 0x0240_0000)];
++        let kernel = (0x9d80_0000, 0x20_0000);
++        assert_eq!(
++            check_placement(&OP6, 8 * GIB, &[(0, 0), kernel], [].into_iter(), &reserved),
++            Err(PlacementError::OverlapsBootData {
++                base: kernel.0,
++                size: kernel.1,
++            })
++        );
++    }
++
++    #[test]
++    fn framebuffer_beyond_the_boot_map_is_refused() {
++        let high = SimpleFb {
++            phys: 8 * GIB - 0x1000,
++            ..OP6
++        };
++        assert_eq!(
++            check_placement(&high, 8 * GIB, &[], [].into_iter(), &[]),
++            Err(PlacementError::OutsideBootMap)
++        );
++    }
++}
+diff --git a/src/dtb/testdata/simplefb-cases.dtb b/src/dtb/testdata/simplefb-cases.dtb
+new file mode 100644
+index 0000000000000000000000000000000000000000..6366fb3f912aea49d32bfa89308d912c7eeb4503
+GIT binary patch
+literal 2164
+zcmcIl!EV$r5cO_B-AW*eIQCM}3ztZ(Xwh<FCDdDQTo8v!&c>TWBynVCyTFMb>7Vck
+z9QXu|T=)gVdyc)@l|r+T%19G?GM>rv8+-EO@t@y9Od27?6ypPoFQ8AMhfqo_#Qyho
+zy7e4+YY!viC}U`_pLlyT&$Lw)-D@A`U27RjIf9NBMwTjGE*8qnPTgx4{|wXTHZSW!
+zMH@@p0>%?}MC+OlN*hey0rX5x%`~0H*sqg-7dAuJ7~lA91^;F1a(?EyN^&dXLM1Ls
+zyPqx0@%;SdDa8AkXJ_o+-ukFxH!{{?|MXAnkG^6}zzXbp#~U`VkKcRyA;v5HQGUiq
+zVI8O=qpUJFDv3%}YUA7?UsxCHP+Qs*S1(%^(q^;Q$vJoJwoN}tb@jNNVMcK@JFK+c
+zK||gTnDbn%G0mk_7B3)S4d?U+yAw+-lf+ks>vrZnU>wg7)qbPr%<!tLvGC0BTm@|4
+zeew&o=QquD73mvgOr9tk8I>{^G6-YGx#s<gq2!LadN8}|8ZZL0yUM`^W@opUFVa`>
+z1u_oA*umpIa-5m%d;|i%CbiE``%VsRrcD#sh6G|QWe|5Axca!-tmmEB8m%K+%A(jE
+z*TA|R{`C9p<!M>TB2TN(oCa}p-PZrU`=&cjiLBBhuZEm^&(Uh-_uf;l-8rgsl&L(;
+z`1A9*|6`x%#N{{vju>rjR}A;He}0>KaDrZm-fyG1Dhex3Z2m?0xk0(mf9JZaWs~D)
+rC)l$V+LW>p{uZwCq{)P5(l)YLT7fN<vKDnFs{}#q4~6{>4N&|AfO`V_
+
+literal 0
+HcmV?d00001
+
+diff --git a/src/dtb/testdata/simplefb-cases.dts b/src/dtb/testdata/simplefb-cases.dts
+new file mode 100644
+index 00000000..58181ae1
+--- /dev/null
++++ b/src/dtb/testdata/simplefb-cases.dts
+@@ -0,0 +1,135 @@
++/dts-v1/;
++
++/*
++ * simple-framebuffer edge cases. /chosen holds a disabled node before the
++ * usable QEMU ramfb record; /cases holds nodes that must be rejected.
++ * Build: dtc -I dts -O dtb -o simplefb-cases.dtb simplefb-cases.dts
++ */
++
++/ {
++	#address-cells = <2>;
++	#size-cells = <2>;
++
++	chosen {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		framebuffer@0 {
++			compatible = "simple-framebuffer";
++			reg = <0 0x5e000000 0 0x300000>;
++			format = "a8r8g8b8";
++			stride = <(1024 * 4)>;
++			width = <1024>;
++			height = <768>;
++			status = "disabled";
++		};
++
++		framebuffer@bc430000 {
++			compatible = "simple-framebuffer";
++			reg = <0 0xbc430000 0 0x00200000>;
++			format = "x8r8g8b8";
++			stride = <3200>;
++			width = <800>;
++			height = <600>;
++			status = "okay";
++		};
++	};
++
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		small: splash@9d400000 {
++			reg = <0 0x9d400000 0 0x00100000>;
++			no-map;
++		};
++	};
++
++	cases {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		padded {
++			compatible = "simple-framebuffer";
++			reg = <0 0x9d400000 0 0x02400000>;
++			format = "a8r8g8b8";
++			stride = <(1088 * 4)>;
++			width = <1080>;
++			height = <2280>;
++		};
++
++		region-overrides-reg {
++			compatible = "simple-framebuffer";
++			reg = <0 0x5e000000 0 0x300000>;
++			memory-region = <&small>;
++			format = "a8r8g8b8";
++			stride = <(256 * 4)>;
++			width = <256>;
++			height = <256>;
++		};
++
++		r5g6b5 {
++			compatible = "simple-framebuffer";
++			reg = <0 0x9d400000 0 0x02400000>;
++			format = "r5g6b5";
++			stride = <(1080 * 2)>;
++			width = <1080>;
++			height = <2280>;
++		};
++
++		short-stride {
++			compatible = "simple-framebuffer";
++			reg = <0 0x9d400000 0 0x02400000>;
++			format = "a8r8g8b8";
++			stride = <1080>;
++			width = <1080>;
++			height = <2280>;
++		};
++
++		too-small {
++			compatible = "simple-framebuffer";
++			memory-region = <&small>;
++			format = "a8r8g8b8";
++			stride = <(1080 * 4)>;
++			width = <1080>;
++			height = <2280>;
++		};
++
++		unaligned {
++			compatible = "simple-framebuffer";
++			reg = <0 0x5e000100 0 0x300000>;
++			format = "a8r8g8b8";
++			stride = <(1024 * 4)>;
++			width = <1024>;
++			height = <768>;
++		};
++
++		dangling {
++			compatible = "simple-framebuffer";
++			memory-region = <0x7777>;
++			format = "a8r8g8b8";
++			stride = <(1080 * 4)>;
++			width = <1080>;
++			height = <2280>;
++		};
++
++		no-height {
++			compatible = "simple-framebuffer";
++			reg = <0 0x9d400000 0 0x02400000>;
++			format = "a8r8g8b8";
++			stride = <(1080 * 4)>;
++			width = <1080>;
++		};
++
++		no-base {
++			compatible = "simple-framebuffer";
++			format = "a8r8g8b8";
++			stride = <(1080 * 4)>;
++			width = <1080>;
++			height = <2280>;
++		};
++	};
++};
+diff --git a/src/dtb/testdata/simplefb-op6.dtb b/src/dtb/testdata/simplefb-op6.dtb
+new file mode 100644
+index 0000000000000000000000000000000000000000..ae0754f097dc586e360bc4054d3e6cfceaf50210
+GIT binary patch
+literal 569
+zcmah_F;2uV5ZoLTT!8>l(s2z<Bnpb0Xd*f)Itn@`-o%#TB(ehtUP8m4?g^AMd;u|=
+z#3xQdVx{rU*yHuCH;3O}M2j^MWkksa`2sirjsXda{kMtktjVnQkoRZ4K#uwdTy#>J
+zE^s?K;+crQymBsa1|*eNj*G{tVxO<|)uqIEI=yiUejcpr8%}>&M@M`ol{$dvC2*}W
+zpVe7`S;vUJ8;tvbov3dyl6a!NBRcqmmY&C%JO}nqtW(FX^Do%mdWHWxTj(1V%+6Ty
+zmi+m>6nM{NMWGzaR9o`H%;mooAhX4uBrjJ=YxEY<lA9*bD%e+^xmRt?fy&PHYOqDa
+pH1(c(u5H&+)p@4|3WK+r>DlVRkYQV!f#9IFOP%VeH>%aR`vdHYPV4{x
+
+literal 0
+HcmV?d00001
+
+diff --git a/src/dtb/testdata/simplefb-op6.dts b/src/dtb/testdata/simplefb-op6.dts
+new file mode 100644
+index 00000000..1adef53a
+--- /dev/null
++++ b/src/dtb/testdata/simplefb-op6.dts
+@@ -0,0 +1,38 @@
++/dts-v1/;
++
++/*
++ * OnePlus 6 boot framebuffer handoff: /chosen/framebuffer takes its base from
++ * the no-map cont_splash_mem carve-out through memory-region.
++ * Build: dtc -I dts -O dtb -o simplefb-op6.dtb simplefb-op6.dts
++ */
++
++/ {
++	#address-cells = <2>;
++	#size-cells = <2>;
++
++	chosen {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		framebuffer: framebuffer@9d400000 {
++			compatible = "simple-framebuffer";
++			memory-region = <&cont_splash_mem>;
++			format = "a8r8g8b8";
++			stride = <(1080 * 4)>;
++			width = <1080>;
++			height = <2280>;
++		};
++	};
++
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		cont_splash_mem: splash@9d400000 {
++			reg = <0 0x9d400000 0 0x02400000>;
++			no-map;
++		};
++	};
++};
+diff --git a/src/dtb/testdata/simplefb-outside-chosen.dtb b/src/dtb/testdata/simplefb-outside-chosen.dtb
+new file mode 100644
+index 0000000000000000000000000000000000000000..0c01e4a3762bf50c3751b66aa0576b949c5fcfa4
+GIT binary patch
+literal 772
+zcmcgpy-vh140i8s;06SUk?n3lf=UbwMJyE?6B`o@Y2!ALnx;x}hmPl9<(+s0MiyQH
+zVfW{BMM!K|`eJ{v^T~GJ_P;&>rZWIY046WwPYFkaLjqev_YYk-I-{OV$@6=*31Q#|
+zJ&$r_J=UDw<~aVXmfy0S5Te2fgW0Mm(4|-M@`A0+b~?utFT6HQh4D^lTQT$yvkrmz
+zoNz4?my}6Hv$i(W-O#x2bTjZ<8i{KLeh0Ak(R0?hm)eW0LP;?j&%%ftdUR`)u|Z?q
+zhI4}k$A8Z3n@V^!8kgVmUp%tFYsx1HrF3-K>_s2*KPUpvyzPm4CDqN(C9&=qVX?+q
+zT6dmV8%8z%x7%6R>36;qQqmrMoMTmaSbF`8ee6VCqKDj?Mg&bC0NtKrho!bP6xJCL
+hzz3%#!jqOkfkIs>z7t{PfeN9vu@Mb4O4O1hz5%BNa((~+
+
+literal 0
+HcmV?d00001
+
+diff --git a/src/dtb/testdata/simplefb-outside-chosen.dts b/src/dtb/testdata/simplefb-outside-chosen.dts
+new file mode 100644
+index 00000000..b3f3343b
+--- /dev/null
++++ b/src/dtb/testdata/simplefb-outside-chosen.dts
+@@ -0,0 +1,48 @@
++/dts-v1/;
++
++/*
++ * A simple-framebuffer outside /chosen that references the splash carve-out,
++ * as some vendor device trees place it. A disabled /chosen node is skipped.
++ * Build: dtc -I dts -O dtb -o simplefb-outside-chosen.dtb simplefb-outside-chosen.dts
++ */
++
++/ {
++	#address-cells = <2>;
++	#size-cells = <2>;
++
++	chosen {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		framebuffer@9d400000 {
++			compatible = "simple-framebuffer";
++			memory-region = <&cont_splash_mem>;
++			format = "a8r8g8b8";
++			stride = <(1080 * 4)>;
++			width = <1080>;
++			height = <2280>;
++			status = "disabled";
++		};
++	};
++
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		cont_splash_mem: splash@9d400000 {
++			reg = <0 0x9d400000 0 0x02400000>;
++			no-map;
++		};
++	};
++
++	display-framebuffer {
++		compatible = "vendor,boot-framebuffer", "simple-framebuffer";
++		memory-region = <&cont_splash_mem>;
++		format = "a8r8g8b8";
++		stride = <(1080 * 4)>;
++		width = <1080>;
++		height = <1140>;
++	};
++};

@@ -1,0 +1,14 @@
+[package]
+name = "dwc3-gadget"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+mmio-replay = { path = "../mmio-replay" }
+embassy-usb-driver = "0.2.2"
+
+[dev-dependencies]
+embassy-usb = { version = "0.6.0", default-features = false }
+embassy-futures = "0.1.2"
+critical-section = { version = "1.2", features = ["std"] }

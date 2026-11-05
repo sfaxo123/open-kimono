@@ -1,0 +1,162 @@
+# B4 crates/svcd — test evidence
+date: 2026-10-25T00:40:13Z
+branch: services/svcd @ c03af1e
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+
+$ cargo test --offline --features sandbox
+     Running unittests src/lib.rs (target/debug/deps/svcd-e59a047445e3f5b1)
+test time::tests::parses_known_instants ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/bin/svcd.rs (target/debug/deps/svcd-3c02ee811f18a766)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/budget.rs (target/debug/deps/budget-cd59d089fd33f840)
+test refused_standing_grant_blocks_install ... ok
+test network_egress_on_an_offline_service_stops_it ... ok
+test wasm_fuel_over_budget_stops_the_service ... ok
+test wake_lock_over_budget_stops_the_service ... ok
+test a_timeout_fails_the_run_but_keeps_the_service ... ok
+test wakeup_storm_stops_the_battery_watcher ... ok
+test stopping_a_service_cancels_its_pending_timer ... ok
+test simulator_budget_assertion_catches_a_memory_regression ... ok
+test refused_capability_fails_honestly_without_stopping ... ok
+test memory_budget_stops_before_anything_commits ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+     Running tests/examples.rs (target/debug/deps/examples-e42547dda88abc39)
+test a_dip_shorter_than_debounce_never_alerts ... ok
+test battery_noise_below_threshold_does_not_respam ... ok
+test unmatched_utterance_falls_back_without_running_anything ... ok
+test battery_hysteresis_in_detail ... ok
+test overlong_utterance_is_not_template_matched ... ok
+test battery_example_passes_its_embedded_test ... ok
+test ui_cancel_disarms_the_timer_and_powers_down ... ok
+test every_run_is_journaled_with_zero_llm_tokens ... ok
+test timer_lifecycle_in_detail ... ok
+test timer_example_passes_its_embedded_test ... ok
+test admission_gate_runs_the_tests_before_installing ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/idempotency.rs (target/debug/deps/idempotency-4a3d9f4fb56cea11)
+test idempotency_keys_are_deterministic_and_scoped ... ok
+test duplicate_effect_keys_are_refused_by_the_ledger ... ok
+test terminal_execution_rows_are_immutable ... ok
+test retry_after_a_late_failure_never_repeats_the_spoken_chime ... ok
+test chime_fixture_passes_its_own_simulation ... ok
+test abort_before_commit_compensates_and_leaves_nothing_behind ... ok
+test duplicate_delivery_of_a_completed_occurrence_is_a_noop ... ok
+test redelivery_after_exhausted_retries_resumes_without_repeating ... ok
+test ledger_survives_a_restart ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/language.rs (target/debug/deps/language-8db90076e2527769)
+test bad_templates_are_rejected ... ok
+test boolean_guards_from_the_examples ... ok
+test integral_floats_render_without_a_decimal_point ... ok
+test ha_intents_alternatives_and_list_slots ... ok
+test malformed_expressions_are_rejected_at_parse_time ... ok
+test render_value_walks_nested_json ... ok
+test sentence_syntax_errors ... ok
+test precedence_and_integer_arithmetic_stay_integers ... ok
+test strict_errors_instead_of_guesses ... ok
+test whole_string_template_is_typed_mixed_is_text ... ok
+test timer_sentences_match_with_typed_slots ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/sandbox_logic.rs (target/debug/deps/sandbox_logic-c03249884de4d820)
+test missing_component_bytes_fail_the_run_with_a_reason ... ok
+test logic_action_runs_wasm_and_its_output_lands_in_state ... ok
+test runaway_guest_is_stopped_by_fuel_and_svcd_stops_the_service ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/schema_conformance.rs (target/debug/deps/schema_conformance-f1f51876dc13c074)
+test embedded_schema_is_the_one_in_the_design_doc ... ok
+test schema_and_svcd_accept_the_worked_examples ... ok
+test semantic_mistakes_pass_the_schema_but_not_svcd ... ok
+test schema_level_mistakes_are_rejected_by_both ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+     Running tests/validate.rs (target/debug/deps/validate-4956b2b01183f6ed)
+test not_json_is_a_syntax_error_at_the_root ... ok
+test bad_enum_value ... ok
+test bus_emit_that_targets_svcd_is_refused ... ok
+test irreversible_action_without_idempotency_key ... ok
+test cycle_in_action_graph ... ok
+test guard_reading_unknown_state_property ... ok
+test dialog_without_audio_dependency ... ok
+test initial_state_violates_state_schema ... ok
+test id_pattern ... ok
+test missing_required_field ... ok
+test malformed_cel_guard ... ok
+test simulator_events_must_not_go_back_in_time ... ok
+test patch_path_outside_state_schema ... ok
+test read_only_state_mutation_is_a_contradiction ... ok
+test sentence_with_undeclared_slot ... ok
+test template_reading_undeclared_parameter ... ok
+test nav_example_is_rejected_for_two_real_d1_defects ... ok
+test unknown_nested_field_names_its_path ... ok
+test timeout_out_of_range ... ok
+test unknown_top_level_field ... ok
+test wrong_type ... ok
+test unsupported_state_schema_keyword_is_refused ... ok
+test ui_patch_outside_granted_surface ... ok
+test unbalanced_sentence_template ... ok
+test unknown_entry_action ... ok
+test timer_trigger_without_timer_capability ... ok
+test unsupported_timer_mode_is_explicit ... ok
+test timer_and_battery_examples_are_accepted ... ok
+test every_problem_is_reported_not_just_the_first ... ok
+test fixtures_are_verbatim_copies_of_the_design_doc ... ok
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+$ cargo test --offline --release
+     Running unittests src/lib.rs (target/release/deps/svcd-c65ca211ab59c62e)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/bin/svcd.rs (target/release/deps/svcd-f791c2e016715bac)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/budget.rs (target/release/deps/budget-7306fa84580d2e5d)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/examples.rs (target/release/deps/examples-474c795564ecedb9)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/idempotency.rs (target/release/deps/idempotency-7fc1825dd73199b1)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/language.rs (target/release/deps/language-f300fb8927b8ccd2)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/schema_conformance.rs (target/release/deps/schema_conformance-4a0f1299245bece4)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/validate.rs (target/release/deps/validate-809ba9cfaacd4e9d)
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+$ cargo clippy --offline --all-targets --features sandbox
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+$ cargo run --release -- validate tests/fixtures/svc.*.json
+tests/fixtures/svc.nav.offline_route.json: ServiceIR rejected (3 errors):
+  /actions/act_announce_offline_miss/idempotency_key_template: MissingField: a `committed_irreversible` action needs an idempotency_key_template so a retry never repeats it
+  /actions/act_geocode_and_route/idempotency_key_template: UnknownReference: `destination` is not readable here (known: state, params, trigger, session, utterance_id, execution_id, service_id, action_id, trigger_id, now_ms) in `"svc.nav.offline_route:{{utterance_id}}:geocode_route:{{destination}}:{{profile}}"`
+  /actions/act_geocode_and_route/idempotency_key_template: UnknownReference: `profile` is not readable here (known: state, params, trigger, session, utterance_id, execution_id, service_id, action_id, trigger_id, now_ms) in `"svc.nav.offline_route:{{utterance_id}}:geocode_route:{{destination}}:{{profile}}"`
+tests/fixtures/svc.power.battery_low_watch.json: OK (svc.power.battery_low_watch v1.0.0, 2 triggers, 4 actions)
+tests/fixtures/svc.test.chime.json: OK (svc.test.chime v0.1.0, 1 triggers, 5 actions)
+tests/fixtures/svc.time.countdown_timer.json: OK (svc.time.countdown_timer v1.0.0, 3 triggers, 5 actions)
+
+$ cargo run --release -- simulate tests/fixtures/svc.time.countdown_timer.json --trace docs/workbench/B4-timer.trace
+PASS svc.time.countdown_timer :: five_minute_timer_lifecycle (virtual end 300000 ms, 50 journal events, 6 bus messages)
+  bus @      0 ms  ovos.intent.handler.start        {"execution_id":"x-ff4346e708166e08","service":"svc.time.countdown_timer","trigger":"trig_hass_start_timer"}
+  bus @      0 ms  speak                            {"lang":"en-US","priority":"normal","service":"svc.time.countdown_timer","text":"Timer: 0h 5m 0s running.","utterance":"Timer set for 5 minutes."}
+  bus @      0 ms  ovos.intent.handler.complete     {"execution_id":"x-ff4346e708166e08","service":"svc.time.countdown_timer","trigger":"trig_hass_start_timer"}
+  bus @ 300000 ms  ovos.intent.handler.start        {"execution_id":"x-d32ce51671e8dd0e","service":"svc.time.countdown_timer","trigger":"trig_monotonic_expiry"}
+  bus @ 300000 ms  speak                            {"lang":"en-US","priority":"critical","service":"svc.time.countdown_timer","text":"DONE: Timer (00:00)","utterance":"Time is up for Timer."}
+  bus @ 300000 ms  ovos.intent.handler.complete     {"execution_id":"x-d32ce51671e8dd0e","service":"svc.time.countdown_timer","trigger":"trig_monotonic_expiry"}
+  final state {"armed":false,"eventName":"Timer","hours":0,"minutes":5,"seconds":0,"status":"idle","total_duration_sec":0}
+  peak memory 479 B, network 0 B, active schemes after []
+1 test(s), host time 549 µs
+
+$ cargo run --release -- simulate tests/fixtures/svc.power.battery_low_watch.json --trace docs/workbench/B4-battery.trace
+PASS svc.power.battery_low_watch :: battery_hysteresis_and_dedup_across_cycles (virtual end 505000 ms, 64 journal events, 8 bus messages)
+  bus @  15000 ms  ovos.intent.handler.start        {"execution_id":"x-662c433f8d761fce","service":"svc.power.battery_low_watch","trigger":"trig_battery_below_20"}
+  bus @  15000 ms  speak                            {"lang":"en-US","priority":"alert","service":"svc.power.battery_low_watch","text":"Battery low: 19% (threshold < 20%).","utterance":"Battery is down to 19 percent."}
+  bus @  15000 ms  ovos.intent.handler.complete     {"execution_id":"x-662c433f8d761fce","service":"svc.power.battery_low_watch","trigger":"trig_battery_below_20"}
+  bus @ 200000 ms  ovos.intent.handler.start        {"execution_id":"x-9c906c87355b3bd3","service":"svc.power.battery_low_watch","trigger":"trig_battery_rearmed"}
+  bus @ 200000 ms  ovos.intent.handler.complete     {"execution_id":"x-9c906c87355b3bd3","service":"svc.power.battery_low_watch","trigger":"trig_battery_rearmed"}
+  bus @ 505000 ms  ovos.intent.handler.start        {"execution_id":"x-fe446f8d9279735b","service":"svc.power.battery_low_watch","trigger":"trig_battery_below_20"}
+  bus @ 505000 ms  speak                            {"lang":"en-US","priority":"alert","service":"svc.power.battery_low_watch","text":"Battery low: 19% (threshold < 20%).","utterance":"Battery is down to 19 percent."}
+  bus @ 505000 ms  ovos.intent.handler.complete     {"execution_id":"x-fe446f8d9279735b","service":"svc.power.battery_low_watch","trigger":"trig_battery_below_20"}
+  final state {"discharge_cycle_id":2,"last_triggered_pct":19.0,"notified_for_cycle":true}
+  peak memory 556 B, network 0 B, active schemes after ["sys:power/battery"]
+1 test(s), host time 442 µs

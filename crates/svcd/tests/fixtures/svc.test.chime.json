@@ -1,0 +1,164 @@
+{
+  "ir_version": "1.0.0",
+  "id": "svc.test.chime",
+  "version": "0.1.0",
+  "title": "Chime and report",
+  "description": "Test service: reserve a slot (compensated Wasm call), count, chime (irreversible speech), report (irreversible Wasm call). Retries twice.",
+  "execution_mode": "ephemeral_component",
+  "priority_class": "P2_INTERACTIVE_VOICE_UI",
+  "parameters": [
+    { "key": "label", "input_type": "string", "requirement": "optional", "description": "Chime label", "default": "chime" }
+  ],
+  "triggers": [
+    {
+      "id": "trig_ring",
+      "kind": "voice_intent",
+      "entry_action": "act_reserve",
+      "voice_intent": {
+        "domain": "test",
+        "intent_name": "RingChime",
+        "lang": "en-US",
+        "sentences": ["ring the [{label}] chime"],
+        "slots": { "label": { "type": "string", "required": false, "default": "chime" } }
+      }
+    }
+  ],
+  "actions": {
+    "act_reserve": {
+      "type": "logic",
+      "description": "Reserve an output slot; released again if the transaction aborts.",
+      "effect_class": "reversible_compensated",
+      "read_only": false,
+      "deduplicate_calls": false,
+      "timeout": { "idle_ms": 50, "total_ms": 100 },
+      "wasm_call": {
+        "component_ref": "chime_core",
+        "wit_interface": "op6:chime/slots@0.1.0",
+        "function": "reserve",
+        "args_mapping": { "label": "$.params.label" },
+        "output_state_pointer": "/slot"
+      },
+      "compensating_action": "act_release",
+      "next": [{ "target": "act_count" }]
+    },
+    "act_release": {
+      "type": "logic",
+      "description": "Release a reserved output slot (compensation only).",
+      "effect_class": "reversible_staged",
+      "read_only": false,
+      "timeout": { "idle_ms": 50, "total_ms": 100 },
+      "wasm_call": {
+        "component_ref": "chime_core",
+        "wit_interface": "op6:chime/slots@0.1.0",
+        "function": "release",
+        "args_mapping": {}
+      }
+    },
+    "act_count": {
+      "type": "state_mutate",
+      "description": "Count how many chimes were rung.",
+      "effect_class": "reversible_staged",
+      "read_only": false,
+      "timeout": { "idle_ms": 50, "total_ms": 100 },
+      "state_patch": [{ "op": "replace", "path": "/count", "value": "{{state.count + 1}}" }],
+      "next": [{ "target": "act_chime" }]
+    },
+    "act_chime": {
+      "type": "dialog",
+      "description": "Speak the chime once per utterance.",
+      "effect_class": "committed_irreversible",
+      "idempotency_key_template": "{{service_id}}:{{utterance_id}}:chime",
+      "read_only": true,
+      "timeout": { "idle_ms": 500, "total_ms": 2000 },
+      "dialog": { "speech": "Ding ({{params.label}}).", "text": "Chime #{{state.count}}", "priority": "normal" },
+      "next": [{ "target": "act_report" }]
+    },
+    "act_report": {
+      "type": "logic",
+      "description": "Report the chime to a sink (irreversible).",
+      "effect_class": "committed_irreversible",
+      "idempotency_key_template": "{{service_id}}:{{utterance_id}}:report",
+      "read_only": false,
+      "timeout": { "idle_ms": 50, "total_ms": 100 },
+      "wasm_call": {
+        "component_ref": "chime_core",
+        "wit_interface": "op6:chime/report@0.1.0",
+        "function": "report",
+        "args_mapping": { "count": "$.state.count" }
+      }
+    }
+  },
+  "deps": {
+    "schemes": [{ "scheme": "audio:wyoming/tts", "access": "write", "lifecycle": "demand_per_action" }],
+    "wasm_components": [
+      {
+        "id": "chime_core",
+        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "wit_world": { "imports": [], "exports": ["op6:chime/slots", "op6:chime/report"] },
+        "pool_policy": { "pool_size": 0, "max_invocations": 1, "max_concurrency": 1, "reclaim_window_seconds": 0 }
+      }
+    ],
+    "sub_services": []
+  },
+  "capabilities": [
+    {
+      "cap_id": "cap_tts",
+      "capability": "audio.playback.tts",
+      "scope": {},
+      "lifetime": "per_invocation",
+      "max_duration_sec": 5,
+      "audit_reason": "Speak the chime."
+    }
+  ],
+  "state_schema": {
+    "namespace": "state:svc.test.chime",
+    "durability": "ephemeral_session",
+    "schema": {
+      "type": "object",
+      "required": ["count"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "slot": {},
+        "blob": { "type": "string" }
+      }
+    },
+    "initial_state": { "count": 0 }
+  },
+  "ui": { "mode": "none" },
+  "power_budget": {
+    "cpu_cluster_preference": "silver_only",
+    "max_cpu_cores": 1,
+    "cpu_quota_pct": 1,
+    "memory_limit_mb": 1,
+    "wasm_fuel_per_invocation": 10000,
+    "max_wakeups_per_minute": 1,
+    "max_wakelock_sec": 2,
+    "network_egress_bytes_max": 0,
+    "allowed_hosts": [],
+    "allowed_ip_name_lookups": [],
+    "allowed_host_loopback_ports": [],
+    "auto_stop_idle_ms": 50,
+    "power_announcement": "Chime: audio on only while speaking."
+  },
+  "retry": { "max_retries": 2, "timeout_seconds": 5, "checks": [] },
+  "tests": [
+    {
+      "name": "rings_once",
+      "initial_env": {
+        "monotonic_ms": 0,
+        "wall_iso": "2026-10-24T20:00:00Z",
+        "battery_pct": 80,
+        "charging": false,
+        "network_online": false,
+        "location": { "lat": 0, "lon": 0, "tz": "UTC" }
+      },
+      "events": [{ "at_monotonic_ms": 1000, "event_type": "utterance", "payload": { "text": "ring the chime" } }],
+      "assertions": {
+        "final_state_subset": { "count": 1 },
+        "expected_bus_emissions": [{ "msg_type": "speak", "data": { "utterance": "Ding (chime)." } }],
+        "expected_ui_surfaces": [],
+        "budget_assertions": { "max_memory_mb_used": 1.0, "network_bytes_sent": 0, "active_schemes_after_completion": [] }
+      }
+    }
+  ]
+}

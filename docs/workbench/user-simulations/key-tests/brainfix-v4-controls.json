@@ -1,0 +1,132 @@
+{
+  "total": 4,
+  "passed": 2,
+  "failed": 2,
+  "agent": "endpoint:http://127.0.0.1:8793/agent",
+  "failure_classes": {
+    "correction": 0,
+    "intent": 2,
+    "must_confirm": 0,
+    "must_not": 0,
+    "other": 0
+  },
+  "results": [
+    {
+      "id": "KT-001",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'open_maps_and_give_directions' (missing keywords: open, maps, and, give)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "hey phone open maps and give me directions to the airport",
+          "delivered_user": "hey phone open maps and give me directions to the airport",
+          "asr_rules": [],
+          "reply": "Got it — starting directions to SFO. About 55 minutes via I-880, no tolls on the fast route.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "how long will it take",
+          "delivered_user": "how long will it take",
+          "asr_rules": [],
+          "reply": "About 55 minutes to SFO via I-880, no tolls on that route.",
+          "actions": [
+            "report_eta"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "KT-004",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone give me directions to springfield",
+          "delivered_user": "hey phone give me directions to springfield",
+          "asr_rules": [],
+          "reply": "I found two — Springfield Township nearby, or Springfield, Illinois. Which one did you mean?",
+          "actions": []
+        },
+        {
+          "raw_user": "the township one, the close one",
+          "delivered_user": "the township one the close one",
+          "asr_rules": [],
+          "reply": "Springfield Township — head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes go ahead",
+          "delivered_user": "yes go ahead",
+          "asr_rules": [],
+          "reply": "Got it — starting navigation to Springfield Township, about 20 minutes away.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "KT-006",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone open maps",
+          "delivered_user": "hey phone open maps",
+          "asr_rules": [],
+          "reply": "Maps open — where do you want to go?",
+          "actions": []
+        },
+        {
+          "raw_user": "the pharmacy on main street",
+          "delivered_user": "the pharmacy on main street",
+          "asr_rules": [],
+          "reply": "Starting navigation to the pharmacy on Main Street — about 9 minutes away.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "KT-012",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'navigate_to_airport_for_flight_after_confirmation' (missing keywords: airport, after, confirmation)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "hey phone i need to get to my flight",
+          "delivered_user": "hey phone i need to get to my flight",
+          "asr_rules": [],
+          "reply": "Got it — SFO for flight UA482, head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes go ahead",
+          "delivered_user": "yes go ahead",
+          "asr_rules": [],
+          "reply": "On it — navigating to SFO for UA482. About 55 minutes from the office, so you'll get there around 4:00, well before boarding closes at 5:45.",
+          "actions": [
+            "start_navigation",
+            "report_eta"
+          ]
+        },
+        {
+          "raw_user": "any traffic problems",
+          "delivered_user": "any traffic problems",
+          "asr_rules": [],
+          "reply": "No major problems — still about 55 minutes to SFO, so you're on track to arrive around 4:00.",
+          "actions": []
+        }
+      ]
+    }
+  ]
+}

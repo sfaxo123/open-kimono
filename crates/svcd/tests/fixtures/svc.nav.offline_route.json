@@ -1,0 +1,450 @@
+{
+  "ir_version": "1.0.0",
+  "id": "svc.nav.offline_route",
+  "version": "1.0.0",
+  "generation": 1,
+  "content_hash": "blake3:4a8f9b2c1d0e3f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a",
+  "title": "Offline Map Navigation",
+  "description": "Turn-by-turn routing using only on-device PMTiles/Valhalla tiles in /maps and local GNSS fixes. Zero network egress.",
+  "author": {
+    "name": "Redox Core Builtin",
+    "provenance": "system_builtin"
+  },
+  "execution_mode": "warm_pooled_component",
+  "priority_class": "P3_ACTIVE_FOREGROUND_NAV",
+  "parameters": [
+    {
+      "key": "destination",
+      "input_type": "string",
+      "requirement": "required",
+      "description": "Destination place name or street address resolved against local offline geocoder index."
+    },
+    {
+      "key": "profile",
+      "input_type": "select",
+      "requirement": "optional",
+      "description": "Routing cost profile.",
+      "default": "auto",
+      "options": ["auto", "bicycle", "pedestrian"]
+    }
+  ],
+  "triggers": [
+    {
+      "id": "trig_voice_start_nav",
+      "kind": "voice_intent",
+      "entry_action": "act_geocode_and_route",
+      "voice_intent": {
+        "domain": "navigation",
+        "intent_name": "OfflineNavigateTo",
+        "lang": "en-US",
+        "method": "template",
+        "speech_to_phrase": true,
+        "sentences": [
+          "navigate to {destination} [by {profile}]",
+          "take me to {destination} offline",
+          "directions to {destination}"
+        ],
+        "slots": {
+          "destination": { "type": "string", "required": true },
+          "profile": { "type": "enum", "required": false, "default": "auto" }
+        }
+      }
+    },
+    {
+      "id": "trig_gnss_fix_update",
+      "kind": "sensor_threshold",
+      "entry_action": "act_update_maneuver",
+      "condition_cel": "state.status == 'navigating'",
+      "cooldown_ms": 1000,
+      "sensor_threshold": {
+        "scheme_path": "sensor:gnss/fix",
+        "metric": "displacement_meters",
+        "operator": "gte",
+        "threshold": 10.0,
+        "hysteresis_reset": 0.0,
+        "edge_only": false,
+        "poll_or_irq": "irq_event"
+      }
+    },
+    {
+      "id": "trig_ui_stop_btn",
+      "kind": "ui_action",
+      "entry_action": "act_stop_navigation",
+      "ui_action": {
+        "surface_id": "nav-offline-surface",
+        "action_name": "stop_navigation",
+        "source_component_id": "btn_stop_nav"
+      }
+    }
+  ],
+  "workflow": [
+    "act_geocode_and_route",
+    "act_render_nav_surface",
+    "act_speak_initial_maneuver"
+  ],
+  "actions": {
+    "act_geocode_and_route": {
+      "type": "logic",
+      "description": "Resolve destination in local FST index and compute A* route from current GNSS fix using offline map tiles.",
+      "effect_class": "reversible_compensated",
+      "idempotency_key_template": "svc.nav.offline_route:{{utterance_id}}:geocode_route:{{destination}}:{{profile}}",
+      "read_only": false,
+      "deduplicate_calls": true,
+      "concurrency": "serial",
+      "timeout": { "idle_ms": 1500, "total_ms": 3000 },
+      "wasm_call": {
+        "component_ref": "comp_offline_router",
+        "wit_interface": "redox:nav/router@1.0.0",
+        "function": "compute-route",
+        "args_mapping": {
+          "origin_lat": "$.session.location.lat",
+          "origin_lon": "$.session.location.lon",
+          "destination_query": "$.params.destination",
+          "costing": "$.params.profile"
+        },
+        "output_state_pointer": "/route"
+      },
+      "compensating_action": "act_stop_navigation",
+      "next": [
+        { "when_cel": "state.route.found == true", "target": "act_render_nav_surface" },
+        { "when_cel": "state.route.found == false", "target": "act_announce_offline_miss" }
+      ]
+    },
+    "act_render_nav_surface": {
+      "type": "ui_patch",
+      "description": "Publish route geometry, ETA, and next turn onto the A2UI navigation surface.",
+      "effect_class": "reversible_staged",
+      "read_only": false,
+      "deduplicate_calls": false,
+      "concurrency": "serial",
+      "timeout": { "idle_ms": 100, "total_ms": 250 },
+      "ui_patch": {
+        "surface_id": "nav-offline-surface",
+        "operation": "update_data_model",
+        "data_model_path": "/route",
+        "data_model_value": "$.state.route"
+      },
+      "next": [
+        { "target": "act_speak_initial_maneuver" }
+      ]
+    },
+    "act_speak_initial_maneuver": {
+      "type": "dialog",
+      "description": "Speak the first turn instruction via local Wyoming TTS.",
+      "effect_class": "committed_irreversible",
+      "idempotency_key_template": "svc.nav.offline_route:{{utterance_id}}:speak_init",
+      "read_only": false,
+      "deduplicate_calls": true,
+      "concurrency": "serial",
+      "timeout": { "idle_ms": 2000, "total_ms": 5000 },
+      "dialog": {
+        "speech": "Offline route to {{state.route.destination_label}} ready. {{state.route.next_instruction}}.",
+        "text": "{{state.route.destination_label}} ({{state.route.distance_km}} km, {{state.route.eta_min}} min): {{state.route.next_instruction}}",
+        "priority": "normal"
+      }
+    },
+    "act_update_maneuver": {
+      "type": "logic",
+      "description": "Snap current GNSS fix to active polyline and update remaining distance and turn instruction.",
+      "effect_class": "reversible_staged",
+      "read_only": false,
+      "deduplicate_calls": false,
+      "concurrency": "serial",
+      "timeout": { "idle_ms": 150, "total_ms": 300 },
+      "wasm_call": {
+        "component_ref": "comp_offline_router",
+        "wit_interface": "redox:nav/router@1.0.0",
+        "function": "snap-fix",
+        "args_mapping": {
+          "lat": "$.trigger.payload.lat",
+          "lon": "$.trigger.payload.lon",
+          "polyline_id": "$.state.route.polyline_id"
+        },
+        "output_state_pointer": "/route"
+      },
+      "next": [
+        { "when_cel": "state.route.arrived == true", "target": "act_stop_navigation" },
+        { "when_cel": "state.route.arrived == false", "target": "act_render_nav_surface" }
+      ]
+    },
+    "act_announce_offline_miss": {
+      "type": "dialog",
+      "description": "Honestly explain when a destination is outside the downloaded offline map region (VISION.md §5).",
+      "effect_class": "committed_irreversible",
+      "read_only": true,
+      "deduplicate_calls": true,
+      "concurrency": "serial",
+      "timeout": { "idle_ms": 2000, "total_ms": 4000 },
+      "dialog": {
+        "speech": "I couldn't find {{params.destination}} in your downloaded offline maps, and offline mode keeps Wi-Fi and cellular data off.",
+        "text": "Not found in /maps offline archive: {{params.destination}} (network stayed OFF).",
+        "priority": "normal"
+      }
+    },
+    "act_stop_navigation": {
+      "type": "state_mutate",
+      "description": "Clear active route, delete navigation surface, and release GNSS + map storage grants so hardware powers down.",
+      "effect_class": "reversible_staged",
+      "read_only": false,
+      "deduplicate_calls": true,
+      "concurrency": "serial",
+      "timeout": { "idle_ms": 100, "total_ms": 200 },
+      "state_patch": [
+        { "op": "replace", "path": "/status", "value": "idle" },
+        { "op": "replace", "path": "/route/active", "value": false }
+      ]
+    }
+  },
+  "deps": {
+    "schemes": [
+      {
+        "scheme": "disk:maps/offline.pmtiles",
+        "access": "read",
+        "lifecycle": "while_surface_visible"
+      },
+      {
+        "scheme": "sensor:gnss/fix",
+        "access": "event_subscribe",
+        "lifecycle": "while_surface_visible"
+      },
+      {
+        "scheme": "audio:wyoming/tts",
+        "access": "write",
+        "lifecycle": "demand_per_action"
+      }
+    ],
+    "wasm_components": [
+      {
+        "id": "comp_offline_router",
+        "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "wit_world": {
+          "imports": [
+            "wasi:filesystem/types@0.2.12",
+            "redox:sensor/gnss@1.0.0"
+          ],
+          "exports": [
+            "redox:nav/router@1.0.0"
+          ]
+        },
+        "pool_policy": {
+          "pool_size": 1,
+          "max_invocations": 5000,
+          "max_concurrency": 1,
+          "reclaim_window_seconds": 30
+        }
+      }
+    ],
+    "sub_services": []
+  },
+  "capabilities": [
+    {
+      "cap_id": "cap_maps_ro",
+      "capability": "storage.maps.readonly",
+      "scope": { "mount_path": "/maps/offline.pmtiles", "read_only": true },
+      "lifetime": "while_visible",
+      "max_duration_sec": 14400,
+      "revocable": true,
+      "audit_reason": "Mount downloaded map archive /maps/offline.pmtiles (read-only) for local routing."
+    },
+    {
+      "cap_id": "cap_gnss_nav",
+      "capability": "location.gnss.read",
+      "scope": { "min_interval_ms": 1000, "offline_only": true },
+      "lifetime": "while_visible",
+      "max_duration_sec": 14400,
+      "revocable": true,
+      "audit_reason": "Turn on GNSS receiver while navigation card is open; turns off immediately when navigation ends."
+    },
+    {
+      "cap_id": "cap_nav_ui",
+      "capability": "ui.surface.render",
+      "scope": { "surface_id": "nav-offline-surface", "slot": "primary" },
+      "lifetime": "while_visible",
+      "max_duration_sec": 14400,
+      "revocable": true,
+      "audit_reason": "Display turn-by-turn navigation card."
+    },
+    {
+      "cap_id": "cap_nav_tts",
+      "capability": "audio.playback.tts",
+      "scope": { "engine": "local_wyoming" },
+      "lifetime": "per_invocation",
+      "max_duration_sec": 10,
+      "revocable": true,
+      "audit_reason": "Speak turn-by-turn maneuver instruction."
+    }
+  ],
+  "state_schema": {
+    "namespace": "state:svc.nav.offline_route",
+    "durability": "ephemeral_session",
+    "wal_limit_bytes": 1048576,
+    "retention_ttl_sec": 0,
+    "schema": {
+      "type": "object",
+      "required": ["status", "route"],
+      "properties": {
+        "status": { "type": "string", "enum": ["idle", "navigating"] },
+        "route": {
+          "type": "object",
+          "required": ["found", "active", "destination_label", "next_instruction", "distance_km", "eta_min", "arrived"],
+          "properties": {
+            "found": { "type": "boolean" },
+            "active": { "type": "boolean" },
+            "polyline_id": { "type": "string" },
+            "destination_label": { "type": "string" },
+            "next_instruction": { "type": "string" },
+            "distance_km": { "type": "number" },
+            "eta_min": { "type": "integer" },
+            "arrived": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "initial_state": {
+      "status": "idle",
+      "route": {
+        "found": false,
+        "active": false,
+        "polyline_id": "",
+        "destination_label": "",
+        "next_instruction": "",
+        "distance_km": 0.0,
+        "eta_min": 0,
+        "arrived": false
+      }
+    },
+    "migrations": []
+  },
+  "ui": {
+    "mode": "a2ui_v1",
+    "surface_id": "nav-offline-surface",
+    "catalog_id": "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+    "send_data_model": true,
+    "initial_messages": [
+      {
+        "version": "v1.0",
+        "createSurface": {
+          "surfaceId": "nav-offline-surface",
+          "catalogId": "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+          "sendDataModel": true
+        }
+      },
+      {
+        "version": "v1.0",
+        "updateComponents": {
+          "surfaceId": "nav-offline-surface",
+          "components": [
+            { "id": "root", "component": "Card", "child": "nav_col" },
+            {
+              "id": "nav_col",
+              "component": "Column",
+              "children": ["dest_header", "maneuver_text", "stats_row", "btn_stop_nav"]
+            },
+            {
+              "id": "dest_header",
+              "component": "Text",
+              "text": { "@path": "/route/destination_label" },
+              "variant": "caption"
+            },
+            {
+              "id": "maneuver_text",
+              "component": "Text",
+              "text": { "@path": "/route/next_instruction" },
+              "variant": "body"
+            },
+            {
+              "id": "stats_row",
+              "component": "Row",
+              "children": ["dist_text", "eta_text"],
+              "justify": "spaceAround"
+            },
+            {
+              "id": "dist_text",
+              "component": "Text",
+              "text": { "@path": "/route/distance_km" }
+            },
+            {
+              "id": "eta_text",
+              "component": "Text",
+              "text": { "@path": "/route/eta_min" }
+            },
+            {
+              "id": "btn_stop_nav",
+              "component": "Button",
+              "label": "Stop Navigation",
+              "action": {
+                "event": {
+                  "name": "stop_navigation",
+                  "context": {}
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "power_budget": {
+    "cpu_cluster_preference": "silver_preferred",
+    "max_cpu_cores": 2,
+    "cpu_quota_pct": 25,
+    "memory_limit_mb": 48,
+    "wasm_fuel_per_invocation": 50000000,
+    "max_wakeups_per_minute": 60,
+    "max_wakelock_sec": 0,
+    "network_egress_bytes_max": 0,
+    "allowed_hosts": [],
+    "allowed_ip_name_lookups": [],
+    "allowed_host_loopback_ports": [],
+    "auto_stop_idle_ms": 5000,
+    "power_announcement": "Offline Navigation: switched ON GNSS + /maps read-only archive (Wi-Fi/cell OFF, 0 bytes network)."
+  },
+  "tests": [
+    {
+      "name": "offline_route_portland_and_stop",
+      "description": "Computes offline route to Powell's Books, updates on GNSS fix, and powers down GNSS + map scheme on stop.",
+      "initial_env": {
+        "monotonic_ms": 1000,
+        "wall_iso": "2026-10-24T17:00:00Z",
+        "battery_pct": 82.0,
+        "charging": false,
+        "network_online": false,
+        "location": { "lat": 45.5152, "lon": -122.6784, "tz": "America/Los_Angeles" }
+      },
+      "events": [
+        {
+          "at_monotonic_ms": 1000,
+          "event_type": "utterance",
+          "payload": { "text": "navigate to Powell's Books offline" }
+        },
+        {
+          "at_monotonic_ms": 5000,
+          "event_type": "ui_action",
+          "payload": {
+            "surfaceId": "nav-offline-surface",
+            "name": "stop_navigation",
+            "sourceComponentId": "btn_stop_nav"
+          }
+        }
+      ],
+      "assertions": {
+        "final_state_subset": {
+          "status": "idle",
+          "route": { "active": false }
+        },
+        "expected_bus_emissions": [
+          { "msg_type": "ovos.intent.handler.start" },
+          { "msg_type": "ovos.intent.handler.complete" }
+        ],
+        "expected_ui_surfaces": [
+          { "surfaceId": "nav-offline-surface" }
+        ],
+        "budget_assertions": {
+          "max_memory_mb_used": 48.0,
+          "network_bytes_sent": 0,
+          "active_schemes_after_completion": []
+        }
+      }
+    }
+  ]
+}

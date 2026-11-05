@@ -1,0 +1,4 @@
+# The fixtures are the UI test inputs: they are committed even though the
+# repo-wide ignore excludes *.jsonl (they are evidence, not run artifacts).
+!fixtures/*.jsonl
+!fixtures/bad/*.jsonl

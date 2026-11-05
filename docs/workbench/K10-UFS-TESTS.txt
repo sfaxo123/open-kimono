@@ -1,0 +1,114 @@
+# K10 ufs-core evidence — 2026-10-25T00:03Z, commit bd45f99
+## rustc
+rustc 1.99.0 (b940084d7 2026-09-28)
+
+## cargo test --offline (host, stable)
+     Running unittests src/lib.rs (target/debug/deps/ufs_core-591daa401554a8c5)
+
+running 10 tests
+test scsi::tests::cdbs_are_read_only_and_well_formed ... ok
+test scsi::tests::sense_fixed_and_descriptor_formats ... ok
+test gpt::tests::header_rejects_garbage ... ok
+test gpt::tests::crc32_check_value ... ok
+test upiu::tests::command_upiu_is_big_endian_read ... ok
+test upiu::tests::prdt_byte_count_is_minus_one ... ok
+test upiu::tests::no_data_utrd_has_direction_zero ... ok
+test upiu::tests::response_header_and_sense ... ok
+test upiu::tests::query_upiu_fields ... ok
+test upiu::tests::utrd_layout_matches_ufshci ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/bringup.rs (target/debug/deps/bringup-4fddb996c6aa259e)
+
+running 10 tests
+test enabled_controller_is_cycled_through_hce_zero ... ok
+test bring_up_enumerates_enabled_logical_units ... ok
+test large_read_is_chunked_to_the_dma_buffer ... ok
+test transient_nop_failures_are_retried ... ok
+test read_capacity_inquiry_and_blocks ... ok
+test non_qualcomm_config_never_touches_vendor_registers ... ok
+test qualcomm_vendor_setup_is_applied_before_link_startup ... ok
+test unit_attention_is_retried_once ... ok
+test gpt_of_user_and_boot_lus ... ok
+test whole_session_sends_no_write_of_any_kind ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/negative_bringup.rs (target/debug/deps/negative_bringup-7044edbb7a882fc2)
+
+running 11 tests
+test device_init_that_never_clears ... ok
+test dead_phy_is_detected_before_link_startup ... ok
+test descriptor_with_wrong_idn_is_rejected ... ok
+test bring_up_on_a_32_lun_device_scans_all_32 ... ok
+test list_not_ready_after_link_startup ... ok
+test link_startup_failure_reports_uic_result ... ok
+test link_up_without_device_present ... ok
+test nop_failing_every_attempt_returns_last_ocs ... ok
+test uic_command_that_never_completes ... ok
+test hce_enable_and_disable_timeouts ... ok
+test dma_layout_and_capability_checks ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/negative_io.rs (target/debug/deps/negative_io-45d4419d36b26670)
+
+running 12 tests
+test invalid_arguments_make_no_access ... ok
+test write_class_opcodes_are_refused_without_any_access ... ok
+test fatal_interrupt_status_aborts_the_transfer ... ok
+test query_errors_surface_the_response_code ... ok
+test ocs_error_on_a_command ... ok
+test scsi_check_conditions ... ok
+test doorbell_timeout_clears_the_slot_and_recovers ... ok
+test short_data_in_is_reported ... ok
+test read_past_the_end_of_a_lu ... ok
+test mismatched_task_tag_is_rejected ... ok
+test slot_that_ignores_clear_times_out_in_clear ... ok
+test lu_without_gpt_and_corrupt_gpts ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/replay.rs (target/debug/deps/replay-7a6b2b0e12319d34)
+
+running 4 tests
+test golden_trace_only_writes_allowlisted_registers ... ok
+test recorded_trace_matches_the_frozen_fixture ... ok
+test strict_replay_catches_a_changed_register_value ... ok
+test strict_replay_of_the_fixture_reproduces_the_session ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+   Doc-tests ufs_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+## cargo clippy --offline --all-targets
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+## no_std aarch64: cargo build --offline --lib --target aarch64-unknown-uefi
+   Compiling mmio-replay v0.1.0 ($HOME/Developer/experiments/redox-oneplus6-k10/crates/mmio-replay)
+   Compiling ufs-core v0.1.0 ($HOME/Developer/experiments/redox-oneplus6-k10/crates/ufs)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.90s
+
+## Redox-pinned toolchain: cargo +nightly-2026-05-24 test --offline
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test query_errors_surface_the_response_code ... ok
+test ocs_error_on_a_command ... ok
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+## Golden trace (tests/fixtures/bringup_gpt.trace)
+148 MMIO events (72 reads, 76 writes), 17 doorbells: NOP, SET_FLAG fDeviceInit, READ_FLAG, device + geometry
+descriptors, 8 unit descriptors, 2 × (GPT header READ(10) + entry-array READ(10)). Writes only to IE, HCE, IS,
+UCMDARG1-3, UICCMD, UTRLBA/U, UTRLRSR, UTRLDBR, qcom CFG1 (asserted by replay::golden_trace_only_writes_allowlisted_registers).
+
+## Mutation check (manual, sources restored afterwards)
+UTRLCLR polarity, CORE_CLK_DIV_EN left set, bLUEnable > 1, task-tag check removed → each caught by >= 1 test.

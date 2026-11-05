@@ -1,0 +1,106 @@
+From 338bd63d54e83c6f1a8d375cc20f6ad9dc633b82 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Tue, 27 Oct 2026 16:36:10 +0000
+Subject: [PATCH] geni: configure RX packing to match four-byte FIFO drain
+
+Agent: Codex root
+Model: gpt-6-sol
+Provider: OpenAI
+Refs: ramshell-interactive-geni-rx
+---
+ src/devices/uart_qcom_geni.rs       | 10 +++++++---
+ src/devices/uart_qcom_geni/model.rs | 15 ++++++++++++---
+ src/devices/uart_qcom_geni/tests.rs |  4 ++--
+ 3 files changed, 21 insertions(+), 8 deletions(-)
+
+diff --git a/src/devices/uart_qcom_geni.rs b/src/devices/uart_qcom_geni.rs
+index 720de955..6854133a 100644
+--- a/src/devices/uart_qcom_geni.rs
++++ b/src/devices/uart_qcom_geni.rs
+@@ -83,9 +83,13 @@ pub const UART_CTS_MASK: u32 = 1 << 1;
+ pub const SER_CLK_EN: u32 = 1 << 0;
+ pub const CLK_DIV_SHIFT: u32 = 4;
+ pub const CLK_DIV_MAX: u32 = 0xfff;
+-/// 8 bits per transfer word, 4 words per FIFO element, LSB first.
++/// Polled TX sends one 8-bit character per FIFO element, LSB first.
+ pub const PACKING_CFG0: u32 = 0xf;
+ pub const PACKING_CFG1: u32 = 0;
++/// RX packs four 8-bit characters at bit offsets 0/8/16/24.
++/// Each 10-bit vector is (start << 5) | (7 << 1); bit0 ends vector3.
++pub const RX_PACKING_CFG0: u32 = 0x0004_380e;
++pub const RX_PACKING_CFG1: u32 = 0x000c_3e0e;
+ pub const BITS_PER_CHAR: u32 = 8;
+ pub const TX_WATERMARK_WORDS: u32 = 2;
+ /// Watermarks assume the 16-word FIFO every SDM845 SE reports.
+@@ -213,8 +217,8 @@ impl<M: Mmio> SerialPort<M> {
+ 
+         self.mmio.write(reg::TX_PACKING_CFG0, PACKING_CFG0);
+         self.mmio.write(reg::TX_PACKING_CFG1, PACKING_CFG1);
+-        self.mmio.write(reg::RX_PACKING_CFG0, PACKING_CFG0);
+-        self.mmio.write(reg::RX_PACKING_CFG1, PACKING_CFG1);
++        self.mmio.write(reg::RX_PACKING_CFG0, RX_PACKING_CFG0);
++        self.mmio.write(reg::RX_PACKING_CFG1, RX_PACKING_CFG1);
+         self.mmio.write(reg::RX_WATERMARK, RX_WATERMARK_WORDS);
+         self.mmio
+             .write(reg::RX_RFR_WATERMARK, RX_RFR_WATERMARK_WORDS);
+diff --git a/src/devices/uart_qcom_geni/model.rs b/src/devices/uart_qcom_geni/model.rs
+index 51c63a4e..e593a2d9 100644
+--- a/src/devices/uart_qcom_geni/model.rs
++++ b/src/devices/uart_qcom_geni/model.rs
+@@ -24,6 +24,13 @@ pub struct GeniModel {
+ }
+ 
+ impl GeniModel {
++    // Decode the programmed vector stop position, independently of driver constants.
++    fn rx_bytes(s: &State) -> usize {
++        let cfg = [s.regs[reg::RX_PACKING_CFG0 / 4], s.regs[reg::RX_PACKING_CFG1 / 4]];
++        (0..4).find(|&i| (cfg[i / 2] >> ((i % 2) * 10)) & 1 != 0)
++            .map_or(4, |i| i + 1)
++    }
++
+     pub fn new(protocol: u32) -> Self {
+         let mut regs = vec![0; MIN_REGISTER_SPAN / 4];
+         regs[reg::FW_REVISION_RO / 4] = protocol << 8;
+@@ -70,7 +77,7 @@ impl GeniModel {
+         let mut s = self.state.borrow_mut();
+         s.rx.extend(bytes);
+         if s.rx_armed {
+-            let words = s.rx.len().div_ceil(4) as u32;
++            let words = s.rx.len().div_ceil(Self::rx_bytes(&s)) as u32;
+             s.s_irq |= if words >= s.regs[reg::RX_WATERMARK / 4] {
+                 S_IRQ_RX_FIFO_WATERMARK
+             } else {
+@@ -110,11 +117,13 @@ impl Mmio for GeniModel {
+                     return 0;
+                 }
+                 let len = s.rx.len() as u32;
+-                RX_LAST | ((len % 4) << RX_LAST_BYTE_VALID_SHIFT) | len.div_ceil(4)
++                let bytes = Self::rx_bytes(&s) as u32;
++                RX_LAST | ((len % bytes) << RX_LAST_BYTE_VALID_SHIFT) | len.div_ceil(bytes)
+             }
+             reg::RX_FIFO => {
+                 let mut word = [0u8; 4];
+-                for byte in &mut word {
++                let bytes = Self::rx_bytes(&s);
++                for byte in &mut word[..bytes] {
+                     match s.rx.pop_front() {
+                         Some(c) => *byte = c,
+                         None => break,
+diff --git a/src/devices/uart_qcom_geni/tests.rs b/src/devices/uart_qcom_geni/tests.rs
+index a5871ff6..13ef207c 100644
+--- a/src/devices/uart_qcom_geni/tests.rs
++++ b/src/devices/uart_qcom_geni/tests.rs
+@@ -30,8 +30,8 @@ fn init_write_trace_matches_spec_sequence() {
+             (reg::S_IRQ_CLEAR, u32::MAX),
+             (reg::TX_PACKING_CFG0, 0xf),
+             (reg::TX_PACKING_CFG1, 0),
+-            (reg::RX_PACKING_CFG0, 0xf),
+-            (reg::RX_PACKING_CFG1, 0),
++            (reg::RX_PACKING_CFG0, 0x0004_380e),
++            (reg::RX_PACKING_CFG1, 0x000c_3e0e),
+             (reg::RX_WATERMARK, 8),
+             (reg::RX_RFR_WATERMARK, 14),
+             (reg::UART_TX_TRANS_CFG, UART_CTS_MASK),
+-- 
+2.43.0
+

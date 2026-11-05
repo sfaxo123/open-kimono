@@ -1,0 +1,8 @@
+[package]
+name = "device-control-host"
+version = "0.0.1"
+edition = "2021"
+description = "Host-side bounded append-only log store over device-control control-envelope v1 frames (partial 0.2.2 host slice; no phone proof, no durability claim beyond fsync)"
+
+[dependencies]
+device-control = { path = "../device-control" }

@@ -1,0 +1,411 @@
+From da04b2bfc8fe3f66155b5bc5e1b4bc6ae69ff1aa Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Mon, 26 Oct 2026 22:05:04 +0000
+Subject: [PATCH] wip: preserve unwired owned IRQ dispatch experiment
+
+Not an accepted ownership migration: all existing IRQ_CHIP references remain unchanged. Correct cfg scope and add atomic reserve transaction after review. Generic mock-core host proofs only; real controller adapters, boot publication and CPU/MMIO proofs remain unimplemented. Cursor transport ended Service Unavailable exit1; root preserves experimental work.
+
+Agent: Codex with Perplexity, Cursor and Luna
+Model: Cursor tool default (author); pplx-5090 (coordinator); gpt-6-luna (review); Codex (corrections)
+Provider: Cursor; OpenAI; local LiteLLM
+Refs: cloud-dispatch-cursor-20261026T214934-2459079
+---
+ src/dtb/irq_dispatch.rs | 374 ++++++++++++++++++++++++++++++++++++++++
+ src/dtb/mod.rs          |   2 +
+ 2 files changed, 376 insertions(+)
+ create mode 100644 src/dtb/irq_dispatch.rs
+
+diff --git a/src/dtb/irq_dispatch.rs b/src/dtb/irq_dispatch.rs
+new file mode 100644
+index 00000000..2ff3bb35
+--- /dev/null
++++ b/src/dtb/irq_dispatch.rs
+@@ -0,0 +1,374 @@
++//! Owned-action IRQ dispatch over an IRQ-save guarded core.
++//!
++//! Exploratory and NOT wired to `IRQ_CHIP`: every core read or mutation goes
++//! through [`IrqRegistry`], whose closures return owned values only. Registered
++//! handlers, scheme events and diagnostics run after the guard is released.
++//! Controller steps run under the guard and must stay bounded MMIO: no
++//! allocation, logging, scheduling, event, handle or registry access.
++
++#![allow(dead_code)]
++
++use crate::sync::irq_lock::{IrqSaveMutex, MaskPolicy};
++use alloc::sync::Arc;
++
++/// Number of virqs, equal to `irqchip::IRQ_DESC_COUNT`.
++pub(crate) const VIRQ_COUNT: usize = 2048;
++
++/// Standalone callback with an immutable receiver; any backend state must be
++/// separately locked and released before the callback re-enters dispatch.
++pub(crate) trait IrqHandler<K>: Send + Sync {
++    fn handle(&self, virq: u32, token: &mut K);
++
++    /// Opt-in completion of the copied descriptor target after `handle` returns.
++    fn eoi_after(&self) -> bool {
++        false
++    }
++}
++
++/// Copied, stable completion target (`basic.ic_idx`/`basic.ic_irq`).
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) struct Completion {
++    pub(crate) ic_idx: usize,
++    pub(crate) hwirq: u32,
++}
++
++/// Diagnostic copied out of the guard and reported after unlock.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum Diag {
++    UnexpectedClaim(u32),
++}
++
++/// Result of one bounded controller step executed under the core guard.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum ControllerStep {
++    Done,
++    /// Call only a registered handler for `virq` (no child/scheme fallback,
++    /// `eoi_after` ignored), then resume with `cursor`.
++    RegisteredOnly { virq: usize, cursor: u32 },
++    /// Deliver a scheme event, then resume with `cursor`.
++    Scheme { virq: u16, cursor: u32 },
++    /// Normal nested dispatch; no completion is added after it returns.
++    Dispatch { virq: u32 },
++    /// Report `diag`, then resume with `cursor` if present.
++    Diagnostic { diag: Diag, cursor: Option<u32> },
++}
++
++/// Owned routing decision for one virq; never carries a core reference.
++pub(crate) enum Route<H: ?Sized> {
++    Handler { handler: Arc<H>, completion: Completion },
++    Child { ic_idx: usize },
++    Scheme,
++}
++
++/// Guarded core operations. Implementations run only inside the registry
++/// closure and must not call back into the registry, handlers or logging.
++pub(crate) trait DispatchCore<K> {
++    type Handler: IrqHandler<K> + ?Sized;
++
++    /// Registered handler before child controller before scheme.
++    fn route(&mut self, virq: u32) -> Route<Self::Handler>;
++    fn handler(&mut self, virq: usize) -> Option<Arc<Self::Handler>>;
++    fn slot(&mut self, virq: usize) -> &mut Option<Arc<Self::Handler>>;
++    fn begin(&mut self, ic_idx: usize, virq: u32) -> ControllerStep;
++    fn resume(&mut self, ic_idx: usize, cursor: u32) -> ControllerStep;
++    fn complete(&mut self, target: Completion);
++    fn is_reserved(&mut self, virq: usize) -> bool;
++    /// Existing immediate policy: mark, then enable, or disable and clear route.
++    fn set_reserved(&mut self, virq: usize, reserved: bool);
++}
++
++/// Callbacks executed outside the core guard.
++pub(crate) trait Sink<K> {
++    fn scheme(&self, virq: u16, token: &mut K);
++    fn diagnostic(&self, diag: Diag);
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum RegistryError {
++    NotReady,
++    OutOfRange,
++    Exists,
++}
++
++/// Private owner of the core: `None` until a fully built core is published.
++pub(crate) struct IrqRegistry<C, P: MaskPolicy> {
++    core: IrqSaveMutex<Option<C>, P>,
++}
++
++impl<C, P: MaskPolicy> IrqRegistry<C, P> {
++    pub(crate) const fn new() -> Self {
++        Self {
++            core: IrqSaveMutex::new(None),
++        }
++    }
++
++    /// Publish a locally built core once; a second publication is refused and
++    /// handed back so it is dropped after unlock.
++    ///
++    /// # Safety
++    /// Same contract as [`IrqSaveMutex::with`].
++    pub(crate) unsafe fn publish(&self, core: C) -> Result<(), C> {
++        // SAFETY: forwarded caller contract; the closure only moves owned values.
++        unsafe {
++            self.core.with(|slot| match slot {
++                Some(_) => Err(core),
++                None => {
++                    *slot = Some(core);
++                    Ok(())
++                }
++            })
++        }
++    }
++
++    /// # Safety
++    /// Same contract as [`IrqSaveMutex::with`]; `f` must be bounded and must not
++    /// reach handlers, logging, allocation, scheduling or this registry.
++    unsafe fn with_ready<R>(
++        &self,
++        f: impl for<'a> FnOnce(&'a mut C) -> R,
++    ) -> Result<R, RegistryError> {
++        // SAFETY: forwarded caller contract.
++        unsafe { self.core.with(|slot| slot.as_mut().map(f)) }.ok_or(RegistryError::NotReady)
++    }
++
++    #[cfg(test)]
++    pub(crate) fn lock_for_test(&self) -> &spin::Mutex<Option<C>> {
++        self.core.inner_for_test()
++    }
++}
++
++impl<C, P: MaskPolicy> IrqRegistry<C, P> {
++    /// Atomic check-and-install. A rejected handler is returned so its `Arc`
++    /// is dropped by the caller after unlock.
++    ///
++    /// # Safety
++    /// Same contract as [`IrqSaveMutex::with`].
++    pub(crate) unsafe fn register<K, H>(
++        &self,
++        virq: u32,
++        handler: Arc<H>,
++    ) -> Result<(), (RegistryError, Arc<H>)>
++    where
++        C: DispatchCore<K, Handler = H>,
++        H: IrqHandler<K> + ?Sized,
++    {
++        if virq as usize >= VIRQ_COUNT {
++            return Err((RegistryError::OutOfRange, handler));
++        }
++        let mut pending = Some(handler);
++        // SAFETY: forwarded caller contract; the closure only moves an Arc.
++        let installed = unsafe {
++            self.with_ready(|core| {
++                let slot = core.slot(virq as usize);
++                if slot.is_none() {
++                    *slot = pending.take();
++                    true
++                } else {
++                    false
++                }
++            })
++        };
++        match (installed, pending) {
++            (Ok(true), _) => Ok(()),
++            (Ok(false), Some(handler)) => Err((RegistryError::Exists, handler)),
++            (Err(err), Some(handler)) => Err((err, handler)),
++            _ => unreachable!("handler both installed and rejected"),
++        }
++    }
++
++    /// # Safety
++    /// Same contract as [`IrqSaveMutex::with`].
++    pub(crate) unsafe fn is_reserved<K>(&self, virq: u16) -> Result<bool, RegistryError>
++    where
++        C: DispatchCore<K>,
++    {
++        // SAFETY: forwarded caller contract.
++        unsafe { self.with_ready(|core| core.is_reserved(virq as usize)) }
++    }
++
++    /// # Safety
++    /// Same contract as [`IrqSaveMutex::with`].
++    pub(crate) unsafe fn set_reserved<K>(&self, virq: u16, reserved: bool) -> Result<(), RegistryError>
++    where
++        C: DispatchCore<K>,
++    {
++        // SAFETY: forwarded caller contract.
++        unsafe { self.with_ready(|core| core.set_reserved(virq as usize, reserved)) }
++    }
++
++    /// Atomically check and reserve one virq; callers must not implement this
++    /// transaction with separate `is_reserved` and `set_reserved` calls.
++    ///
++    /// # Safety
++    /// Same contract as [`IrqSaveMutex::with`].
++    pub(crate) unsafe fn try_reserve<K>(&self, virq: u16) -> Result<(), RegistryError>
++    where
++        C: DispatchCore<K>,
++    {
++        if virq as usize >= VIRQ_COUNT {
++            return Err(RegistryError::OutOfRange);
++        }
++        // SAFETY: forwarded caller contract; both operations share one guard.
++        unsafe { self.with_ready(|core| {
++            if core.is_reserved(virq as usize) {
++                return Err(RegistryError::Exists);
++            }
++            core.set_reserved(virq as usize, true);
++            Ok(())
++        }) }?
++    }
++
++    /// Guarded completion of a copied target, e.g. a scheme acknowledgment
++    /// issued while the caller still holds its HANDLES read guard.
++    ///
++    /// # Safety
++    /// Same contract as [`IrqSaveMutex::with`].
++    pub(crate) unsafe fn complete<K>(&self, target: Completion) -> Result<(), RegistryError>
++    where
++        C: DispatchCore<K>,
++    {
++        // SAFETY: forwarded caller contract.
++        unsafe { self.with_ready(|core| core.complete(target)) }
++    }
++
++    /// Dispatch `virq`. Each guard covers one bounded routing or controller
++    /// step; every handler, scheme event and diagnostic runs after unlock.
++    /// Nested dispatch recursion is bounded by the acyclic controller topology.
++    ///
++    /// # Safety
++    /// Every guarded step obeys [`IrqSaveMutex::with`]. The caller must keep
++    /// banked acknowledge and completion on the initiating CPU; this function
++    /// does not pin the CPU.
++    pub(crate) unsafe fn dispatch<K, S>(
++        &self,
++        virq: u32,
++        token: &mut K,
++        sink: &S,
++    ) -> Result<(), RegistryError>
++    where
++        C: DispatchCore<K>,
++        S: Sink<K>,
++    {
++        if virq as usize >= VIRQ_COUNT {
++            return Ok(());
++        }
++        // SAFETY: forwarded caller contract; closure returns owned values.
++        let first = unsafe {
++            self.with_ready(|core| match core.route(virq) {
++                Route::Child { ic_idx } => Err((ic_idx, core.begin(ic_idx, virq))),
++                route => Ok(route),
++            })
++        }?;
++        match first {
++            Ok(Route::Handler { handler, completion }) => {
++                handler.handle(virq, token);
++                let eoi = handler.eoi_after();
++                drop(handler);
++                if eoi {
++                    // SAFETY: forwarded caller contract.
++                    unsafe { self.with_ready(|core| core.complete(completion)) }?;
++                }
++                Ok(())
++            }
++            Ok(Route::Scheme) => {
++                sink.scheme(virq as u16, token);
++                Ok(())
++            }
++            Ok(Route::Child { .. }) => unreachable!("child routes begin under the guard"),
++            // SAFETY: forwarded caller contract.
++            Err((ic_idx, step)) => unsafe { self.run_steps(ic_idx, step, token, sink) },
++        }
++    }
++
++    unsafe fn run_steps<K, S>(
++        &self,
++        ic_idx: usize,
++        mut step: ControllerStep,
++        token: &mut K,
++        sink: &S,
++    ) -> Result<(), RegistryError>
++    where
++        C: DispatchCore<K>,
++        S: Sink<K>,
++    {
++        loop {
++            let cursor = match step {
++                ControllerStep::Done => return Ok(()),
++                ControllerStep::RegisteredOnly { virq, cursor } => {
++                    // SAFETY: forwarded caller contract.
++                    let handler = unsafe { self.with_ready(|core| core.handler(virq)) }?;
++                    if let Some(handler) = handler {
++                        handler.handle(virq as u32, token);
++                    }
++                    cursor
++                }
++                ControllerStep::Scheme { virq, cursor } => {
++                    sink.scheme(virq, token);
++                    cursor
++                }
++                // SAFETY: forwarded caller contract.
++                ControllerStep::Dispatch { virq } => return unsafe { self.dispatch(virq, token, sink) },
++                ControllerStep::Diagnostic { diag, cursor } => {
++                    sink.diagnostic(diag);
++                    match cursor {
++                        Some(cursor) => cursor,
++                        None => return Ok(()),
++                    }
++                }
++            };
++            // SAFETY: forwarded caller contract.
++            step = unsafe { self.with_ready(|core| core.resume(ic_idx, cursor)) }?;
++        }
++    }
++}
++
++/// BCM2835 begin: a valid claim selects registered-only delivery; the claim is
++/// completed by [`complete_claim`] on resume in both cases.
++pub(crate) fn bcm2835_begin(claim: u32, virq: Option<usize>) -> ControllerStep {
++    match virq {
++        Some(virq) if virq < 1024 => ControllerStep::RegisteredOnly { virq, cursor: claim },
++        _ => ControllerStep::Diagnostic {
++            diag: Diag::UnexpectedClaim(claim),
++            cursor: Some(claim),
++        },
++    }
++}
++
++/// PLIC begin: a translated claim is a normal nested dispatch with no extra
++/// completion; a failed translation is reported, then completed on resume.
++pub(crate) fn plic_begin(claim: u32, virq: Option<usize>) -> ControllerStep {
++    match virq {
++        Some(virq) => ControllerStep::Dispatch { virq: virq as u32 },
++        None => ControllerStep::Diagnostic {
++            diag: Diag::UnexpectedClaim(claim),
++            cursor: Some(claim),
++        },
++    }
++}
++
++/// BCM2835/PLIC resume: complete the claimed source exactly once.
++pub(crate) fn complete_claim(claim: u32, eoi: impl FnOnce(u32)) -> ControllerStep {
++    eoi(claim);
++    ControllerStep::Done
++}
++
++/// TLMM scan from pin `from` in ascending order: the first enabled pending
++/// pin is cleared before its scheme event is yielded; resume continues after it.
++pub(crate) fn tlmm_scan(
++    enabled: &[bool],
++    from: usize,
++    virq_base: usize,
++    mut pending: impl FnMut(usize) -> bool,
++    mut clear: impl FnMut(usize),
++) -> ControllerStep {
++    for pin in from..enabled.len() {
++        if enabled[pin] && pending(pin) {
++            clear(pin);
++            return ControllerStep::Scheme {
++                virq: (virq_base + pin) as u16,
++                cursor: (pin + 1) as u32,
++            };
++        }
++    }
++    ControllerStep::Done
++}
+diff --git a/src/dtb/mod.rs b/src/dtb/mod.rs
+index b1c32ec9..5ebc7a8e 100644
+--- a/src/dtb/mod.rs
++++ b/src/dtb/mod.rs
+@@ -1,4 +1,6 @@
+ #[cfg(dtb)]
++pub(crate) mod irq_dispatch;
++#[cfg(dtb)]
+ pub mod irq_topology;
+ #[cfg(dtb)]
+ pub mod irqchip;
+-- 
+2.43.0
+

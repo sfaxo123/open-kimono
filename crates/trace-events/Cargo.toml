@@ -1,0 +1,10 @@
+[package]
+name = "trace-events"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Open-kimono event journal schema for Redox-on-OnePlus-6 (task C2): OpenTelemetry GenAI span names + AG-UI event vocabulary + our mic/STT/power/service events, serde JSON, ring buffer."
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }

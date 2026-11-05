@@ -1,0 +1,1594 @@
+From def50fcfa0811944122901b9157197294e46b2cf Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sun, 25 Oct 2026 00:11:02 +0000
+Subject: [PATCH] traced: add Redox trace scheme daemon and boot wiring
+
+Co-Authored-By: Codex <noreply@openai.com>
+---
+ Cargo.lock                                 |  31 ++
+ Cargo.toml                                 |   1 +
+ Makefile                                   |   4 +-
+ init.initfs.d/00_runtime.target            |   1 +
+ init.initfs.d/00_traced.service            |   7 +
+ traced/Cargo.toml                          |  18 +
+ traced/src/main.rs                         |  16 +
+ traced/src/scheme.rs                       | 102 ++++++
+ traced/vendor/trace-events/Cargo.toml      |  10 +
+ traced/vendor/trace-events/src/agui.rs     | 398 +++++++++++++++++++++
+ traced/vendor/trace-events/src/envelope.rs | 142 ++++++++
+ traced/vendor/trace-events/src/genai.rs    | 185 ++++++++++
+ traced/vendor/trace-events/src/jsonl.rs    |  42 +++
+ traced/vendor/trace-events/src/lib.rs      |  53 +++
+ traced/vendor/trace-events/src/op6.rs      | 120 +++++++
+ traced/vendor/trace-events/src/ring.rs     | 108 ++++++
+ traced/vendor/tracejournal/Cargo.toml      |  10 +
+ traced/vendor/tracejournal/src/lib.rs      | 172 +++++++++
+ 18 files changed, 1418 insertions(+), 2 deletions(-)
+ create mode 100644 init.initfs.d/00_traced.service
+ create mode 100644 traced/Cargo.toml
+ create mode 100644 traced/src/main.rs
+ create mode 100644 traced/src/scheme.rs
+ create mode 100644 traced/vendor/trace-events/Cargo.toml
+ create mode 100644 traced/vendor/trace-events/src/agui.rs
+ create mode 100644 traced/vendor/trace-events/src/envelope.rs
+ create mode 100644 traced/vendor/trace-events/src/genai.rs
+ create mode 100644 traced/vendor/trace-events/src/jsonl.rs
+ create mode 100644 traced/vendor/trace-events/src/lib.rs
+ create mode 100644 traced/vendor/trace-events/src/op6.rs
+ create mode 100644 traced/vendor/trace-events/src/ring.rs
+ create mode 100644 traced/vendor/tracejournal/Cargo.toml
+ create mode 100644 traced/vendor/tracejournal/src/lib.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index ddad9e9e..8e42ad04 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2718,6 +2718,37 @@ version = "1.1.2+spec-1.1.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
+ 
++[[package]]
++name = "trace-events"
++version = "0.1.0"
++dependencies = [
++ "serde",
++ "serde_json",
++]
++
++[[package]]
++name = "traced"
++version = "0.1.0"
++dependencies = [
++ "daemon",
++ "libredox",
++ "redox-scheme",
++ "redox_syscall 0.9.5",
++ "scheme-utils",
++ "serde_json",
++ "trace-events",
++ "tracejournal",
++]
++
++[[package]]
++name = "tracejournal"
++version = "0.1.0"
++dependencies = [
++ "serde",
++ "serde_json",
++ "trace-events",
++]
++
+ [[package]]
+ name = "twox-hash"
+ version = "1.6.3"
+diff --git a/Cargo.toml b/Cargo.toml
+index 6b4cb14f..2baa0887 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -11,6 +11,7 @@ members = [
+     "initfs/tools",
+     "ipcd",
+     "logd",
++    "traced",
+     "netstack",
+     "ptyd",
+     "ramfs",
+diff --git a/Makefile b/Makefile
+index eb777880..70c34a55 100644
+--- a/Makefile
++++ b/Makefile
+@@ -12,10 +12,10 @@ SYSROOT ?= $(shell pwd)/target/$(TARGET)/sysroot
+ TARGET_DIR = $(BUILD_DIR)/$(TARGET)/$(BUILD_TYPE)
+ BUILD_FLAGS +=  --target-dir $(BUILD_DIR)
+ 
+-INITFS_BINS = ipcd init logd ramfs randd zerod \
++INITFS_BINS = ipcd init logd traced ramfs randd zerod \
+ 	acpid fbbootlogd hwd inputd lived \
+ 	pcid pcid-spawner rtcd vesad
+-RAMBOOT_BINS = ipcd init logd ramfs randd zerod rtcd ramsh spmid inputd vesad geni-i2cd rmi4d
++RAMBOOT_BINS = ipcd init logd traced ramfs randd zerod rtcd ramsh spmid inputd vesad geni-i2cd rmi4d
+ INITFS_DRIVERS_BINS = nvmed virtio-blkd  virtio-gpud
+ BASE_BINS = fbcond getty inputd pcid pcid-spawner redoxerd audiod dhcpd ptyd netstack nbdd
+ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+diff --git a/init.initfs.d/00_runtime.target b/init.initfs.d/00_runtime.target
+index aa948d24..20c3f56c 100644
+--- a/init.initfs.d/00_runtime.target
++++ b/init.initfs.d/00_runtime.target
+@@ -4,6 +4,7 @@ default_dependencies = false
+ requires_weak = [
+     "00_ipcd.service",
+     "00_logd.service",
++    "00_traced.service",
+     "00_nulld.service",
+     "00_randd.service",
+     "00_rtcd.service",
+diff --git a/init.initfs.d/00_traced.service b/init.initfs.d/00_traced.service
+new file mode 100644
+index 00000000..5c686258
+--- /dev/null
++++ b/init.initfs.d/00_traced.service
+@@ -0,0 +1,7 @@
++[unit]
++description = "Bounded trace journal"
++default_dependencies = false
++
++[service]
++cmd = "traced"
++type = { scheme = "trace" }
+diff --git a/traced/Cargo.toml b/traced/Cargo.toml
+new file mode 100644
+index 00000000..d59a4237
+--- /dev/null
++++ b/traced/Cargo.toml
+@@ -0,0 +1,18 @@
++[package]
++name = "traced"
++version = "0.1.0"
++edition = "2021"
++license = "MIT"
++
++[dependencies]
++trace-events = { path = "vendor/trace-events" }
++tracejournal = { path = "vendor/tracejournal" }
++redox_syscall.workspace = true
++redox-scheme.workspace = true
++scheme-utils = { path = "../scheme-utils" }
++daemon = { path = "../daemon" }
++libredox.workspace = true
++serde_json = "1"
++
++[lints]
++workspace = true
+diff --git a/traced/src/main.rs b/traced/src/main.rs
+new file mode 100644
+index 00000000..4463b4e7
+--- /dev/null
++++ b/traced/src/main.rs
+@@ -0,0 +1,16 @@
++use redox_scheme::Socket;
++use scheme_utils::Blocking;
++use crate::scheme::TraceScheme;
++
++mod scheme;
++
++fn main() { daemon::SchemeDaemon::new(daemon); }
++
++fn daemon(daemon: daemon::SchemeDaemon) -> ! {
++    let socket = Socket::create().expect("traced: failed to create trace scheme");
++    let mut scheme = TraceScheme::new();
++    let handler = Blocking::new(Box::new(socket), 16);
++    let _ = daemon.ready_sync_scheme(handler.socket(), &mut scheme);
++    libredox::call::setrens(0, 0).expect("traced: failed to enter null namespace");
++    handler.process_requests_blocking(scheme).expect("traced: request loop failed");
++}
+diff --git a/traced/src/scheme.rs b/traced/src/scheme.rs
+new file mode 100644
+index 00000000..75bc1fe8
+--- /dev/null
++++ b/traced/src/scheme.rs
+@@ -0,0 +1,102 @@
++use std::collections::HashMap;
++use std::time::{SystemTime, UNIX_EPOCH};
++use redox_scheme::scheme::SchemeSync;
++use redox_scheme::{CallerCtx, OpenResult};
++use scheme_utils::FpathWriter;
++use syscall::error::*;
++use syscall::schemev2::NewFdFlags;
++use syscall::MODE_CHR;
++use tracejournal::{Filter, Journal, Subscription, MAX_LINE_BYTES};
++
++enum Handle {
++    Producer(Vec<u8>),
++    Subscriber { sub: Subscription, pending: Vec<u8> },
++}
++
++pub struct TraceScheme {
++    journal: Journal,
++    handles: HashMap<usize, Handle>,
++    next_handle: usize,
++}
++
++impl TraceScheme {
++    pub fn new() -> Self {
++        Self { journal: Journal::new(256, 100), handles: HashMap::new(), next_handle: 2 }
++    }
++}
++
++fn now_us() -> u64 {
++    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_micros() as u64
++}
++
++const ROOT: usize = 1;
++
++impl SchemeSync for TraceScheme {
++    fn scheme_root(&mut self) -> Result<usize> { Ok(ROOT) }
++
++    fn openat(&mut self, dirfd: usize, path: &str, _flags: usize,
++              _fcntl_flags: u32, _ctx: &CallerCtx) -> Result<OpenResult> {
++        if dirfd != ROOT { return Err(Error::new(EACCES)); }
++        let handle = if path == "publish" {
++            Handle::Producer(Vec::new())
++        } else if path == "subscribe" {
++            Handle::Subscriber { sub: self.journal.subscribe(0, Filter::default()), pending: Vec::new() }
++        } else if let Some(query) = path.strip_prefix("subscribe/") {
++            let filter: Filter = serde_json::from_str(query).map_err(|_| Error::new(EINVAL))?;
++            Handle::Subscriber { sub: self.journal.subscribe(256, filter), pending: Vec::new() }
++        } else { return Err(Error::new(ENOENT)); };
++        if self.handles.len() >= 32 { return Err(Error::new(EMFILE)); }
++        let id = self.next_handle;
++        self.next_handle += 1;
++        self.handles.insert(id, handle);
++        Ok(OpenResult::ThisScheme { number: id, flags: NewFdFlags::empty() })
++    }
++
++    fn write(&mut self, id: usize, buf: &[u8], _offset: u64, _flags: u32, _ctx: &CallerCtx) -> Result<usize> {
++        let Handle::Producer(partial) = self.handles.get_mut(&id).ok_or(Error::new(EBADF))? else {
++            return Err(Error::new(EBADF));
++        };
++        if partial.len() + buf.len() > MAX_LINE_BYTES + 1 { return Err(Error::new(E2BIG)); }
++        partial.extend_from_slice(buf);
++        while let Some(end) = partial.iter().position(|byte| *byte == b'\n') {
++            let line: Vec<_> = partial.drain(..=end).collect();
++            let line = std::str::from_utf8(&line).map_err(|_| Error::new(EINVAL))?;
++            let event = trace_events::from_json_line(line).map_err(|_| Error::new(EINVAL))?;
++            self.journal.publish(event, now_us()).map_err(|_| Error::new(EAGAIN))?;
++        }
++        Ok(buf.len())
++    }
++
++    fn read(&mut self, id: usize, buf: &mut [u8], _offset: u64, _flags: u32, _ctx: &CallerCtx) -> Result<usize> {
++        if buf.is_empty() { return Ok(0); }
++        let Handle::Subscriber { sub, pending } = self.handles.get_mut(&id).ok_or(Error::new(EBADF))? else {
++            return Err(Error::new(EBADF));
++        };
++        if pending.is_empty() {
++            for event in self.journal.poll(sub, 1) {
++                let line = trace_events::to_json_line(&event).map_err(|_| Error::new(EIO))?;
++                pending.extend_from_slice(line.as_bytes());
++                pending.push(b'\n');
++            }
++        }
++        if pending.is_empty() { return Err(Error::new(EAGAIN)); }
++        let n = buf.len().min(pending.len());
++        buf[..n].copy_from_slice(&pending[..n]);
++        pending.drain(..n);
++        Ok(n)
++    }
++
++    fn fpath(&mut self, _id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
++        FpathWriter::with(buf, "trace", |_| Ok(()))
++    }
++
++    fn fstat(&mut self, _id: usize, stat: &mut syscall::Stat, _ctx: &CallerCtx) -> Result<()> {
++        stat.st_mode = 0o666 | MODE_CHR;
++        stat.st_size = 0;
++        stat.st_blksize = 4096;
++        stat.st_nlink = 1;
++        Ok(())
++    }
++
++    fn on_close(&mut self, id: usize) { self.handles.remove(&id); }
++}
+diff --git a/traced/vendor/trace-events/Cargo.toml b/traced/vendor/trace-events/Cargo.toml
+new file mode 100644
+index 00000000..42a2fcc5
+--- /dev/null
++++ b/traced/vendor/trace-events/Cargo.toml
+@@ -0,0 +1,10 @@
++[package]
++name = "trace-events"
++version = "0.1.0"
++edition = "2021"
++license = "MIT"
++description = "Open-kimono event journal schema for Redox-on-OnePlus-6 (task C2): OpenTelemetry GenAI span names + AG-UI event vocabulary + our mic/STT/power/service events, serde JSON, ring buffer."
++
++[dependencies]
++serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
++serde_json = { version = "1", default-features = false, features = ["alloc"] }
+diff --git a/traced/vendor/trace-events/src/agui.rs b/traced/vendor/trace-events/src/agui.rs
+new file mode 100644
+index 00000000..7bfe95e7
+--- /dev/null
++++ b/traced/vendor/trace-events/src/agui.rs
+@@ -0,0 +1,398 @@
++//! AG-UI (Agent User Interaction Protocol) event vocabulary — the agent↔UI
++//! half of the journal (docs/PLAN.md B1).
++//!
++//! The vocabulary is copied from the AG-UI 1.0 spec vendored at
++//! `op6-refs/ag-ui` @ 73b04fd (`spec/1.0/schema.json`, MIT): every event
++//! carries `"type"` with a SCREAMING_SNAKE discriminator and camelCase
++//! fields, so an AG-UI consumer can read our journal lines unmodified.
++//! Required-vs-optional fields follow the spec's `required` lists.
++
++use alloc::string::String;
++use alloc::vec::Vec;
++use serde::{Deserialize, Serialize};
++use serde_json::Value;
++
++/// The discriminator vocabulary — all 31 `EventType` values from
++/// `spec/1.0/schema.json`.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
++pub enum EventType {
++    TextMessageStart,
++    TextMessageContent,
++    TextMessageEnd,
++    TextMessageChunk,
++    ToolCallStart,
++    ToolCallArgs,
++    ToolCallEnd,
++    ToolCallChunk,
++    ToolCallResult,
++    StateSnapshot,
++    StateDelta,
++    MessagesSnapshot,
++    ActivitySnapshot,
++    ActivityDelta,
++    Raw,
++    Custom,
++    RunStarted,
++    RunFinished,
++    RunError,
++    StepStarted,
++    StepFinished,
++    ReasoningStart,
++    ReasoningMessageStart,
++    ReasoningMessageContent,
++    ReasoningMessageEnd,
++    ReasoningMessageChunk,
++    ReasoningEnd,
++    ReasoningEncryptedValue,
++    SubagentStarted,
++    SubagentFinished,
++    SubagentError,
++}
++
++/// `TextMessageRole` from the spec.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "lowercase")]
++pub enum TextMessageRole {
++    Developer,
++    System,
++    Assistant,
++    User,
++}
++
++/// `ReasoningEncryptedValueSubtype` from the spec (note the hyphen).
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "kebab-case")]
++pub enum EncryptedValueSubtype {
++    ToolCall,
++    Message,
++}
++
++/// `RunFinishedOutcome` (oneOf success / interrupt / cancelled).
++#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
++#[serde(tag = "type", rename_all = "lowercase")]
++pub enum RunFinishedOutcome {
++    Success {
++        #[serde(default, rename = "pendingToolCallIds")]
++        pending_tool_call_ids: Vec<String>,
++    },
++    Interrupt {
++        interrupts: Vec<Interrupt>,
++    },
++    Cancelled,
++}
++
++/// `Interrupt` — only `id` and `reason` are required by the spec.
++#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct Interrupt {
++    pub id: String,
++    pub reason: String,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub message: Option<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub tool_call_id: Option<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub response_schema: Option<Value>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub expires_at: Option<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub metadata: Option<Value>,
++}
++
++/// `SubagentFinishedOutcome` (success / suspended).
++#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
++#[serde(tag = "type", rename_all = "lowercase")]
++pub enum SubagentFinishedOutcome {
++    Success,
++    Suspended {
++        #[serde(default, rename = "interruptIds")]
++        interrupt_ids: Vec<String>,
++    },
++}
++
++/// `TokenUsage` — every field optional in the spec.
++#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct TokenUsage {
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub provider: Option<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub model: Option<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub input_tokens: Option<u64>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub output_tokens: Option<u64>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub total_tokens: Option<u64>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub reasoning_tokens: Option<u64>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub cached_input_tokens: Option<u64>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub cache_write_input_tokens: Option<u64>,
++}
++
++/// One AG-UI protocol event, exactly as the spec serializes it: internally
++/// tagged by `"type"`, camelCase fields. Arbitrary JSON (state snapshots,
++/// JSON-Patch deltas, tool results, raw events) passes through as
++/// [`serde_json::Value`] so nothing protocol-shaped is invented here.
++///
++/// Note: an explicit JSON `null` in an optional field reads back as `None`
++/// (serde's `Option` semantics) — absent and null are equivalent here.
++#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
++#[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
++pub enum AgUiEvent {
++    // — text messages —
++    TextMessageStart {
++        #[serde(rename = "messageId")]
++        message_id: String,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        role: Option<TextMessageRole>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        name: Option<String>,
++    },
++    TextMessageContent {
++        #[serde(rename = "messageId")]
++        message_id: String,
++        delta: String,
++    },
++    TextMessageEnd {
++        #[serde(rename = "messageId")]
++        message_id: String,
++    },
++    TextMessageChunk {
++        #[serde(rename = "messageId")]
++        message_id: String,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        role: Option<TextMessageRole>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        name: Option<String>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        delta: Option<String>,
++    },
++
++    // — tool calls —
++    ToolCallStart {
++        #[serde(rename = "toolCallId")]
++        tool_call_id: String,
++        #[serde(rename = "toolCallName")]
++        tool_call_name: String,
++        #[serde(default, rename = "parentMessageId", skip_serializing_if = "Option::is_none")]
++        parent_message_id: Option<String>,
++    },
++    ToolCallArgs {
++        #[serde(rename = "toolCallId")]
++        tool_call_id: String,
++        delta: String,
++    },
++    ToolCallEnd {
++        #[serde(rename = "toolCallId")]
++        tool_call_id: String,
++    },
++    ToolCallChunk {
++        #[serde(default, rename = "toolCallId", skip_serializing_if = "Option::is_none")]
++        tool_call_id: Option<String>,
++        #[serde(default, rename = "toolCallName", skip_serializing_if = "Option::is_none")]
++        tool_call_name: Option<String>,
++        #[serde(default, rename = "parentMessageId", skip_serializing_if = "Option::is_none")]
++        parent_message_id: Option<String>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        delta: Option<String>,
++    },
++    ToolCallResult {
++        #[serde(rename = "messageId")]
++        message_id: String,
++        #[serde(rename = "toolCallId")]
++        tool_call_id: String,
++        content: Value,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        role: Option<String>,
++    },
++
++    // — shared state —
++    StateSnapshot {
++        snapshot: Value,
++    },
++    StateDelta {
++        /// JSON Patch (RFC 6902) array.
++        delta: Value,
++    },
++    MessagesSnapshot {
++        messages: Value,
++    },
++    ActivitySnapshot {
++        #[serde(rename = "messageId")]
++        message_id: String,
++        #[serde(rename = "activityType")]
++        activity_type: String,
++        content: Value,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        replace: Option<bool>,
++    },
++    ActivityDelta {
++        #[serde(rename = "messageId")]
++        message_id: String,
++        #[serde(rename = "activityType")]
++        activity_type: String,
++        patch: Value,
++    },
++
++    // — escape hatches —
++    Raw {
++        event: Value,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        source: Option<String>,
++    },
++    Custom {
++        name: String,
++        value: Value,
++    },
++
++    // — runs and steps —
++    RunStarted {
++        #[serde(rename = "threadId")]
++        thread_id: String,
++        #[serde(rename = "runId")]
++        run_id: String,
++        #[serde(default, rename = "protocolVersion", skip_serializing_if = "Option::is_none")]
++        protocol_version: Option<String>,
++        #[serde(default, rename = "parentRunId", skip_serializing_if = "Option::is_none")]
++        parent_run_id: Option<String>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        input: Option<Value>,
++    },
++    RunFinished {
++        #[serde(rename = "threadId")]
++        thread_id: String,
++        #[serde(rename = "runId")]
++        run_id: String,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        result: Option<Value>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        outcome: Option<RunFinishedOutcome>,
++        #[serde(default, skip_serializing_if = "Vec::is_empty")]
++        usage: Vec<TokenUsage>,
++    },
++    RunError {
++        message: String,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        code: Option<String>,
++        #[serde(default, skip_serializing_if = "Vec::is_empty")]
++        usage: Vec<TokenUsage>,
++    },
++    StepStarted {
++        #[serde(rename = "stepName")]
++        step_name: String,
++    },
++    StepFinished {
++        #[serde(rename = "stepName")]
++        step_name: String,
++    },
++
++    // — reasoning (the open kimono's favourite events) —
++    ReasoningStart {
++        #[serde(rename = "messageId")]
++        message_id: String,
++    },
++    ReasoningMessageStart {
++        #[serde(rename = "messageId")]
++        message_id: String,
++        role: String,
++    },
++    ReasoningMessageContent {
++        #[serde(rename = "messageId")]
++        message_id: String,
++        delta: String,
++    },
++    ReasoningMessageEnd {
++        #[serde(rename = "messageId")]
++        message_id: String,
++    },
++    ReasoningMessageChunk {
++        #[serde(rename = "messageId")]
++        message_id: String,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        delta: Option<String>,
++    },
++    ReasoningEnd {
++        #[serde(rename = "messageId")]
++        message_id: String,
++    },
++    ReasoningEncryptedValue {
++        subtype: EncryptedValueSubtype,
++        #[serde(rename = "entityId")]
++        entity_id: String,
++        #[serde(rename = "encryptedValue")]
++        encrypted_value: String,
++    },
++
++    // — subagents —
++    SubagentStarted {
++        #[serde(rename = "subagentRunId")]
++        subagent_run_id: String,
++        name: String,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        description: Option<String>,
++        #[serde(default, rename = "parentSubagentRunId", skip_serializing_if = "Option::is_none")]
++        parent_subagent_run_id: Option<String>,
++        #[serde(default, rename = "parentToolCallId", skip_serializing_if = "Option::is_none")]
++        parent_tool_call_id: Option<String>,
++        #[serde(default, rename = "parentMessageId", skip_serializing_if = "Option::is_none")]
++        parent_message_id: Option<String>,
++    },
++    SubagentFinished {
++        #[serde(rename = "subagentRunId")]
++        subagent_run_id: String,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        result: Option<Value>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        outcome: Option<SubagentFinishedOutcome>,
++    },
++    SubagentError {
++        #[serde(rename = "subagentRunId")]
++        subagent_run_id: String,
++        message: String,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        code: Option<String>,
++    },
++}
++
++impl AgUiEvent {
++    /// The spec `EventType` discriminator for this event.
++    pub fn event_type(&self) -> EventType {
++        match self {
++            AgUiEvent::TextMessageStart { .. } => EventType::TextMessageStart,
++            AgUiEvent::TextMessageContent { .. } => EventType::TextMessageContent,
++            AgUiEvent::TextMessageEnd { .. } => EventType::TextMessageEnd,
++            AgUiEvent::TextMessageChunk { .. } => EventType::TextMessageChunk,
++            AgUiEvent::ToolCallStart { .. } => EventType::ToolCallStart,
++            AgUiEvent::ToolCallArgs { .. } => EventType::ToolCallArgs,
++            AgUiEvent::ToolCallEnd { .. } => EventType::ToolCallEnd,
++            AgUiEvent::ToolCallChunk { .. } => EventType::ToolCallChunk,
++            AgUiEvent::ToolCallResult { .. } => EventType::ToolCallResult,
++            AgUiEvent::StateSnapshot { .. } => EventType::StateSnapshot,
++            AgUiEvent::StateDelta { .. } => EventType::StateDelta,
++            AgUiEvent::MessagesSnapshot { .. } => EventType::MessagesSnapshot,
++            AgUiEvent::ActivitySnapshot { .. } => EventType::ActivitySnapshot,
++            AgUiEvent::ActivityDelta { .. } => EventType::ActivityDelta,
++            AgUiEvent::Raw { .. } => EventType::Raw,
++            AgUiEvent::Custom { .. } => EventType::Custom,
++            AgUiEvent::RunStarted { .. } => EventType::RunStarted,
++            AgUiEvent::RunFinished { .. } => EventType::RunFinished,
++            AgUiEvent::RunError { .. } => EventType::RunError,
++            AgUiEvent::StepStarted { .. } => EventType::StepStarted,
++            AgUiEvent::StepFinished { .. } => EventType::StepFinished,
++            AgUiEvent::ReasoningStart { .. } => EventType::ReasoningStart,
++            AgUiEvent::ReasoningMessageStart { .. } => EventType::ReasoningMessageStart,
++            AgUiEvent::ReasoningMessageContent { .. } => EventType::ReasoningMessageContent,
++            AgUiEvent::ReasoningMessageEnd { .. } => EventType::ReasoningMessageEnd,
++            AgUiEvent::ReasoningMessageChunk { .. } => EventType::ReasoningMessageChunk,
++            AgUiEvent::ReasoningEnd { .. } => EventType::ReasoningEnd,
++            AgUiEvent::ReasoningEncryptedValue { .. } => EventType::ReasoningEncryptedValue,
++            AgUiEvent::SubagentStarted { .. } => EventType::SubagentStarted,
++            AgUiEvent::SubagentFinished { .. } => EventType::SubagentFinished,
++            AgUiEvent::SubagentError { .. } => EventType::SubagentError,
++        }
++    }
++}
+diff --git a/traced/vendor/trace-events/src/envelope.rs b/traced/vendor/trace-events/src/envelope.rs
+new file mode 100644
+index 00000000..049cacef
+--- /dev/null
++++ b/traced/vendor/trace-events/src/envelope.rs
+@@ -0,0 +1,142 @@
++//! The journal envelope every `trace:` scheme line carries.
++//!
++//! One flat record per event: a monotonic `seq` (assigned by [`crate::EventRing`]),
++//! a wall-clock `ts_us` in microseconds since the Unix epoch, optional W3C-style
++//! trace/span ids for correlation (OTel-shaped), and the [`Payload`] tag that
++//! routes to the three vocabularies: `gen_ai` (OTel GenAI spans), `ag_ui`
++//! (AG-UI protocol events) and `op6` (our mic/STT/power/service events).
++
++use alloc::string::String;
++use serde::de::{Deserializer, Visitor};
++use serde::{Deserialize, Serialize, Serializer};
++
++/// Version of this event schema. Bump on any breaking JSON change.
++pub const SCHEMA_VERSION: u32 = 1;
++
++/// W3C trace id (PLAN B1 / OTel-shaped correlation). Serialized as exactly 32
++/// lowercase hex characters, like every other W3C/OTel tooling.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
++pub struct TraceId(pub u128);
++
++impl TraceId {
++    pub fn to_hex(self) -> String {
++        alloc::format!("{:032x}", self.0)
++    }
++
++    /// Parse exactly 32 hex characters (no `0x` prefix).
++    pub fn from_hex(s: &str) -> Option<Self> {
++        if s.len() != 32 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
++            return None;
++        }
++        let mut v: u128 = 0;
++        for b in s.bytes() {
++            v = (v << 4) | u128::from((b as char).to_digit(16)?);
++        }
++        Some(TraceId(v))
++    }
++}
++
++/// OTel span id. Serialized as exactly 16 lowercase hex characters.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
++pub struct SpanId(pub u64);
++
++impl SpanId {
++    pub fn to_hex(self) -> String {
++        alloc::format!("{:016x}", self.0)
++    }
++
++    /// Parse exactly 16 hex characters (no `0x` prefix).
++    pub fn from_hex(s: &str) -> Option<Self> {
++        if s.len() != 16 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
++            return None;
++        }
++        let mut v: u64 = 0;
++        for b in s.bytes() {
++            v = (v << 4) | u64::from((b as char).to_digit(16)?);
++        }
++        Some(SpanId(v))
++    }
++}
++
++fn trace_id_from_hex<'de, E: serde::de::Error>(s: &str) -> Result<TraceId, E> {
++    TraceId::from_hex(s).ok_or_else(|| E::invalid_value(serde::de::Unexpected::Str(s), &"32 hex chars"))
++}
++
++fn span_id_from_hex<'de, E: serde::de::Error>(s: &str) -> Result<SpanId, E> {
++    SpanId::from_hex(s).ok_or_else(|| E::invalid_value(serde::de::Unexpected::Str(s), &"16 hex chars"))
++}
++
++impl Serialize for TraceId {
++    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
++        serializer.serialize_str(&self.to_hex())
++    }
++}
++
++impl<'de> Deserialize<'de> for TraceId {
++    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
++        struct V;
++        impl Visitor<'_> for V {
++            type Value = TraceId;
++            fn expecting(&self, f: &mut alloc::fmt::Formatter) -> alloc::fmt::Result {
++                f.write_str("a 32-character hex trace id")
++            }
++            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<TraceId, E> {
++                trace_id_from_hex(v)
++            }
++        }
++        deserializer.deserialize_str(V)
++    }
++}
++
++impl Serialize for SpanId {
++    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
++        serializer.serialize_str(&self.to_hex())
++    }
++}
++
++impl<'de> Deserialize<'de> for SpanId {
++    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
++        struct V;
++        impl Visitor<'_> for V {
++            type Value = SpanId;
++            fn expecting(&self, f: &mut alloc::fmt::Formatter) -> alloc::fmt::Result {
++                f.write_str("a 16-character hex span id")
++            }
++            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<SpanId, E> {
++                span_id_from_hex(v)
++            }
++        }
++        deserializer.deserialize_str(V)
++    }
++}
++
++/// One journal record. `seq` is assigned by the journal (ring buffer), not by
++/// the producer, so consumers can tail with [`crate::EventRing::since`].
++#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
++pub struct Event {
++    /// Monotonic journal sequence number (gapless while the journal lives).
++    pub seq: u64,
++    /// Wall clock, microseconds since the Unix epoch.
++    pub ts_us: u64,
++    /// Producer identity for service filtering and per-service rate limits.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub service: Option<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub trace_id: Option<TraceId>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub span_id: Option<SpanId>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub parent_span_id: Option<SpanId>,
++    pub payload: Payload,
++}
++
++/// The vocabularies of the open-kimono journal (docs/PLAN.md B1): everything
++/// the phone itself does (mic, STT, power, services) as op6; model calls as
++/// OTel GenAI spans and agent↔UI protocol events as AG-UI are added on top.
++#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
++#[serde(tag = "kind", rename_all = "snake_case")]
++pub enum Payload {
++    GenAi(crate::genai::GenAiEvent),
++    AgUi(crate::agui::AgUiEvent),
++    Op6(crate::op6::Op6Event),
++}
+diff --git a/traced/vendor/trace-events/src/genai.rs b/traced/vendor/trace-events/src/genai.rs
+new file mode 100644
+index 00000000..478514d9
+--- /dev/null
++++ b/traced/vendor/trace-events/src/genai.rs
+@@ -0,0 +1,185 @@
++//! OpenTelemetry GenAI vocabulary for model calls (docs/PLAN.md B1).
++//!
++//! Names are copied, not invented: the span-name rule
++//! `{gen_ai.operation.name} {target}` and the `gen_ai.*` attribute keys come
++//! from the OTel GenAI semantic conventions as vendored in
++//! `op6-refs/otel-semconv` @ 3e25804
++//! (`model/gen-ai/deprecated/registry-deprecated.yaml` +
++//! `spans-deprecated.yaml` — the conventions moved to the
++//! `semantic-conventions-genai` repo with the names unchanged).
++//!
++//! A model call is two journal events — span start and span end — sharing a
++//! `span_id` in the envelope, so the UI can draw the call's lifetime and the
++//! end event carries the token usage.
++
++use alloc::collections::BTreeMap;
++use alloc::string::String;
++use alloc::vec::Vec;
++use serde::{Deserialize, Serialize};
++
++/// `gen_ai.*` attribute keys, exactly as the spec spells them.
++pub mod keys {
++    pub const OPERATION: &str = "gen_ai.operation.name";
++    pub const PROVIDER: &str = "gen_ai.provider.name";
++    pub const REQUEST_MODEL: &str = "gen_ai.request.model";
++    pub const REQUEST_MAX_TOKENS: &str = "gen_ai.request.max_tokens";
++    pub const REQUEST_TEMPERATURE: &str = "gen_ai.request.temperature";
++    pub const REQUEST_STREAM: &str = "gen_ai.request.stream";
++    pub const RESPONSE_MODEL: &str = "gen_ai.response.model";
++    pub const RESPONSE_FINISH_REASONS: &str = "gen_ai.response.finish_reasons";
++    pub const RESPONSE_TIME_TO_FIRST_CHUNK: &str = "gen_ai.response.time_to_first_chunk";
++    pub const CONVERSATION_ID: &str = "gen_ai.conversation.id";
++    pub const AGENT_ID: &str = "gen_ai.agent.id";
++    pub const AGENT_NAME: &str = "gen_ai.agent.name";
++    pub const AGENT_DESCRIPTION: &str = "gen_ai.agent.description";
++    pub const TOOL_NAME: &str = "gen_ai.tool.name";
++    pub const TOOL_DESCRIPTION: &str = "gen_ai.tool.description";
++    pub const TOOL_CALL_ID: &str = "gen_ai.tool.call.id";
++    pub const TOOL_CALL_ARGUMENTS: &str = "gen_ai.tool.call.arguments";
++    pub const TOOL_CALL_RESULT: &str = "gen_ai.tool.call.result";
++    pub const TOOL_DEFINITIONS: &str = "gen_ai.tool.definitions";
++    pub const USAGE_INPUT_TOKENS: &str = "gen_ai.usage.input_tokens";
++    pub const USAGE_OUTPUT_TOKENS: &str = "gen_ai.usage.output_tokens";
++    pub const DATA_SOURCE_ID: &str = "gen_ai.data_source.id";
++    pub const INPUT_MESSAGES: &str = "gen_ai.input.messages";
++    pub const OUTPUT_MESSAGES: &str = "gen_ai.output.messages";
++    pub const SYSTEM_INSTRUCTIONS: &str = "gen_ai.system_instructions";
++    pub const OUTPUT_TYPE: &str = "gen_ai.output.type";
++}
++
++/// The `gen_ai.operation.name` enum (all nine spec values).
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum GenAiOperation {
++    Chat,
++    GenerateContent,
++    TextCompletion,
++    Embeddings,
++    Retrieval,
++    CreateAgent,
++    InvokeAgent,
++    ExecuteTool,
++    InvokeWorkflow,
++}
++
++impl GenAiOperation {
++    pub fn as_str(self) -> &'static str {
++        match self {
++            GenAiOperation::Chat => "chat",
++            GenAiOperation::GenerateContent => "generate_content",
++            GenAiOperation::TextCompletion => "text_completion",
++            GenAiOperation::Embeddings => "embeddings",
++            GenAiOperation::Retrieval => "retrieval",
++            GenAiOperation::CreateAgent => "create_agent",
++            GenAiOperation::InvokeAgent => "invoke_agent",
++            GenAiOperation::ExecuteTool => "execute_tool",
++            GenAiOperation::InvokeWorkflow => "invoke_workflow",
++        }
++    }
++
++    /// Spec span name: `{gen_ai.operation.name} {target}`. The target is the
++    /// request model (chat / text_completion / generate_content / embeddings),
++    /// the tool name (execute_tool), the agent name (create_agent /
++    /// invoke_agent / invoke_workflow) or the data-source id (retrieval).
++    pub fn span_name(self, target: &str) -> String {
++        alloc::format!("{} {}", self.as_str(), target)
++    }
++
++    pub fn parse(s: &str) -> Option<GenAiOperation> {
++        match s {
++            "chat" => Some(GenAiOperation::Chat),
++            "generate_content" => Some(GenAiOperation::GenerateContent),
++            "text_completion" => Some(GenAiOperation::TextCompletion),
++            "embeddings" => Some(GenAiOperation::Embeddings),
++            "retrieval" => Some(GenAiOperation::Retrieval),
++            "create_agent" => Some(GenAiOperation::CreateAgent),
++            "invoke_agent" => Some(GenAiOperation::InvokeAgent),
++            "execute_tool" => Some(GenAiOperation::ExecuteTool),
++            "invoke_workflow" => Some(GenAiOperation::InvokeWorkflow),
++            _ => None,
++        }
++    }
++}
++
++/// Span attributes. `BTreeMap` so the JSON is deterministic (workbench
++/// evidence and tests must be byte-stable).
++pub type AttrMap = BTreeMap<String, AttrValue>;
++
++/// OTel attribute value, untagged in JSON (string/number/bool/array of
++/// strings — the types the GenAI conventions actually use).
++#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
++#[serde(untagged)]
++pub enum AttrValue {
++    Str(String),
++    I64(i64),
++    F64(f64),
++    Bool(bool),
++    Strs(Vec<String>),
++}
++
++impl From<&str> for AttrValue {
++    fn from(v: &str) -> Self {
++        AttrValue::Str(v.into())
++    }
++}
++impl From<String> for AttrValue {
++    fn from(v: String) -> Self {
++        AttrValue::Str(v)
++    }
++}
++impl From<i64> for AttrValue {
++    fn from(v: i64) -> Self {
++        AttrValue::I64(v)
++    }
++}
++impl From<f64> for AttrValue {
++    fn from(v: f64) -> Self {
++        AttrValue::F64(v)
++    }
++}
++impl From<bool> for AttrValue {
++    fn from(v: bool) -> Self {
++        AttrValue::Bool(v)
++    }
++}
++impl From<Vec<String>> for AttrValue {
++    fn from(v: Vec<String>) -> Self {
++        AttrValue::Strs(v)
++    }
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum SpanStatus {
++    Ok,
++    Error,
++}
++
++/// A model/tool/agent span as two journal events.
++#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
++#[serde(tag = "event", rename_all = "snake_case")]
++pub enum GenAiEvent {
++    SpanStart {
++        name: String,
++        #[serde(default)]
++        attributes: AttrMap,
++    },
++    SpanEnd {
++        name: String,
++        status: SpanStatus,
++        #[serde(default)]
++        attributes: AttrMap,
++    },
++}
++
++impl GenAiEvent {
++    /// Span start with the spec-shaped name `{operation} {target}`.
++    pub fn span_start(op: GenAiOperation, target: &str, attributes: AttrMap) -> GenAiEvent {
++        GenAiEvent::SpanStart { name: op.span_name(target), attributes }
++    }
++
++    /// Span end; pair it with the start via the envelope's `span_id`.
++    pub fn span_end(op: GenAiOperation, target: &str, status: SpanStatus, attributes: AttrMap) -> GenAiEvent {
++        GenAiEvent::SpanEnd { name: op.span_name(target), status, attributes }
++    }
++}
+diff --git a/traced/vendor/trace-events/src/jsonl.rs b/traced/vendor/trace-events/src/jsonl.rs
+new file mode 100644
+index 00000000..0a39dd5c
+--- /dev/null
++++ b/traced/vendor/trace-events/src/jsonl.rs
+@@ -0,0 +1,42 @@
++//! JSONL transport: one JSON object per journal line.
++//!
++//! Same line shape as the `mmio-replay` traces (one flat object per line), so
++//! the same tailing tools work on both. This is what the `trace:` scheme
++//! serves and what `docs/workbench/` evidence files store.
++
++use alloc::string::String;
++use alloc::vec::Vec;
++
++use crate::envelope::Event;
++
++/// Serialize one event to a single JSON line (no trailing newline).
++pub fn to_json_line(event: &Event) -> Result<String, serde_json::Error> {
++    serde_json::to_string(event)
++}
++
++/// Parse one JSON line back into an event.
++pub fn from_json_line(line: &str) -> Result<Event, serde_json::Error> {
++    serde_json::from_str(line)
++}
++
++/// Serialize events to JSONL: each line newline-terminated.
++pub fn to_jsonl(events: &[Event]) -> Result<String, serde_json::Error> {
++    let mut out = String::new();
++    for ev in events {
++        out.push_str(&to_json_line(ev)?);
++        out.push('\n');
++    }
++    Ok(out)
++}
++
++/// Parse JSONL text (blank lines skipped) back into events.
++pub fn from_jsonl(text: &str) -> Result<Vec<Event>, serde_json::Error> {
++    let mut out = Vec::new();
++    for line in text.lines() {
++        if line.trim().is_empty() {
++            continue;
++        }
++        out.push(from_json_line(line)?);
++    }
++    Ok(out)
++}
+diff --git a/traced/vendor/trace-events/src/lib.rs b/traced/vendor/trace-events/src/lib.rs
+new file mode 100644
+index 00000000..b66292d2
+--- /dev/null
++++ b/traced/vendor/trace-events/src/lib.rs
+@@ -0,0 +1,53 @@
++//! `trace-events` — the open-kimono event journal schema for
++//! Redox-on-OnePlus-6 (task C2, docs/PLAN.md B1).
++//!
++//! Every interesting thing the phone does is one journal record: mic frame
++//! levels, live transcripts, cleaned text, model spans, tool calls, grants,
++//! service starts/stops, power changes. The schema is copied, not invented
++//! (PLAN Part B rule):
++//!
++//! - **`gen_ai`** payloads follow the OpenTelemetry GenAI semantic
++//!   conventions: span names `{gen_ai.operation.name} {target}` and the
++//!   `gen_ai.*` attribute keys (`op6-refs/otel-semconv`, Apache-2.0).
++//! - **`ag_ui`** payloads follow the AG-UI protocol event vocabulary:
++//!   `{"type":"TEXT_MESSAGE_START",...}` with camelCase fields
++//!   (`op6-refs/ag-ui` spec/1.0, MIT).
++//! - **`op6`** payloads are our own mic/STT/power/service/grant/hand-off
++//!   events, each carrying its reason (VISION §3–§5).
++//!
++//! The journal itself is an [`EventRing`]: fixed capacity, monotonic `seq`,
++//! explicit `dropped` counter, tailable with `since`. Transport is JSONL —
++//! one [`Event`] per line — the shape the `trace:` scheme serves to the UI.
++//!
++//! ```
++//! use trace_events::{EventRing, Op6Event, Payload, to_jsonl, from_jsonl};
++//!
++//! let mut journal = EventRing::new(1024);
++//! journal.push(1_730_000_000_000_000, Payload::Op6(Op6Event::MicStarted { device: None }));
++//! journal.push(1_730_000_000_100_000, Payload::Op6(Op6Event::MicFrame { level: 0.25 }));
++//! let text = to_jsonl(&journal.snapshot()).unwrap();
++//! let back = from_jsonl(&text).unwrap();
++//! assert_eq!(back.len(), 2);
++//! ```
++
++#![no_std]
++#![forbid(unsafe_code)]
++
++extern crate alloc;
++
++mod agui;
++mod envelope;
++mod genai;
++mod jsonl;
++mod op6;
++mod ring;
++
++pub use agui::{
++    AgUiEvent, EncryptedValueSubtype, EventType, Interrupt, RunFinishedOutcome, SubagentFinishedOutcome,
++    TextMessageRole, TokenUsage,
++};
++pub use envelope::{Event, Payload, SpanId, TraceId, SCHEMA_VERSION};
++pub use genai::{keys as genai_keys, AttrMap, AttrValue, GenAiEvent, GenAiOperation, SpanStatus};
++pub use jsonl::{from_json_line, from_jsonl, to_json_line, to_jsonl};
++pub use op6::{HandoffStatus, Op6Event, PowerState};
++pub use ring::EventRing;
+diff --git a/traced/vendor/trace-events/src/op6.rs b/traced/vendor/trace-events/src/op6.rs
+new file mode 100644
+index 00000000..3db1890a
+--- /dev/null
++++ b/traced/vendor/trace-events/src/op6.rs
+@@ -0,0 +1,120 @@
++//! Our own event vocabulary: what the phone itself does — mic, STT, power,
++//! services, grants, hand-offs. Every event carries the *reason* where a
++//! reason exists: the open kimono (VISION §3–§5) means the UI can show not
++//! just that something happened but why it happened.
++
++use alloc::string::String;
++use serde::{Deserialize, Serialize};
++
++/// Mic / STT / power / service / grant / hand-off events. Tagged by `type`
++/// (snake_case) inside the journal envelope's `"kind":"op6"` payload.
++#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
++#[serde(tag = "type", rename_all = "snake_case")]
++pub enum Op6Event {
++    /// Journal retention or a slow reader skipped records.
++    JournalDropped { count: u64, reason: String },
++    // — Mic: the user always sees whether the mic is live (VISION §3, B10) —
++    /// Capture opened on a device.
++    MicStarted {
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        device: Option<String>,
++    },
++    /// Capture closed — `reason` is mandatory: closing is never silent.
++    MicStopped {
++        reason: String,
++    },
++    /// One capture frame's level meter (drives the waveform UI).
++    MicFrame {
++        level: f32,
++    },
++
++    // — STT: live transcript, then final, then the cleaned text (B1/B2) —
++    SttPartial {
++        engine: String,
++        text: String,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        confidence: Option<f32>,
++    },
++    SttFinal {
++        engine: String,
++        text: String,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        confidence: Option<f32>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        latency_us: Option<u64>,
++    },
++    /// Raw transcript → post-cleaned text (disambiguation, filler removal).
++    TextCleaned {
++        raw: String,
++        cleaned: String,
++    },
++
++    // — Power: the system says what it switched and why (VISION §4, B10) —
++    PowerChange {
++        component: String,
++        state: PowerState,
++        reason: String,
++    },
++    /// A wake lock with an expiry the UI can show (expiring wake locks).
++    WakeLockAcquired {
++        holder: String,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        deadline_us: Option<u64>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        max_us: Option<u64>,
++    },
++    WakeLockReleased {
++        holder: String,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        reason: Option<String>,
++    },
++
++    // — Services: Lego blocks starting/stopping, with generations (B8) —
++    ServiceStarted {
++        service: String,
++        generation: u64,
++        reason: String,
++    },
++    ServiceStopped {
++        service: String,
++        generation: u64,
++        reason: String,
++    },
++
++    // — Capability grants: grants are journal events too (B1, B6) —
++    GrantGranted {
++        service: String,
++        capability: String,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        scope: Option<String>,
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        expires_us: Option<u64>,
++    },
++    GrantRevoked {
++        service: String,
++        capability: String,
++        reason: String,
++    },
++
++    // — Hand-offs: homelab/cloud work is announced and visible (VISION §5) —
++    Handoff {
++        destination: String,
++        reason: String,
++        status: HandoffStatus,
++    },
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum PowerState {
++    On,
++    Off,
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum HandoffStatus {
++    Started,
++    Completed,
++    Failed,
++}
+diff --git a/traced/vendor/trace-events/src/ring.rs b/traced/vendor/trace-events/src/ring.rs
+new file mode 100644
+index 00000000..fc9db84f
+--- /dev/null
++++ b/traced/vendor/trace-events/src/ring.rs
+@@ -0,0 +1,108 @@
++//! Fixed-capacity journal ring (PLAN B1: the `trace:` scheme tail shape).
++//!
++//! The ring owns sequence numbers: every pushed event gets the next `seq`,
++//! gapless for the life of the journal. When full, the oldest event is
++//! evicted and counted in [`EventRing::dropped`] — the journal never lies
++//! about what it lost (VISION §5: honest and explained). Consumers tail with
++//! [`EventRing::since`].
++
++use alloc::collections::VecDeque;
++use alloc::vec::Vec;
++
++use crate::envelope::{Event, Payload};
++
++#[derive(Clone, Debug)]
++pub struct EventRing {
++    buf: VecDeque<Event>,
++    capacity: usize,
++    next_seq: u64,
++    dropped: u64,
++}
++
++impl EventRing {
++    /// Panics on a zero capacity — a journal that can hold nothing is a bug.
++    pub fn new(capacity: usize) -> Self {
++        assert!(capacity > 0, "EventRing capacity must be > 0");
++        Self { buf: VecDeque::new(), capacity, next_seq: 0, dropped: 0 }
++    }
++
++    /// Append an event, assigning the next `seq`. Returns the assigned seq.
++    pub fn push(&mut self, ts_us: u64, payload: Payload) -> u64 {
++        self.push_event(Event {
++            seq: 0,
++            ts_us,
++            service: None,
++            trace_id: None,
++            span_id: None,
++            parent_span_id: None,
++            payload,
++        })
++    }
++
++    /// Append a fully-built event; its `seq` field is overwritten with the
++    /// journal's next sequence number. Returns the assigned seq.
++    pub fn push_event(&mut self, mut event: Event) -> u64 {
++        let seq = self.next_seq;
++        self.next_seq += 1;
++        event.seq = seq;
++        self.buf.push_back(event);
++        while self.buf.len() > self.capacity {
++            self.buf.pop_front();
++            self.dropped += 1;
++        }
++        seq
++    }
++
++    pub fn len(&self) -> usize {
++        self.buf.len()
++    }
++
++    pub fn is_empty(&self) -> bool {
++        self.buf.is_empty()
++    }
++
++    pub fn capacity(&self) -> usize {
++        self.capacity
++    }
++
++    /// Events evicted by capacity so far.
++    pub fn dropped(&self) -> u64 {
++        self.dropped
++    }
++
++    /// The seq the next pushed event will receive.
++    pub fn next_seq(&self) -> u64 {
++        self.next_seq
++    }
++
++    /// Seq of the oldest event still held, if any.
++    pub fn oldest_seq(&self) -> Option<u64> {
++        self.buf.front().map(|e| e.seq)
++    }
++
++    /// Newest event still held, if any.
++    pub fn last(&self) -> Option<&Event> {
++        self.buf.back()
++    }
++
++    /// All held events, oldest → newest.
++    pub fn iter(&self) -> impl Iterator<Item = &Event> {
++        self.buf.iter()
++    }
++
++    /// Held events with `seq > after`, oldest → newest (for tailing clients).
++    pub fn since(&self, after: u64) -> impl Iterator<Item = &Event> + '_ {
++        self.buf.iter().filter(move |e| e.seq > after)
++    }
++
++    /// Snapshot of held events, oldest → newest.
++    pub fn snapshot(&self) -> Vec<Event> {
++        self.buf.iter().cloned().collect()
++    }
++
++    /// Drop all held events. Sequence numbers are **not** reset — a journal
++    /// never reuses a seq, so late tailers can tell a restart from a gap.
++    pub fn clear(&mut self) {
++        self.buf.clear();
++    }
++}
+diff --git a/traced/vendor/tracejournal/Cargo.toml b/traced/vendor/tracejournal/Cargo.toml
+new file mode 100644
+index 00000000..3a3fecbd
+--- /dev/null
++++ b/traced/vendor/tracejournal/Cargo.toml
+@@ -0,0 +1,10 @@
++[package]
++name = "tracejournal"
++version = "0.1.0"
++edition = "2021"
++license = "MIT"
++
++[dependencies]
++trace-events = { path = "../trace-events" }
++serde = { version = "1", features = ["derive"] }
++serde_json = "1"
+diff --git a/traced/vendor/tracejournal/src/lib.rs b/traced/vendor/tracejournal/src/lib.rs
+new file mode 100644
+index 00000000..e56044c6
+--- /dev/null
++++ b/traced/vendor/tracejournal/src/lib.rs
+@@ -0,0 +1,172 @@
++//! Bounded in-memory trace journal shared by the Linux and Redox transports.
++//! Subscribers hold cursors, never queues: a stalled reader cannot block publish.
++
++use serde::{Deserialize, Serialize};
++use std::collections::HashMap;
++use trace_events::{Event, EventRing, Op6Event, Payload, SpanId};
++
++pub const MAX_LINE_BYTES: usize = 4096;
++const MAX_SERVICES: usize = 64;
++
++#[derive(Clone, Debug, Default, Deserialize, Serialize)]
++pub struct Filter {
++    #[serde(default)]
++    pub kind: Option<String>,
++    #[serde(default)]
++    pub service: Option<String>,
++    #[serde(default)]
++    pub span: Option<SpanId>,
++}
++
++impl Filter {
++    fn matches(&self, event: &Event) -> bool {
++        let kind = match event.payload {
++            Payload::Op6(_) => "op6",
++            Payload::AgUi(_) => "ag_ui",
++            Payload::GenAi(_) => "gen_ai",
++        };
++        self.kind.as_deref().is_none_or(|value| value == kind)
++            && self
++                .service
++                .as_deref()
++                .is_none_or(|value| event.service.as_deref() == Some(value))
++            && self.span.is_none_or(|value| event.span_id == Some(value))
++    }
++}
++
++#[derive(Clone, Debug)]
++pub struct Subscription {
++    next_seq: u64,
++    filter: Filter,
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum PublishError {
++    RateLimited,
++    TooLarge,
++    TooManyServices,
++}
++
++#[derive(Clone, Copy)]
++struct Rate {
++    second: u64,
++    count: usize,
++}
++
++pub struct Journal {
++    ring: EventRing,
++    rates: HashMap<String, Rate>,
++    per_service_per_second: usize,
++    rate_dropped: u64,
++}
++
++impl Journal {
++    pub fn new(capacity: usize, per_service_per_second: usize) -> Self {
++        assert!(per_service_per_second > 0);
++        Self {
++            ring: EventRing::new(capacity),
++            rates: HashMap::new(),
++            per_service_per_second,
++            rate_dropped: 0,
++        }
++    }
++
++    pub fn publish(&mut self, event: Event, now_us: u64) -> Result<u64, PublishError> {
++        if trace_events::to_json_line(&event)
++            .map_err(|_| PublishError::TooLarge)?
++            .len()
++            > MAX_LINE_BYTES
++        {
++            return Err(PublishError::TooLarge);
++        }
++        let second = now_us / 1_000_000;
++        self.rates.retain(|_, rate| rate.second == second);
++        let service = event.service.as_deref().unwrap_or("");
++        if !self.rates.contains_key(service) && self.rates.len() >= MAX_SERVICES {
++            self.rate_dropped += 1;
++            return Err(PublishError::TooManyServices);
++        }
++        let rate = self
++            .rates
++            .entry(service.to_owned())
++            .or_insert(Rate { second, count: 0 });
++        if rate.count >= self.per_service_per_second {
++            self.rate_dropped += 1;
++            return Err(PublishError::RateLimited);
++        }
++        rate.count += 1;
++        Ok(self.ring.push_event(event))
++    }
++
++    /// `backlog` is a maximum event count, capped by ring capacity.
++    pub fn subscribe(&self, backlog: usize, filter: Filter) -> Subscription {
++        Subscription {
++            next_seq: self
++                .ring
++                .next_seq()
++                .saturating_sub(backlog.min(self.ring.capacity()) as u64),
++            filter,
++        }
++    }
++
++    /// Returns retained matching events and advances the cursor. A gap is a
++    /// synthetic `journal_dropped` event before subsequent retained records.
++    pub fn poll(&self, sub: &mut Subscription, limit: usize) -> Vec<Event> {
++        if limit == 0 {
++            return Vec::new();
++        }
++        let mut out = Vec::new();
++        if let Some(oldest) = self.ring.oldest_seq() {
++            if sub.next_seq < oldest {
++                out.push(Event {
++                    seq: oldest - 1,
++                    ts_us: self.ring.iter().next().map_or(0, |event| event.ts_us),
++                    service: None,
++                    trace_id: None,
++                    span_id: None,
++                    parent_span_id: None,
++                    payload: Payload::Op6(Op6Event::JournalDropped {
++                        count: oldest - sub.next_seq,
++                        reason: "subscriber_backpressure".into(),
++                    }),
++                });
++                sub.next_seq = oldest;
++                if out.len() == limit {
++                    return out;
++                }
++            }
++        }
++        for event in self.ring.iter() {
++            if event.seq < sub.next_seq {
++                continue;
++            }
++            sub.next_seq = event.seq + 1;
++            if sub.filter.matches(event) {
++                out.push(event.clone());
++            }
++            if out.len() == limit {
++                break;
++            }
++        }
++        out
++    }
++
++    pub fn len(&self) -> usize {
++        self.ring.len()
++    }
++    pub fn ring_dropped(&self) -> u64 {
++        self.ring.dropped()
++    }
++    pub fn rate_dropped(&self) -> u64 {
++        self.rate_dropped
++    }
++    pub fn next_seq(&self) -> u64 {
++        self.ring.next_seq()
++    }
++}
++
++impl Subscription {
++    pub fn next_seq(&self) -> u64 {
++        self.next_seq
++    }
++}
+-- 
+2.43.0
+

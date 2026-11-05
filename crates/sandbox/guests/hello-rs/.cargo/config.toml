@@ -1,0 +1,7 @@
+[build]
+target = "wasm32-unknown-unknown"
+
+# The shadow stack lives in linear memory: a 1 MiB stack makes the initial
+# memory 17 pages, over the sandbox's default 16-page cap. Pin it small.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=16384"]

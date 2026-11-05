@@ -1,0 +1,12 @@
+starting shim 2026-11-03T01:06:02Z
+smoke 2026-11-03T01:06:04Z
+smoke rc=0
+RUN sample start 2026-11-03T01:06:11Z
+RUN sample done rc=1 2026-11-03T01:07:05Z
+RUN core start 2026-11-03T01:07:05Z
+RUN core done rc=1 2026-11-03T01:14:47Z
+RUN edge start 2026-11-03T01:14:47Z
+RUN edge done rc=1 2026-11-03T01:22:48Z
+RUN asr-hard start 2026-11-03T01:22:48Z
+RUN asr-hard done rc=1 2026-11-03T01:26:42Z
+ALL DONE 2026-11-03T01:26:42Z

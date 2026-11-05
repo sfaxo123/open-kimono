@@ -1,0 +1,147 @@
+# EMU-TOUCH host and harness test receipts (pipefail on: [exit] is the test command status)
+
+## RED: kernel helpers reduced to the pre-fix behaviour (/tmp copies; every interrupt-parent link counts / no SPI group writes)
+
+$ rustc --edition=2024 --test /tmp/emu-touch/irq_topology_old.rs -o /tmp/emu-touch/irq-topology-old 2>/dev/null && /tmp/emu-touch/irq-topology-old | grep -E '^test |panicked|left:|right:|test result'
+test tests::self_parented_gic_is_a_root ... FAILED
+test tests::tlmm_and_pdc_stay_below_the_gic ... FAILED
+thread 'tests::self_parented_gic_is_a_root' (1604405) panicked at /tmp/emu-touch/irq_topology_old.rs:46:9:
+thread 'tests::tlmm_and_pdc_stay_below_the_gic' (1604406) panicked at /tmp/emu-touch/irq_topology_old.rs:55:9:
+  left: [243]
+ right: [243, 1]
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[exit 101]
+
+$ rustc --edition=2024 --test /tmp/emu-touch/gic_groups_old.rs -o /tmp/emu-touch/gic-groups-old 2>/dev/null && /tmp/emu-touch/gic-groups-old | grep -E '^test |panicked|left:|right:|test result'
+test tests::every_sdm845_spi_is_group1 ... FAILED
+test tests::private_interrupts_are_left_alone ... ok
+thread 'tests::every_sdm845_spi_is_group1' (1604511) panicked at /tmp/emu-touch/gic_groups_old.rs:30:9:
+  left: 0
+ right: 20
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[exit 101]
+
+## RED: new rmi4-touch-core host tests before the Attention/Tracker API existed (captured on the first run)
+
+$ cargo test --manifest-path crates/rmi4-touch/Cargo.toml --offline | grep -E "^error|test result|unresolved"
+error[E0432]: unresolved import `rmi4_touch_core::Attention`
+error[E0432]: unresolved imports `rmi4_touch_core::Pointer`, `rmi4_touch_core::Tracker`
+error: could not compile `rmi4-touch-core` (test "pointer") due to 1 previous error
+error[E0599]: no variant, associated function, or constant named `InvalidAttention` found for enum `rmi4_touch_core::Error` in the current scope
+error[E0599]: no variant, associated function, or constant named `InvalidAttention` found for enum `rmi4_touch_core::Error` in the current scope
+error[E0599]: no variant, associated function, or constant named `InvalidAttention` found for enum `rmi4_touch_core::Error` in the current scope
+error[E0599]: no variant, associated function, or constant named `InvalidAttention` found for enum `rmi4_touch_core::Error` in the current scope
+error: could not compile `rmi4-touch-core` (test "attention") due to 5 previous errors
+[exit 101]
+
+## GREEN
+
+$ cd out/emu-touch-build/forks/kernel-e1 && rustc --edition=2024 --test src/dtb/irq_topology.rs -o /tmp/emu-touch/irq-topology && /tmp/emu-touch/irq-topology | grep -E '^test |test result'
+test tests::self_parented_gic_is_a_root ... ok
+test tests::tlmm_and_pdc_stay_below_the_gic ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[exit 0]
+
+$ cd out/emu-touch-build/forks/kernel-e1 && rustc --edition=2024 --test src/arch/aarch64/device/irqchip/gic_groups.rs -o /tmp/emu-touch/gic-groups && /tmp/emu-touch/gic-groups | grep -E '^test |test result'
+test tests::every_sdm845_spi_is_group1 ... ok
+test tests::private_interrupts_are_left_alone ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[exit 0]
+
+$ ~/.cargo/bin/cargo test --manifest-path crates/rmi4-touch/Cargo.toml --offline 2>&1 | grep -E '^test |test result|Running'
+     Running unittests src/lib.rs (crates/rmi4-touch/target/debug/deps/rmi4_touch_core-9605918151e1da1d)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/attention.rs (crates/rmi4-touch/target/debug/deps/attention-4bb886667729aa19)
+test parses_the_enchilada_attention_specifier ... ok
+test rejects_malformed_specifiers ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/pointer.rs (crates/rmi4-touch/target/debug/deps/pointer-32f891a9582a9372)
+test a_new_press_at_the_old_position_moves_first ... ok
+test press_hold_move_release ... ok
+test release_only_reports_a_held_button ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/touch.rs (crates/rmi4-touch/target/debug/deps/touch-eff0e2cb4ef76e8a)
+test ignores_nonfinger_and_out_of_bounds ... ok
+test missing_f12_and_bad_layout_fail ... ok
+test no_unverified_f12_read ... ok
+test reset_status_suppresses_report ... ok
+test scans_pdt_and_decodes_one_finger ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[exit 0]
+
+$ ~/.cargo/bin/cargo test --manifest-path crates/geni-i2c/Cargo.toml --offline 2>&1 | grep -E '^test |test result|Running'
+     Running unittests src/lib.rs (crates/geni-i2c/target/debug/deps/geni_i2c_core-d0e243b60a9fffd8)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/fifo.rs (crates/geni-i2c/target/debug/deps/fifo-6017d0c066efc6fa)
+test controller_error_cancels ... ok
+test invalid_transfer_makes_no_access ... ok
+test repeated_start_register_read_replays ... ok
+test fifo_timeout_is_bounded_and_cancels ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[exit 0]
+
+$ cd out/emu-touch-build/forks/base-e1 && ~/.cargo/bin/cargo test -p geni-i2c-core -p rmi4-touch-core --offline 2>&1 | grep -E '^test |test result|Running'
+     Running unittests src/lib.rs (target/debug/deps/geni_i2c_core-1d89ea293ce843f9)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/fifo.rs (target/debug/deps/fifo-3f6ea79912bc3ca0)
+test controller_error_cancels ... ok
+test invalid_transfer_makes_no_access ... ok
+test repeated_start_register_read_replays ... ok
+test fifo_timeout_is_bounded_and_cancels ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs (target/debug/deps/rmi4_touch_core-3d0f83b4987a2c4b)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/attention.rs (target/debug/deps/attention-e505905dbf8dbb06)
+test parses_the_enchilada_attention_specifier ... ok
+test rejects_malformed_specifiers ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/pointer.rs (target/debug/deps/pointer-7ed8f2020dd381b5)
+test a_new_press_at_the_old_position_moves_first ... ok
+test press_hold_move_release ... ok
+test release_only_reports_a_held_button ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/touch.rs (target/debug/deps/touch-a104270423ac0c66)
+test ignores_nonfinger_and_out_of_bounds ... ok
+test missing_f12_and_bad_layout_fail ... ok
+test reset_status_suppresses_report ... ok
+test no_unverified_f12_read ... ok
+test scans_pdt_and_decodes_one_finger ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[exit 0]
+
+$ cd out/emu-touch-build/forks/base-e1 && ~/.cargo/bin/cargo check -p geni-i2cd -p rmi4d -p inputd --offline 2>&1 | grep -E '^error|Finished'
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+[exit 0]
+
+$ scripts/emu-op6/tests.sh 2>&1 | grep -E '^[0-9]\.|PASS|FAIL|Summary'
+1. marker order & serial prompt driving
+  PASS  in-order markers with U-Boot prompt handshake pass
+  PASS  out-of-order markers are rejected (exit 1)
+  PASS  out-of-order failure names the ordering violation
+  PASS  missing marker is rejected (exit 1)
+2. timeout enforcement with kill-after
+  PASS  timeout exits non-zero (exit 1)
+  PASS  timeout killed stubborn fake QEMU (PID 1605141 reaped)
+3. no orphan qemu on exit paths (trap)
+  PASS  marker-matched run with lingering fake QEMU exits 0
+  PASS  no orphan QEMU after normal exit (PID 1605663 reaped by EXIT trap)
+  PASS  no orphan QEMU after SIGTERM to run.sh (PID 1605824 reaped by trap)
+4. receipt.tsv and ESP copy integrity
+  PASS  receipt.tsv written for passing run
+  PASS  receipt.tsv also written on timed-out run
+  PASS  receipt.tsv records exact emulator SHA-256
+  PASS  receipt.tsv records exact payload SHA-256
+  PASS  receipt.tsv records exact ESP copy SHA-256
+  PASS  receipt.tsv records exact serial.log SHA-256
+  PASS  ESP copy contains payload at /EFI/BOOT/BOOTAA64.EFI
+  PASS  base ESP image remains unmodified
+5. --qemu-arg passthrough
+  PASS  extra QEMU arguments are appended in order, spaces intact
+  PASS  no extra QEMU arguments without --qemu-arg
+Summary: 19 passed, 0 failed
+[exit 0]
+

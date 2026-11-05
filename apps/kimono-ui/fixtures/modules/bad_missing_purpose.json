@@ -1,0 +1,1 @@
+{"actions":[],"id":"bad-missing-purpose","inputs":[],"layout":[{"block":"title","text":"Hello"}],"lifetime":{"appears_when":"never","expires_when":"never","max_ttl_minutes":5},"protocol":"1","sample_inputs":{},"trigger":{"context":[],"when":"never"}}

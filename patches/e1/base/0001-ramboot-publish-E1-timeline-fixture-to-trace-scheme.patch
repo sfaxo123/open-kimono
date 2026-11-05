@@ -1,0 +1,50 @@
+From 82a706290a8e93cde909440ba5d2b01114a6c51e Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sun, 25 Oct 2026 00:33:30 +0000
+Subject: [PATCH] ramboot: publish E1 timeline fixture to trace scheme
+
+Co-Authored-By: Codex <noreply@openai.com>
+---
+ Makefile                               | 1 +
+ init.initfs.d/40_timeline_demo.service | 7 +++++++
+ init.initfs.d/90_ramboot.target        | 2 +-
+ 3 files changed, 9 insertions(+), 1 deletion(-)
+ create mode 100644 init.initfs.d/40_timeline_demo.service
+
+diff --git a/Makefile b/Makefile
+index 70c34a55..e2c76a84 100644
+--- a/Makefile
++++ b/Makefile
+@@ -154,6 +154,7 @@ ramboot-initfs:
+ 		"$(SRC_DIR)/init.initfs.d"/30_spmid.service \
+ 		"$(SRC_DIR)/init.initfs.d"/10_inputd.service \
+ 		"$(SRC_DIR)/init.initfs.d"/20_vesad.service \
++		"$(SRC_DIR)/init.initfs.d"/40_timeline_demo.service \
+ 		"$(SRC_DIR)/init.initfs.d"/90_ramboot.target "$(BUILD_DIR)/ramboot-initfs/lib/init.d/"
+ 	$(CARGO_HOST) run --manifest-path "$(SRC_DIR)/initfs/tools/Cargo.toml" --bin redox-initfs-ar -- \
+ 		"$(BUILD_DIR)/ramboot-initfs" "$(TARGET_DIR)/bootstrap" -o "$(BUILD_DIR)/ramboot-initfs.img"
+diff --git a/init.initfs.d/40_timeline_demo.service b/init.initfs.d/40_timeline_demo.service
+new file mode 100644
+index 00000000..6e750467
+--- /dev/null
++++ b/init.initfs.d/40_timeline_demo.service
+@@ -0,0 +1,7 @@
++[unit]
++description = "Publish the E1 timeline fixture"
++requires_weak = ["00_traced.service"]
++
++[service]
++cmd = "timeline-demo-publish"
++type = "oneshot"
+diff --git a/init.initfs.d/90_ramboot.target b/init.initfs.d/90_ramboot.target
+index 21620f79..e3c8123d 100644
+--- a/init.initfs.d/90_ramboot.target
++++ b/init.initfs.d/90_ramboot.target
+@@ -1,3 +1,3 @@
+ [unit]
+ description = "RAM-only boot shell"
+-requires_weak = ["10_inputd.service", "20_vesad.service", "30_ramsh.service", "30_spmid.service"]
++requires_weak = ["10_inputd.service", "20_vesad.service", "30_ramsh.service", "30_spmid.service", "40_timeline_demo.service"]
+-- 
+2.43.0
+

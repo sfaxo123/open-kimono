@@ -1,0 +1,28 @@
+From 55ded92031d7f03fb219429cd91b7eadc908c957 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sun, 25 Oct 2026 00:33:33 +0000
+Subject: [PATCH] uefi: auto-select GOP mode for live demo boots
+
+Co-Authored-By: Codex <noreply@openai.com>
+---
+ src/main.rs | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/main.rs b/src/main.rs
+index 3cbf332..0b7b290 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -160,8 +160,8 @@ fn select_mode(
+     }
+     println!();
+ 
+-    // RAM rescue boots must not wait for a keyboard that the phone may not have.
+-    #[cfg(feature = "ramboot")]
++    // Rescue and live demo boots must not wait for a keyboard that may be absent.
++    #[cfg(any(feature = "ramboot", feature = "live"))]
+     {
+         println!("Auto-selecting boot resolution");
+         return modes.iter().find(|(mode, _)| mode.id == selected).map(|x| x.0);
+-- 
+2.43.0
+

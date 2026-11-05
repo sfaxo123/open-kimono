@@ -1,0 +1,30 @@
+From 80e2ff19a24d3ddd2eb034a5cc6e53ef0079df12 Mon Sep 17 00:00:00 2001
+From: claude-code <claude@macbook.local>
+Date: Sat, 31 Oct 2026 22:12:56 +0000
+Subject: [PATCH] init: forward REDOX_RAMBOOT_TTL to RAM boot services
+
+---
+ init/src/main.rs | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/init/src/main.rs b/init/src/main.rs
+index 08ca4517..7cbfb810 100644
+--- a/init/src/main.rs
++++ b/init/src/main.rs
+@@ -147,6 +147,13 @@ fn main() {
+     unit_store.set_runtime_target(runtime_target);
+ 
+     let ramboot = env::var("REDOX_RAMBOOT").as_deref() == Ok("1");
++    if ramboot {
++        // Services start with a cleared environment; forward the opt-in RAM
++        // boot reset timer so ramsh can schedule its PSCI reset.
++        if let Some(ttl) = env::var_os("REDOX_RAMBOOT_TTL") {
++            init_config.envs.insert("REDOX_RAMBOOT_TTL".to_owned(), ttl);
++        }
++    }
+     let initfs_target = if ramboot {
+         "90_ramboot.target"
+     } else {
+-- 
+2.43.0
+

@@ -1,0 +1,8 @@
+[package]
+name = "geni-uart"
+version = "0.1.0"
+edition = "2021"
+description = "no_std Qualcomm GENI debug-UART (UART9) TX driver, register semantics derived from the U-Boot oracle serial_msm_geni.c (HW-18). Host-mock tested only."
+license = "MIT OR Apache-2.0"
+
+[dependencies]

@@ -1,0 +1,8 @@
+[package]
+name = "rmi4-touch-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+geni-i2c-core = { path = "../geni-i2c" }

@@ -1,0 +1,7 @@
+artifact	sha256	path
+emulator	588ac3f028c74a73322c3f1cbac31228650bd7a6d85f76bbe79f38e80519188c	$HOME/Developer/forks/qemu-oneplus6/build/qemu-system-aarch64
+payload	aaeb770408937091298f67620d600b7625f87fb5263aeb9562c47553d4fe6210	$HOME/Developer/experiments/redox-oneplus6-emu-ufs-ro/out/phone-boot/redox-ramboot.efi
+image	c40f2e2c34c3722f038e51d5f42c3afd5294b0a32974ae8e1e3da73867a640ab	$HOME/Developer/experiments/redox-oneplus6-emu-ufs-ro/out/emu-op6/ufs-ro-unified-final/esp.img
+uboot_image	49edb185b6c28ebf5408c95dc37e05764d26e29ed1e0983078efa5f08f06a69c	$HOME/Developer/experiments/redox-oneplus6-emu-ufs-ro/out/emu-op6/ufs-ro-unified-final/oneplus6-u-boot-with-ram.bin
+uboot_source	c50fec59e1c6bedaa5077b324615bf3eb001315144501da850d007b0a7619662	$HOME/artifacts/handoff/oneplus-redox-20261024/phone-boot/u-boot-nodtb.bin.gz-dtb
+serial_log	75a10396067925b71ddf227e187eeb0ca4e0d8492f136e83c468f34ec5454b65	$HOME/Developer/experiments/redox-oneplus6-emu-ufs-ro/out/emu-op6/ufs-ro-unified-final/serial.log

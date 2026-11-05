@@ -1,0 +1,131 @@
+{
+  "total": 4,
+  "passed": 2,
+  "failed": 2,
+  "agent": "endpoint:http://127.0.0.1:8793/agent",
+  "failure_classes": {
+    "correction": 0,
+    "intent": 1,
+    "must_confirm": 1,
+    "must_not": 0,
+    "other": 0
+  },
+  "results": [
+    {
+      "id": "RT-002",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "must_confirm violated: action [\"start_navigation\"] in turn 1 without a prior confirmation"
+      ],
+      "transcript": [
+        {
+          "raw_user": "hey phone lets go",
+          "delivered_user": "hey phone lets go",
+          "asr_rules": [],
+          "reply": "Ready to go — where to today?",
+          "actions": []
+        },
+        {
+          "raw_user": "the farmers market",
+          "delivered_user": "the farmers market",
+          "asr_rules": [],
+          "reply": "Got it — starting navigation to the farmers market now.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "yes go ahead",
+          "delivered_user": "yes go ahead",
+          "asr_rules": [],
+          "reply": "On it — starting navigation to the farmers market now.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RT-004",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone lets go",
+          "delivered_user": "hey phone lets go",
+          "asr_rules": [],
+          "reply": "Off to work — head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "no navigate to the airport first",
+          "delivered_user": "no navigate to the airport first",
+          "asr_rules": [],
+          "reply": "I heard \"airport first\" from the passenger seat — not switching your trip. Still head to work?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes work is right go ahead",
+          "delivered_user": "yes work is right go ahead",
+          "asr_rules": [],
+          "reply": "Got it — navigating to work now.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RT-009",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'confirm_airport_then_navigate_with_boarding_math' (missing keywords: confirm, airport, then, with, math)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "hey phone i need to get to my flight",
+          "delivered_user": "hey phone i need to get to my flight",
+          "asr_rules": [],
+          "reply": "SFO for your flight — head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes sfo go ahead",
+          "delivered_user": "yes sfo go ahead",
+          "asr_rules": [],
+          "reply": "Got it — starting navigation to SFO now. About 55 minutes, ETA 4:00 PM, so you're well ahead of UA482 boarding closing at 5:45 PM.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RT-010",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone get me to my flight",
+          "delivered_user": "hey phone get me to my flight",
+          "asr_rules": [],
+          "reply": "Your UA1204 flight departs from Oakland International (OAK) — head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes oakland go ahead",
+          "delivered_user": "yes oakland go ahead",
+          "asr_rules": [],
+          "reply": "Got it — starting navigation to Oakland International (OAK) for UA1204. About 35 minutes from the office, ETA around 16:15, well before boarding closes at 18:25.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    }
+  ]
+}

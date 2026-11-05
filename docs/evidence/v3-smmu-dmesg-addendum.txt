@@ -1,0 +1,28 @@
+# V3 addendum - apps_smmu hardware facts from pmOS dmesg/sysfs
+# captured: 2026-10-30 (root watch, ~01:52 PT) via ssh user@<phone-usb-ip> from <homelab-host>, READ-ONLY
+# purpose: size the SID 0x740 establish-and-verify gate (crates/usbgadgetd/src/sid_gate.rs)
+$ hostname
+oneplus-enchilada
+$ sudo dmesg | grep -i arm-smmu (15000000.iommu lines)
+arm-smmu 15000000.iommu: probing hardware configuration...
+arm-smmu 15000000.iommu: SMMUv2 with:
+arm-smmu 15000000.iommu: 	stage 1 translation
+arm-smmu 15000000.iommu: 	non-coherent table walk
+arm-smmu 15000000.iommu: 	(IDR0.CTTW overridden by FW configuration)
+arm-smmu 15000000.iommu: 	stream matching with 76 register groups
+arm-smmu 15000000.iommu: 	45 context banks (0 stage-2 only)
+arm-smmu 15000000.iommu: 	Supported page sizes: 0x61311000
+arm-smmu 15000000.iommu: 	Stage-1: 48-bit VA -> 48-bit IPA
+arm-smmu 15000000.iommu: 	preserved 0 boot mappings
+$ ls /sys/kernel/iommu_groups/ | wc -l
+24
+$ cat /proc/device-tree/soc@0/iommu@15000000/compatible
+qcom,sdm845-smmu-500 / arm,mmu-500
+$ od -An -tx4 /proc/device-tree/soc@0/iommu@15000000/reg
+00000000 00000015 00000000 00000800  (big-endian cells: base 0x15000000, size 0x8000)
+# BLOCKED: raw SMR/S2CR readback from pmOS userspace is NOT possible via standard read-only paths:
+# - busybox on pmOS has no devmem applet ("applet not found")
+# - sudo python3 mmap of /dev/mem at 0x15000000 -> PermissionError [Errno 1] Operation not permitted (root)
+# - /sys/kernel/debug/iommu/ does not exist; no arm-smmu debugfs dump found
+# => register-level SMR/S2CR evidence for SID 0x740 must come from the Redox payload's own probe,
+#    cross-checked against the Linux-side record (iommu_group 12, type DMA, TRANSLATED under Linux).

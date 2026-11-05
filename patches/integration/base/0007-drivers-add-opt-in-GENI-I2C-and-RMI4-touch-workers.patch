@@ -1,0 +1,776 @@
+From da68cd465f432d9a8b74bad30c30d5a79b7c1d9a Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:33:50 +0000
+Subject: [PATCH 07/10] drivers: add opt-in GENI I2C and RMI4 touch workers
+
+Co-Authored-By: Codex <noreply@openai.com>
+---
+ Cargo.lock                             |  35 ++++++
+ Cargo.toml                             |   5 +
+ drivers/geni-i2c-core/Cargo.toml       |   8 ++
+ drivers/geni-i2c-core/src/lib.rs       | 111 +++++++++++++++++++
+ drivers/geni-i2c-core/tests/fifo.rs    |  80 ++++++++++++++
+ drivers/geni-i2cd/Cargo.toml           |   9 ++
+ drivers/geni-i2cd/README.md            |   3 +
+ drivers/geni-i2cd/src/hardware.inc     |  33 ++++++
+ drivers/geni-i2cd/src/main.rs          |  23 ++++
+ drivers/rmi4-touch-core/Cargo.toml     |   8 ++
+ drivers/rmi4-touch-core/src/lib.rs     | 143 +++++++++++++++++++++++++
+ drivers/rmi4-touch-core/tests/touch.rs |  85 +++++++++++++++
+ drivers/rmi4d/Cargo.toml               |  12 +++
+ drivers/rmi4d/README.md                |   3 +
+ drivers/rmi4d/src/main.rs              |  71 ++++++++++++
+ 15 files changed, 629 insertions(+)
+ create mode 100644 drivers/geni-i2c-core/Cargo.toml
+ create mode 100644 drivers/geni-i2c-core/src/lib.rs
+ create mode 100644 drivers/geni-i2c-core/tests/fifo.rs
+ create mode 100644 drivers/geni-i2cd/Cargo.toml
+ create mode 100644 drivers/geni-i2cd/README.md
+ create mode 100644 drivers/geni-i2cd/src/hardware.inc
+ create mode 100644 drivers/geni-i2cd/src/main.rs
+ create mode 100644 drivers/rmi4-touch-core/Cargo.toml
+ create mode 100644 drivers/rmi4-touch-core/src/lib.rs
+ create mode 100644 drivers/rmi4-touch-core/tests/touch.rs
+ create mode 100644 drivers/rmi4d/Cargo.toml
+ create mode 100644 drivers/rmi4d/README.md
+ create mode 100644 drivers/rmi4d/src/main.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 3cfe9c2c..ddad9e9e 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -985,6 +985,22 @@ dependencies = [
+  "typenum",
+ ]
+ 
++[[package]]
++name = "geni-i2c-core"
++version = "0.1.0"
++dependencies = [
++ "mmio-replay",
++]
++
++[[package]]
++name = "geni-i2cd"
++version = "0.1.0"
++dependencies = [
++ "common",
++ "geni-i2c-core",
++ "mmio-replay",
++]
++
+ [[package]]
+ name = "getrandom"
+ version = "0.2.17"
+@@ -2183,6 +2199,25 @@ dependencies = [
+  "strum_macros",
+ ]
+ 
++[[package]]
++name = "rmi4-touch-core"
++version = "0.1.0"
++dependencies = [
++ "geni-i2c-core",
++]
++
++[[package]]
++name = "rmi4d"
++version = "0.1.0"
++dependencies = [
++ "common",
++ "geni-i2c-core",
++ "inputd",
++ "mmio-replay",
++ "orbclient",
++ "rmi4-touch-core",
++]
++
+ [[package]]
+ name = "ron"
+ version = "0.8.1"
+diff --git a/Cargo.toml b/Cargo.toml
+index 5cfd3303..6b4cb14f 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -21,6 +21,11 @@ members = [
+ 
+     "drivers/common",
+     "drivers/executor",
++    "drivers/mmio-replay",
++    "drivers/geni-i2c-core",
++    "drivers/rmi4-touch-core",
++    "drivers/geni-i2cd",
++    "drivers/rmi4d",
+ 
+     "drivers/acpid",
+     "drivers/hwd",
+diff --git a/drivers/geni-i2c-core/Cargo.toml b/drivers/geni-i2c-core/Cargo.toml
+new file mode 100644
+index 00000000..fc46761b
+--- /dev/null
++++ b/drivers/geni-i2c-core/Cargo.toml
+@@ -0,0 +1,8 @@
++[package]
++name = "geni-i2c-core"
++version = "0.1.0"
++edition = "2021"
++license = "MIT"
++
++[dependencies]
++mmio-replay = { path = "../mmio-replay" }
+diff --git a/drivers/geni-i2c-core/src/lib.rs b/drivers/geni-i2c-core/src/lib.rs
+new file mode 100644
+index 00000000..1ab26982
+--- /dev/null
++++ b/drivers/geni-i2c-core/src/lib.rs
+@@ -0,0 +1,111 @@
++//! Bounded, polled GENI I2C FIFO transactions for SDM845 i2c12.
++use mmio_replay::Mmio;
++
++const TX_LEN: u64 = 0x26c;
++const RX_LEN: u64 = 0x270;
++const CMD: u64 = 0x600;
++const CMD_CTRL: u64 = 0x604;
++const IRQ: u64 = 0x610;
++const IRQ_CLEAR: u64 = 0x618;
++const TX_FIFO: u64 = 0x700;
++const RX_FIFO: u64 = 0x780;
++const TX_STATUS: u64 = 0x800;
++const RX_STATUS: u64 = 0x804;
++const DONE: u32 = 1;
++// The GENI master error bits are distinct from CMD_DONE and FIFO watermark bits.
++const ERROR_BITS: u32 = (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7);
++const POLLS: usize = 1024;
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Error {
++    InvalidTransfer,
++    Timeout,
++    Controller(u32),
++}
++
++/// A minimal byte-transfer interface for RMI4 and register-model tests.
++pub trait Bus {
++    fn write(&mut self, addr: u8, data: &[u8]) -> Result<(), Error>;
++    fn write_read(&mut self, addr: u8, command: &[u8], data: &mut [u8]) -> Result<(), Error>;
++}
++
++pub struct Geni<M: Mmio> {
++    io: M,
++    base: u64,
++}
++impl<M: Mmio> Geni<M> {
++    pub fn new(io: M, base: u64) -> Self {
++        Self { io, base }
++    }
++    pub fn into_io(self) -> M {
++        self.io
++    }
++    fn read(&mut self, reg: u64) -> u32 {
++        self.io.read_u32(self.base + reg)
++    }
++    fn put(&mut self, reg: u64, value: u32) {
++        self.io.write_u32(self.base + reg, value);
++    }
++    fn cancel(&mut self) {
++        self.put(CMD_CTRL, 1 << 2);
++    }
++    fn wait(&mut self, reg: u64, ready: impl Fn(u32) -> bool) -> Result<u32, Error> {
++        for _ in 0..POLLS {
++            let irq = self.read(IRQ);
++            if irq & ERROR_BITS != 0 {
++                self.cancel();
++                return Err(Error::Controller(irq));
++            }
++            let status = if reg == IRQ { irq } else { self.read(reg) };
++            if ready(status) {
++                return Ok(status);
++            }
++        }
++        self.cancel();
++        Err(Error::Timeout)
++    }
++    fn phase(&mut self, addr: u8, data: &mut [u8], read: bool, hold: bool) -> Result<(), Error> {
++        let irq = self.read(IRQ);
++        self.put(IRQ_CLEAR, irq);
++        self.put(if read { RX_LEN } else { TX_LEN }, data.len() as u32);
++        self.put(
++            CMD,
++            ((if read { 2 } else { 1 }) << 27) | ((addr as u32) << 9) | if hold { 4 } else { 0 },
++        );
++        for chunk in data.chunks_mut(4) {
++            if read {
++                self.wait(RX_STATUS, |s| s & 0x3f != 0)?;
++                let word = self.read(RX_FIFO).to_le_bytes();
++                chunk.copy_from_slice(&word[..chunk.len()]);
++            } else {
++                self.wait(TX_STATUS, |s| s & 0x1f < 16)?;
++                let mut word = [0u8; 4];
++                word[..chunk.len()].copy_from_slice(chunk);
++                self.put(TX_FIFO, u32::from_le_bytes(word));
++            }
++        }
++        let done = self.wait(IRQ, |s| s & DONE != 0)?;
++        self.put(IRQ_CLEAR, done);
++        Ok(())
++    }
++}
++impl<M: Mmio> Bus for Geni<M> {
++    fn write(&mut self, addr: u8, data: &[u8]) -> Result<(), Error> {
++        if addr > 0x7f || data.is_empty() || data.len() > u16::MAX as usize {
++            return Err(Error::InvalidTransfer);
++        }
++        self.phase(addr, &mut data.to_vec(), false, false)
++    }
++    fn write_read(&mut self, addr: u8, command: &[u8], data: &mut [u8]) -> Result<(), Error> {
++        if addr > 0x7f
++            || command.is_empty()
++            || data.is_empty()
++            || command.len() > u16::MAX as usize
++            || data.len() > u16::MAX as usize
++        {
++            return Err(Error::InvalidTransfer);
++        }
++        self.phase(addr, &mut command.to_vec(), false, true)?;
++        self.phase(addr, data, true, false)
++    }
++}
+diff --git a/drivers/geni-i2c-core/tests/fifo.rs b/drivers/geni-i2c-core/tests/fifo.rs
+new file mode 100644
+index 00000000..5e0c37a7
+--- /dev/null
++++ b/drivers/geni-i2c-core/tests/fifo.rs
+@@ -0,0 +1,80 @@
++use geni_i2c_core::{Bus, Error, Geni};
++use mmio_replay::{Event, Replayer, Trace, Width};
++const BASE: u64 = 0xa90000;
++fn r(t: &mut Trace, off: u64, v: u32) {
++    t.push(Event::read(BASE + off, Width::W32, v as u64));
++}
++fn w(t: &mut Trace, off: u64, v: u32) {
++    t.push(Event::write(BASE + off, Width::W32, v as u64));
++}
++fn phase(t: &mut Trace, len: u32, read: bool, hold: bool, value: u32) {
++    r(t, 0x610, 0);
++    w(t, 0x618, 0);
++    w(t, if read { 0x270 } else { 0x26c }, len);
++    w(
++        t,
++        0x600,
++        ((if read { 2 } else { 1 }) << 27) | (0x20 << 9) | if hold { 4 } else { 0 },
++    );
++    r(t, 0x610, 0);
++    if read {
++        r(t, 0x804, 1);
++        r(t, 0x780, value);
++    } else {
++        r(t, 0x800, 0);
++        w(t, 0x700, value);
++    }
++    r(t, 0x610, 1);
++    w(t, 0x618, 1);
++}
++#[test]
++fn repeated_start_register_read_replays() {
++    let mut t = Trace::new();
++    phase(&mut t, 1, false, true, 0xe9);
++    phase(&mut t, 2, true, false, 0x3412);
++    let mut bus = Geni::new(Replayer::strict(t), BASE);
++    let mut data = [0; 2];
++    assert_eq!(bus.write_read(0x20, &[0xe9], &mut data), Ok(()));
++    assert_eq!(data, [0x12, 0x34]);
++    assert!(bus.into_io().finish().ok());
++}
++#[test]
++fn invalid_transfer_makes_no_access() {
++    let bus = Replayer::strict(Trace::new());
++    let mut bus = Geni::new(bus, BASE);
++    assert_eq!(bus.write(0x80, &[1]), Err(Error::InvalidTransfer));
++    assert_eq!(
++        bus.write_read(0x20, &[], &mut [0]),
++        Err(Error::InvalidTransfer)
++    );
++    assert!(bus.into_io().finish().ok());
++}
++#[test]
++fn controller_error_cancels() {
++    let mut t = Trace::new();
++    r(&mut t, 0x610, 0);
++    w(&mut t, 0x618, 0);
++    w(&mut t, 0x26c, 1);
++    w(&mut t, 0x600, (1 << 27) | (0x20 << 9));
++    r(&mut t, 0x610, 1 << 1);
++    w(&mut t, 0x604, 1 << 2);
++    let mut bus = Geni::new(Replayer::strict(t), BASE);
++    assert_eq!(bus.write(0x20, &[1]), Err(Error::Controller(2)));
++    assert!(bus.into_io().finish().ok());
++}
++#[test]
++fn fifo_timeout_is_bounded_and_cancels() {
++    let mut t = Trace::new();
++    r(&mut t, 0x610, 0);
++    w(&mut t, 0x618, 0);
++    w(&mut t, 0x26c, 1);
++    w(&mut t, 0x600, (1 << 27) | (0x20 << 9));
++    for _ in 0..1024 {
++        r(&mut t, 0x610, 0);
++        r(&mut t, 0x800, 16);
++    }
++    w(&mut t, 0x604, 1 << 2);
++    let mut bus = Geni::new(Replayer::strict(t), BASE);
++    assert_eq!(bus.write(0x20, &[1]), Err(Error::Timeout));
++    assert!(bus.into_io().finish().ok());
++}
+diff --git a/drivers/geni-i2cd/Cargo.toml b/drivers/geni-i2cd/Cargo.toml
+new file mode 100644
+index 00000000..e02b5011
+--- /dev/null
++++ b/drivers/geni-i2cd/Cargo.toml
+@@ -0,0 +1,9 @@
++[package]
++name = "geni-i2cd"
++version = "0.1.0"
++edition = "2021"
++license = "MIT"
++[dependencies]
++common = { path = "../common" }
++geni-i2c-core = { path = "../geni-i2c-core" }
++mmio-replay = { path = "../mmio-replay" }
+diff --git a/drivers/geni-i2cd/README.md b/drivers/geni-i2cd/README.md
+new file mode 100644
+index 00000000..367d83e4
+--- /dev/null
++++ b/drivers/geni-i2cd/README.md
+@@ -0,0 +1,3 @@
++# GENI I2C12 diagnostic process
++
++This opt-in Redox process maps 0x00a90000 and reads the first s3706b PDT entry when invoked with `--probe-rmi4`. It is a diagnostic for validating the FIFO controller, not a shared bus scheme. Do not run it while `rmi4d` owns I2C12. No automatic startup is configured. The core crate in `../geni-i2c-core` has strict register replay tests.
+diff --git a/drivers/geni-i2cd/src/hardware.inc b/drivers/geni-i2cd/src/hardware.inc
+new file mode 100644
+index 00000000..e1a4eafc
+--- /dev/null
++++ b/drivers/geni-i2cd/src/hardware.inc
+@@ -0,0 +1,33 @@
++use std::ptr::{read_volatile, write_volatile};
++
++use common::{MemoryType, PhysBorrowed, Prot};
++use mmio_replay::{Mmio, Width};
++pub struct Mapped {
++    _region: PhysBorrowed,
++    ptr: *mut u8,
++}
++impl Mapped {
++    pub fn open() -> Result<Self, Box<dyn std::error::Error>> {
++        let region = PhysBorrowed::map(0xa90000, 0x1000, Prot::RW, MemoryType::DeviceMemory)?;
++        let ptr = region.as_ptr().cast();
++        Ok(Self {
++            _region: region,
++            ptr,
++        })
++    }
++}
++impl Mmio for Mapped {
++    fn read(&mut self, addr: u64, width: Width) -> u64 {
++        assert_eq!(width, Width::W32);
++        unsafe { read_volatile(self.ptr.add((addr - 0xa90000) as usize).cast::<u32>()) as u64 }
++    }
++    fn write(&mut self, addr: u64, width: Width, value: u64) {
++        assert_eq!(width, Width::W32);
++        unsafe {
++            write_volatile(
++                self.ptr.add((addr - 0xa90000) as usize).cast::<u32>(),
++                value as u32,
++            )
++        }
++    }
++}
+diff --git a/drivers/geni-i2cd/src/main.rs b/drivers/geni-i2cd/src/main.rs
+new file mode 100644
+index 00000000..8a6eece3
+--- /dev/null
++++ b/drivers/geni-i2cd/src/main.rs
+@@ -0,0 +1,23 @@
++//! GENI i2c12 diagnostic worker. Owns the bus only while explicitly invoked.
++#[cfg(target_os = "redox")]
++mod hardware {
++    include!("hardware.inc");
++}
++#[cfg(target_os = "redox")]
++fn main() -> Result<(), Box<dyn std::error::Error>> {
++    use geni_i2c_core::{Bus, Geni};
++    // No autonomous probing: the bus is shared with rmi4d until an IPC owner exists.
++    if std::env::args().nth(1).as_deref() != Some("--probe-rmi4") {
++        return Err("explicit --probe-rmi4 required".into());
++    }
++    let mut bus = Geni::new(hardware::Mapped::open()?, 0xa90000);
++    let mut descriptor = [0u8; 6];
++    bus.write_read(0x20, &[0xe9], &mut descriptor)
++        .map_err(|e| format!("{e:?}"))?;
++    println!("PDT first descriptor: {descriptor:02x?}");
++    Ok(())
++}
++#[cfg(not(target_os = "redox"))]
++fn main() {
++    eprintln!("geni-i2cd requires Redox aarch64; use core replay tests on the host");
++}
+diff --git a/drivers/rmi4-touch-core/Cargo.toml b/drivers/rmi4-touch-core/Cargo.toml
+new file mode 100644
+index 00000000..eaccab53
+--- /dev/null
++++ b/drivers/rmi4-touch-core/Cargo.toml
+@@ -0,0 +1,8 @@
++[package]
++name = "rmi4-touch-core"
++version = "0.1.0"
++edition = "2021"
++license = "MIT"
++
++[dependencies]
++geni-i2c-core = { path = "../geni-i2c-core" }
+diff --git a/drivers/rmi4-touch-core/src/lib.rs b/drivers/rmi4-touch-core/src/lib.rs
+new file mode 100644
+index 00000000..d3da8836
+--- /dev/null
++++ b/drivers/rmi4-touch-core/src/lib.rs
+@@ -0,0 +1,143 @@
++//! Conservative RMI4 PDT discovery and F12 Data1 contact decoding.
++use geni_i2c_core::{Bus, Error as BusError};
++
++pub const ADDRESS: u8 = 0x20;
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Error {
++    Bus(BusError),
++    MissingFunction(u8),
++    DuplicateFunction(u8),
++    InvalidDescriptor,
++    UnconfiguredReport,
++}
++impl From<BusError> for Error {
++    fn from(e: BusError) -> Self {
++        Self::Bus(e)
++    }
++}
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct Function {
++    pub query: u8,
++    pub command: u8,
++    pub control: u8,
++    pub data: u8,
++    pub irqs: u8,
++}
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct Functions {
++    pub f01: Function,
++    pub f12: Function,
++}
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct Contact {
++    pub slot: u8,
++    pub x: u16,
++    pub y: u16,
++    pub pressure: u8,
++}
++/// Data1 layout is learned from a device query/oracle; never assume a fixed offset.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct Data1 {
++    pub offset: u8,
++    pub slots: u8,
++}
++impl Data1 {
++    pub fn checked(offset: u8, slots: u8) -> Result<Self, Error> {
++        if slots == 0 || slots > 10 || usize::from(offset) + usize::from(slots) * 8 > 256 {
++            Err(Error::InvalidDescriptor)
++        } else {
++            Ok(Self { offset, slots })
++        }
++    }
++}
++
++pub struct Rmi4<B: Bus> {
++    bus: B,
++    functions: Functions,
++    data1: Option<Data1>,
++}
++impl<B: Bus> Rmi4<B> {
++    pub fn discover(mut bus: B) -> Result<Self, Error> {
++        let mut f01 = None;
++        let mut f12 = None;
++        for addr in (0x05..=0xe9).rev().step_by(6) {
++            let mut p = [0; 6];
++            bus.write_read(ADDRESS, &[addr], &mut p)?;
++            if p[5] == 0 {
++                break;
++            }
++            let fun = Function {
++                query: p[0],
++                command: p[1],
++                control: p[2],
++                data: p[3],
++                irqs: p[4] & 7,
++            };
++            let target = match p[5] {
++                1 => &mut f01,
++                0x12 => &mut f12,
++                _ => continue,
++            };
++            if target.replace(fun).is_some() {
++                return Err(Error::DuplicateFunction(p[5]));
++            }
++        }
++        Ok(Self {
++            bus,
++            functions: Functions {
++                f01: f01.ok_or(Error::MissingFunction(1))?,
++                f12: f12.ok_or(Error::MissingFunction(0x12))?,
++            },
++            data1: None,
++        })
++    }
++    pub fn functions(&self) -> Functions {
++        self.functions
++    }
++    /// Only call with a descriptor validated against live F12 queries.
++    pub fn set_data1(&mut self, descriptor: Data1) {
++        self.data1 = Some(descriptor);
++    }
++    pub fn poll(&mut self) -> Result<Vec<Contact>, Error> {
++        let desc = self.data1.ok_or(Error::UnconfiguredReport)?;
++        let mut irq = [0; 2];
++        self.bus
++            .write_read(ADDRESS, &[self.functions.f01.data], &mut irq)?;
++        if irq[0] & 0xc0 != 0 {
++            return Ok(Vec::new());
++        } // unconfigured/reset/flash state
++        let mut raw = vec![0; usize::from(desc.slots) * 8];
++        let address = self
++            .functions
++            .f12
++            .data
++            .checked_add(desc.offset)
++            .ok_or(Error::InvalidDescriptor)?;
++        self.bus.write_read(ADDRESS, &[address], &mut raw)?;
++        Ok(decode(&raw))
++    }
++    pub fn into_bus(self) -> B {
++        self.bus
++    }
++}
++/// F12 Data1: one eight-byte object record per slot; only fingers are exposed.
++pub fn decode(raw: &[u8]) -> Vec<Contact> {
++    raw.chunks_exact(8)
++        .enumerate()
++        .filter_map(|(slot, o)| {
++            if o[0] & 0x0f != 1 {
++                return None;
++            }
++            let x = u16::from_le_bytes([o[1], o[2]]);
++            if x > 1079 {
++                return None;
++            }
++            Some(Contact {
++                slot: slot as u8,
++                x,
++                y: u16::from_le_bytes([o[3], o[4]]),
++                pressure: o[5],
++            })
++        })
++        .collect()
++}
+diff --git a/drivers/rmi4-touch-core/tests/touch.rs b/drivers/rmi4-touch-core/tests/touch.rs
+new file mode 100644
+index 00000000..e242c061
+--- /dev/null
++++ b/drivers/rmi4-touch-core/tests/touch.rs
+@@ -0,0 +1,85 @@
++use std::collections::VecDeque;
++
++use geni_i2c_core::{Bus, Error as BusError};
++use rmi4_touch_core::{decode, Data1, Error, Rmi4, ADDRESS};
++struct Script {
++    calls: VecDeque<(Vec<u8>, Vec<u8>)>,
++}
++impl Bus for Script {
++    fn write(&mut self, _: u8, _: &[u8]) -> Result<(), BusError> {
++        unreachable!()
++    }
++    fn write_read(&mut self, addr: u8, cmd: &[u8], out: &mut [u8]) -> Result<(), BusError> {
++        assert_eq!(addr, ADDRESS);
++        let (expected, value) = self.calls.pop_front().unwrap();
++        assert_eq!(cmd, expected);
++        assert_eq!(out.len(), value.len());
++        out.copy_from_slice(&value);
++        Ok(())
++    }
++}
++fn descriptor(addr: u8, function: u8) -> (Vec<u8>, Vec<u8>) {
++    (vec![addr], vec![0x10, 0x20, 0x30, 0x40, 1, function])
++}
++fn discovery() -> Script {
++    Script {
++        calls: VecDeque::from([
++            descriptor(0xe9, 1),
++            descriptor(0xe3, 0x12),
++            (vec![0xdd], vec![0; 6]),
++        ]),
++    }
++}
++#[test]
++fn scans_pdt_and_decodes_one_finger() {
++    let mut bus = discovery();
++    bus.calls.push_back((vec![0x40], vec![0, 2]));
++    bus.calls
++        .push_back((vec![0x41], vec![1, 0x37, 4, 0x2d, 3, 50, 2, 2]));
++    let mut touch = Rmi4::discover(bus).unwrap();
++    assert_eq!(touch.functions().f12.data, 0x40);
++    touch.set_data1(Data1::checked(1, 1).unwrap());
++    assert_eq!(
++        touch.poll().unwrap(),
++        vec![rmi4_touch_core::Contact {
++            slot: 0,
++            x: 1079,
++            y: 813,
++            pressure: 50
++        }]
++    );
++    assert!(touch.into_bus().calls.is_empty());
++}
++#[test]
++fn no_unverified_f12_read() {
++    let mut touch = Rmi4::discover(discovery()).unwrap();
++    assert_eq!(touch.poll(), Err(Error::UnconfiguredReport));
++    assert!(touch.into_bus().calls.is_empty());
++}
++#[test]
++fn missing_f12_and_bad_layout_fail() {
++    let bus = Script {
++        calls: VecDeque::from([descriptor(0xe9, 1), (vec![0xe3], vec![0; 6])]),
++    };
++    assert!(matches!(
++        Rmi4::discover(bus),
++        Err(Error::MissingFunction(0x12))
++    ));
++    assert_eq!(Data1::checked(250, 2), Err(Error::InvalidDescriptor));
++}
++#[test]
++fn ignores_nonfinger_and_out_of_bounds() {
++    let raw = [
++        2, 4, 0, 5, 0, 1, 0, 0, 1, 0x38, 4, 5, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++    ];
++    assert!(decode(&raw).is_empty());
++}
++#[test]
++fn reset_status_suppresses_report() {
++    let mut bus = discovery();
++    bus.calls.push_back((vec![0x40], vec![0x80, 0]));
++    let mut touch = Rmi4::discover(bus).unwrap();
++    touch.set_data1(Data1::checked(1, 1).unwrap());
++    assert!(touch.poll().unwrap().is_empty());
++    assert!(touch.into_bus().calls.is_empty());
++}
+diff --git a/drivers/rmi4d/Cargo.toml b/drivers/rmi4d/Cargo.toml
+new file mode 100644
+index 00000000..17b3e423
+--- /dev/null
++++ b/drivers/rmi4d/Cargo.toml
+@@ -0,0 +1,12 @@
++[package]
++name = "rmi4d"
++version = "0.1.0"
++edition = "2021"
++license = "MIT"
++[dependencies]
++common = { path = "../common" }
++geni-i2c-core = { path = "../geni-i2c-core" }
++rmi4-touch-core = { path = "../rmi4-touch-core" }
++mmio-replay = { path = "../mmio-replay" }
++inputd = { path = "../inputd" }
++orbclient.workspace = true
+diff --git a/drivers/rmi4d/README.md b/drivers/rmi4d/README.md
+new file mode 100644
+index 00000000..38dd28e9
+--- /dev/null
++++ b/drivers/rmi4d/README.md
+@@ -0,0 +1,3 @@
++# RMI4 touch producer (opt-in)
++
++This Redox process scans F01/F12, uses an explicitly supplied F12 Data1 offset and slot count, and forwards the first finger to `inputd` as pointer movement and left-button state. Example syntax is `rmi4d OFFSET SLOTS`; run only after oracle capture validates both values and the bus/rails/clocks. It polls every 16 ms because TLMM IRQ 125 is not yet wired through the current driver. It is not enabled in initfs. The process exits on I2C errors and releases any held button. Run host tests in `../rmi4-touch-core`; the Redox target build and hardware event path remain unverified.
+diff --git a/drivers/rmi4d/src/main.rs b/drivers/rmi4d/src/main.rs
+new file mode 100644
+index 00000000..4fb71315
+--- /dev/null
++++ b/drivers/rmi4d/src/main.rs
+@@ -0,0 +1,71 @@
++//! RMI4 touch producer. Disabled unless a verified Data1 descriptor is supplied.
++#[cfg(target_os = "redox")]
++mod hardware {
++    include!("../../geni-i2cd/src/hardware.inc");
++}
++#[cfg(target_os = "redox")]
++fn main() -> Result<(), Box<dyn std::error::Error>> {
++    use std::time::Duration;
++
++    use geni_i2c_core::Geni;
++    use inputd::ProducerHandle;
++    use orbclient::{ButtonEvent, MouseEvent};
++    use rmi4_touch_core::{Data1, Rmi4};
++    let args: Vec<String> = std::env::args().collect();
++    if args.len() != 3 {
++        return Err("usage: rmi4d DATA1_OFFSET SLOTS (oracle-verified)".into());
++    }
++    let offset = args[1].parse::<u8>()?;
++    let slots = args[2].parse::<u8>()?;
++    let descriptor = Data1::checked(offset, slots).map_err(|e| format!("{e:?}"))?;
++    let bus = Geni::new(hardware::Mapped::open()?, 0xa90000);
++    let mut touch = Rmi4::discover(bus).map_err(|e| format!("{e:?}"))?;
++    touch.set_data1(descriptor);
++    let mut input = ProducerHandle::new()?;
++    let mut pressed = false;
++    loop {
++        let contacts = match touch.poll() {
++            Ok(contacts) => contacts,
++            Err(e) => {
++                if pressed {
++                    input.write_event(
++                        ButtonEvent {
++                            left: false,
++                            right: false,
++                            middle: false,
++                        }
++                        .to_event(),
++                    )?;
++                }
++                return Err(format!("{e:?}").into());
++            }
++        };
++        let first = contacts.first();
++        if let Some(point) = first {
++            input.write_event(
++                MouseEvent {
++                    x: i32::from(point.x),
++                    y: i32::from(point.y),
++                }
++                .to_event(),
++            )?;
++        }
++        let next = first.is_some();
++        if next != pressed {
++            input.write_event(
++                ButtonEvent {
++                    left: next,
++                    right: false,
++                    middle: false,
++                }
++                .to_event(),
++            )?;
++            pressed = next;
++        }
++        std::thread::sleep(Duration::from_millis(16));
++    }
++}
++#[cfg(not(target_os = "redox"))]
++fn main() {
++    eprintln!("rmi4d requires Redox aarch64; use core replay tests on the host");
++}
+-- 
+2.43.0
+

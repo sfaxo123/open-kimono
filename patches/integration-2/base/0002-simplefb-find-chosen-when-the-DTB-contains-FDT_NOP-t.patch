@@ -1,0 +1,86 @@
+From ae6fbfaebcf29c64fc7032197ce33e65e1c6d66d Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:26:16 +0000
+Subject: [PATCH 2/7] simplefb: find /chosen when the DTB contains FDT_NOP tags
+
+UEFI edits the device tree in place with libfdt, leaving FDT_NOP tags
+between root nodes. fdt 0.1.5's path lookup then misses /chosen, so the
+QEMU virt DTB handed over by edk2 never yielded the framebuffer. Iterate
+the root's children instead and cover it with a regression test.
+
+Co-Authored-By: Cursor <noreply@cursor.com>
+---
+ drivers/graphics/simplefb/src/lib.rs   |  7 ++++++-
+ drivers/graphics/simplefb/src/tests.rs | 20 ++++++++++++++++++++
+ 2 files changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/graphics/simplefb/src/lib.rs b/drivers/graphics/simplefb/src/lib.rs
+index adaa5d88..768cf99a 100644
+--- a/drivers/graphics/simplefb/src/lib.rs
++++ b/drivers/graphics/simplefb/src/lib.rs
+@@ -79,7 +79,12 @@ impl std::error::Error for Error {}
+ /// Returns `Ok(None)` when the tree has no enabled `simple-framebuffer` under `/chosen`.
+ pub fn find(dtb: &[u8]) -> Result<Option<SimpleFb>, Error> {
+     let dt = Fdt::new(dtb).map_err(|_| Error::InvalidDtb)?;
+-    let Some(chosen) = dt.find_node("/chosen") else {
++    // fdt 0.1.5's path lookup misses nodes after FDT_NOP tags, which libfdt
++    // edits (e.g. by UEFI) leave behind; iterating children does not.
++    let Some(chosen) = dt
++        .find_node("/")
++        .and_then(|root| root.children().find(|node| node.name == "chosen"))
++    else {
+         return Ok(None);
+     };
+     let Some(node) = chosen
+diff --git a/drivers/graphics/simplefb/src/tests.rs b/drivers/graphics/simplefb/src/tests.rs
+index ea5357e2..70bf29c0 100644
+--- a/drivers/graphics/simplefb/src/tests.rs
++++ b/drivers/graphics/simplefb/src/tests.rs
+@@ -31,6 +31,11 @@ impl Builder {
+         self
+     }
+ 
++    fn nop(&mut self) -> &mut Self {
++        self.word(4);
++        self
++    }
++
+     fn prop(&mut self, name: &str, value: &[u8]) -> &mut Self {
+         let nameoff = self.strings.len() as u32;
+         self.strings.extend_from_slice(name.as_bytes());
+@@ -85,10 +90,18 @@ const SPLASH_SIZE: u32 = 0x0240_0000;
+ 
+ /// The OnePlus 6 layout: framebuffer in `/chosen`, base via `memory-region`.
+ fn tree(splash_size: u32, fb: impl FnOnce(&mut Builder)) -> Vec<u8> {
++    tree_with_root_nops(0, splash_size, fb)
++}
++
++fn tree_with_root_nops(nops: usize, splash_size: u32, fb: impl FnOnce(&mut Builder)) -> Vec<u8> {
+     let mut b = Builder::default();
+     b.begin("")
+         .cells("#address-cells", &[2])
+         .cells("#size-cells", &[2]);
++    b.begin("psci").end();
++    for _ in 0..nops {
++        b.nop();
++    }
+     b.begin("chosen")
+         .cells("#address-cells", &[2])
+         .cells("#size-cells", &[2])
+@@ -132,6 +145,13 @@ fn op6_memory_region() {
+     assert_eq!(fb.size(), 1080 * 2280 * 4);
+ }
+ 
++/// UEFI edits the DTB in place with libfdt, leaving FDT_NOP tags between nodes.
++#[test]
++fn nops_before_chosen() {
++    let fb = find(&tree_with_root_nops(54, SPLASH_SIZE, op6_props)).unwrap();
++    assert_eq!(fb, Some(OP6));
++}
++
+ #[test]
+ fn reg_without_memory_region() {
+     let dtb = tree(SPLASH_SIZE, |b| {
+-- 
+2.43.0
+

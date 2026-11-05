@@ -1,0 +1,53 @@
+From e93a2778a165570bfdee9946b3359e40628be624 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Tue, 27 Oct 2026 13:22:55 +0000
+Subject: [PATCH] Cover OnePlus high RAM during EFI to kernel handoff
+
+Agent: Codex root
+Model: gpt-6-sol
+Provider: OpenAI
+Refs: physical-redox-highram
+---
+ src/arch/aarch64.rs | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/src/arch/aarch64.rs b/src/arch/aarch64.rs
+index 1c3d19b..e371a7b 100644
+--- a/src/arch/aarch64.rs
++++ b/src/arch/aarch64.rs
+@@ -24,6 +24,9 @@ pub(crate) const ENTRY_ADDRESS_MASK: u64 = 0x000F_FFFF_FFFF_F000;
+ pub(crate) const PAGE_ENTRIES: usize = 512;
+ const PAGE_SIZE: usize = 4096;
+ const L2_BLOCK_SIZE: u64 = 2 * 1024 * 1024;
++// OnePlus 6 DRAM starts at 2 GiB and extends above 8 GiB. UEFI code,
++// its stack and static handoff data may remain there across MMU enable.
++const BOOT_IDENTITY_MAP_END: u64 = 16 << 30;
+ pub(crate) const PHYS_OFFSET: u64 = 0xFFFF_8000_0000_0000;
+ 
+ unsafe fn paging_allocate(os: &impl Os) -> Option<&'static mut [u64]> {
+@@ -88,11 +91,11 @@ pub unsafe fn paging_create(os: &impl Os, kernel_phys: u64, kernel_size: u64) ->
+             l0[0] = l1.as_ptr() as u64 | PF_ACCESS | PF_TABLE | PF_PRESENT;
+             l0[256] = l1.as_ptr() as u64 | PF_ACCESS | PF_TABLE | PF_PRESENT;
+ 
+-            // Identity-map 8 GiB while preserving the cacheability classes
++            // Identity-map 16 GiB while preserving the cacheability classes
+             // supplied by the boot environment. Use 2 MiB blocks normally
+             // and 4 KiB pages only where an attribute boundary crosses a
+             // block. Addresses absent from the map remain Device.
+-            for l1_i in 0..8 {
++            for l1_i in 0..(BOOT_IDENTITY_MAP_END >> 30) as usize {
+                 let l2 = paging_allocate(os)?;
+                 l1[l1_i] = l2.as_ptr() as u64 | PF_ACCESS | PF_TABLE | PF_PRESENT;
+ 
+@@ -177,7 +180,7 @@ pub unsafe fn paging_framebuffer(
+ ) -> Option<u64> {
+     unsafe {
+         //TODO: smarter test for framebuffer already mapped
+-        if framebuffer_phys + framebuffer_size <= 0x2_0000_0000 {
++        if framebuffer_phys + framebuffer_size <= BOOT_IDENTITY_MAP_END {
+             return Some(framebuffer_phys + PHYS_OFFSET);
+         }
+ 
+-- 
+2.43.0
+

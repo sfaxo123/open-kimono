@@ -1,0 +1,17 @@
+{
+  "service": "battery-watcher",
+  "gen": 1,
+  "engine": "wasmi",
+  "kind": "wasm",
+  "cores": 1,
+  "ram_kb": 8192,
+  "wake": "250ms",
+  "on_time": "5m",
+  "relay": null,
+  "uses": [
+    { "cap": "state.rw", "scope": "area=state" },
+    { "cap": "notify.post" },
+    { "cap": "time.wake", "scope": "advance=250ms, max=5m", "budget": "2s", "window": "while-active" },
+    { "cap": "network.connect", "scope": "target=\"telemetry.example:443\", scheme=\"https\"", "budget": "40MiB" }
+  ]
+}

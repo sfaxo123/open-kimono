@@ -1,0 +1,316 @@
+From 1a9fc605c737c8cf87893efcea23f5062df2f20b Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Mon, 26 Oct 2026 00:21:08 +0000
+Subject: [PATCH 16/21] per controller cpu affinity registry
+
+---
+ src/acpi/madt/arch/aarch64.rs                 |   2 +
+ src/arch/aarch64/device/irqchip/gicv3.rs      |  63 ++++----
+ .../aarch64/device/irqchip/gicv3/model.rs     | 142 ++++++++++++++++++
+ 3 files changed, 173 insertions(+), 34 deletions(-)
+
+diff --git a/src/acpi/madt/arch/aarch64.rs b/src/acpi/madt/arch/aarch64.rs
+index 2e45f28a..ef26b026 100644
+--- a/src/acpi/madt/arch/aarch64.rs
++++ b/src/acpi/madt/arch/aarch64.rs
+@@ -79,6 +79,8 @@ pub(super) fn init(madt: Madt) {
+                     gic_cpu_if,
+                     //TODO: get GICRs
+                     gicrs: Vec::new(),
++                    gicr_stride: None,
++                    rd_registry: Default::default(),
+                     irq_range: (0, 0),
+                 };
+                 let chip = IrqChipItem {
+diff --git a/src/arch/aarch64/device/irqchip/gicv3.rs b/src/arch/aarch64/device/irqchip/gicv3.rs
+index 49518b8b..925353f4 100644
+--- a/src/arch/aarch64/device/irqchip/gicv3.rs
++++ b/src/arch/aarch64/device/irqchip/gicv3.rs
+@@ -2,10 +2,9 @@ use alloc::vec::Vec;
+ use core::{
+     arch::asm,
+     ptr::{read_volatile, write_volatile},
+-    sync::atomic::{AtomicU32, AtomicUsize, Ordering},
+ };
+ 
+-use self::model::{Gicv3Error, Mmio, Route};
++use self::model::{Gicv3Error, Mmio, RdRegistry, Route};
+ use super::{gic::GicDistIf, InterruptController};
+ use crate::{
+     dtb::{
+@@ -58,29 +57,29 @@ pub struct GicV3 {
+     pub gic_cpu_if: GicV3CpuIf,
+     /// Redistributor regions as (physical address, length).
+     pub gicrs: Vec<(usize, usize)>,
++    /// DT `redistributor-stride`; `None` = derive from GICR_TYPER.
++    pub gicr_stride: Option<usize>,
++    /// Virtual RD_base of every CPU that initialized against this controller.
++    pub rd_registry: RdRegistry,
+     //TODO: GICC, GICH, GICV?
+     pub irq_range: (usize, usize),
+ }
+ 
+-/// DT `redistributor-stride`; 0 = derive from GICR_TYPER.
+-static GICR_STRIDE: AtomicUsize = AtomicUsize::new(0);
+-/// Virtual RD_base for the CPU that ran `irq_init`; 0 = no mapping.
+-static CURRENT_RD: AtomicUsize = AtomicUsize::new(0);
+-static CURRENT_RD_AFFINITY: AtomicU32 = AtomicU32::new(0);
+-
+ impl GicV3 {
+     pub fn new() -> Self {
+         GicV3 {
+             gic_dist_if: GicDistIf::default(),
+             gic_cpu_if: GicV3CpuIf,
+             gicrs: Vec::new(),
++            gicr_stride: None,
++            rd_registry: RdRegistry::new(),
+             irq_range: (0, 0),
+         }
+     }
+ 
+     fn init_current_rd(&mut self) -> core::result::Result<(), Gicv3Error> {
+-        CURRENT_RD.store(0, Ordering::Release);
+-        let mut mmio = KernelMmio;
++        let affinity = model::mpidr_affinity(current_mpidr());
++        self.rd_registry.remove(affinity);
+         let mut regions = Vec::with_capacity(self.gicrs.len());
+         for &(phys, len) in &self.gicrs {
+             let virt = crate::PHYS_OFFSET
+@@ -88,37 +87,32 @@ impl GicV3 {
+                 .ok_or(Gicv3Error::BadRegion)?;
+             regions.push((virt, len));
+         }
+-        let affinity = model::mpidr_affinity(current_mpidr());
+-        let stride = match GICR_STRIDE.load(Ordering::Acquire) {
+-            0 => None,
+-            stride => Some(stride),
+-        };
+-        let rd = model::find_redistributor(&mmio, &regions, stride, affinity)?;
+-        let gicd_ctlr = mmio.read32(self.gic_dist_if.address);
+-        model::init_private(&mut mmio, rd, gicd_ctlr, GICR_MAX_POLLS)?;
+-        CURRENT_RD_AFFINITY.store(affinity, Ordering::Release);
+-        CURRENT_RD.store(rd, Ordering::Release);
++        let rd = model::init_cpu_rd(
++            &mut KernelMmio,
++            &mut self.rd_registry,
++            &regions,
++            self.gicr_stride,
++            affinity,
++            self.gic_dist_if.address,
++            GICR_MAX_POLLS,
++        )?;
+         info!("gicv3: affinity {:#x} uses redistributor {:#x}", affinity, rd);
+         Ok(())
+     }
+ 
+     /// Private INTIDs are banked per CPU; never fall back to the distributor.
+     fn private_rd(&self, intid: u32) -> Option<usize> {
+-        let rd = CURRENT_RD.load(Ordering::Acquire);
+-        if rd == 0 {
+-            error!("gicv3: private INTID {} has no redistributor mapping", intid);
+-            return None;
+-        }
+-        let owner = CURRENT_RD_AFFINITY.load(Ordering::Acquire);
+         let affinity = model::mpidr_affinity(current_mpidr());
+-        if owner != affinity {
+-            error!(
+-                "gicv3: private INTID {} on affinity {:#x}, only {:#x} has a redistributor",
+-                intid, affinity, owner
+-            );
+-            return None;
++        match self.rd_registry.lookup(affinity) {
++            Ok(rd) => Some(rd),
++            Err(_) => {
++                error!(
++                    "gicv3: private INTID {} on affinity {:#x} has no redistributor mapping",
++                    intid, affinity
++                );
++                None
++            }
+         }
+-        Some(rd)
+     }
+ 
+     pub fn parse(&mut self, fdt: &Fdt) -> Result<()> {
+@@ -130,6 +124,7 @@ impl GicV3 {
+         //TODO: deinit?
+         self.gic_dist_if.address = 0;
+         self.gicrs.clear();
++        self.rd_registry.clear();
+ 
+         // Get number of GICRs
+         let gicrs = node
+@@ -143,7 +138,7 @@ impl GicV3 {
+             error!("gicv3: invalid redistributor-stride: {:?}", err);
+             Error::new(EINVAL)
+         })?;
+-        GICR_STRIDE.store(stride.unwrap_or(0), Ordering::Release);
++        self.gicr_stride = stride;
+ 
+         // Read registers: <GICD> then one tuple per redistributor region.
+         let chunks = node.reg().ok_or_else(|| Error::new(EINVAL))?;
+diff --git a/src/arch/aarch64/device/irqchip/gicv3/model.rs b/src/arch/aarch64/device/irqchip/gicv3/model.rs
+index 987cb986..9df26a2d 100644
+--- a/src/arch/aarch64/device/irqchip/gicv3/model.rs
++++ b/src/arch/aarch64/device/irqchip/gicv3/model.rs
+@@ -1,6 +1,10 @@
+ //! Portable GICv3 redistributor helpers. Everything touching hardware goes
+ //! through [`Mmio`] so the same code runs against a host mock in tests.
+ 
++extern crate alloc;
++
++use alloc::vec::Vec;
++
+ pub const INTID_PRIVATE_END: u32 = 32;
+ pub const INTID_SPECIAL_FIRST: u32 = 1020;
+ 
+@@ -206,6 +210,63 @@ pub fn init_private<M: Mmio>(
+     Ok(())
+ }
+ 
++/// Per-controller map from full packed affinity (see [`mpidr_affinity`]) to
++/// that CPU's virtual RD_base. Entries for other CPUs are never touched when
++/// one CPU (re)initializes.
++#[derive(Debug, Default)]
++pub struct RdRegistry {
++    entries: Vec<(u32, usize)>,
++}
++
++impl RdRegistry {
++    pub const fn new() -> Self {
++        RdRegistry { entries: Vec::new() }
++    }
++
++    pub fn lookup(&self, affinity: u32) -> Result<usize, Gicv3Error> {
++        self.entries
++            .iter()
++            .find(|&&(aff, _)| aff == affinity)
++            .map(|&(_, rd)| rd)
++            .ok_or(Gicv3Error::NoRedistributorForCpu(affinity))
++    }
++
++    pub fn insert(&mut self, affinity: u32, rd: usize) {
++        match self.entries.iter_mut().find(|(aff, _)| *aff == affinity) {
++            Some(slot) => slot.1 = rd,
++            None => self.entries.push((affinity, rd)),
++        }
++    }
++
++    pub fn remove(&mut self, affinity: u32) {
++        self.entries.retain(|&(aff, _)| aff != affinity);
++    }
++
++    pub fn clear(&mut self) {
++        self.entries.clear();
++    }
++}
++
++/// Find and initialize `affinity`'s redistributor, recording it only on
++/// success. A failed (re)init leaves `affinity` unmapped; other CPUs' entries
++/// are preserved either way.
++pub fn init_cpu_rd<M: Mmio>(
++    mmio: &mut M,
++    registry: &mut RdRegistry,
++    regions: &[(usize, usize)],
++    stride: Option<usize>,
++    affinity: u32,
++    gicd_ctlr_addr: usize,
++    max_polls: usize,
++) -> Result<usize, Gicv3Error> {
++    registry.remove(affinity);
++    let rd = find_redistributor(mmio, regions, stride, affinity)?;
++    let gicd_ctlr = mmio.read32(gicd_ctlr_addr);
++    init_private(mmio, rd, gicd_ctlr, max_polls)?;
++    registry.insert(affinity, rd);
++    Ok(rd)
++}
++
+ pub fn private_enable<M: Mmio>(mmio: &mut M, rd: usize, intid: u32) -> Result<(), Gicv3Error> {
+     if intid >= INTID_PRIVATE_END {
+         return Err(Gicv3Error::InvalidIntid(intid));
+@@ -550,4 +611,85 @@ mod tests {
+         assert_eq!(private_disable(&mut m, RD0, 30, 16), Err(Gicv3Error::RwpTimeout));
+         assert_eq!(init_private(&mut m, RD0, 0, 16), Err(Gicv3Error::RwpTimeout));
+     }
++
++    const RD1: usize = RD0 + GICR_FRAMES_V3;
++    const AFF_A: u32 = 0x0000_0000;
++    const AFF_B: u32 = 0x0000_0001;
++
++    fn two_cpu_mock() -> MockMmio {
++        MockMmio::with_rds(&[(RD0, AFF_A, false), (RD1, AFF_B, true)])
++    }
++
++    #[test]
++    fn registry_keeps_cpu_a_after_cpu_b_initializes() {
++        let mut m = two_cpu_mock();
++        let mut reg = RdRegistry::new();
++        let regions = [(RD0, 0xf6_0000)];
++        assert_eq!(init_cpu_rd(&mut m, &mut reg, &regions, None, AFF_A, GICD, 8), Ok(RD0));
++        assert_eq!(init_cpu_rd(&mut m, &mut reg, &regions, None, AFF_B, GICD, 8), Ok(RD1));
++        assert_eq!(reg.lookup(AFF_A), Ok(RD0));
++        assert_eq!(reg.lookup(AFF_B), Ok(RD1));
++    }
++
++    #[test]
++    fn registry_reinit_of_b_preserves_a_even_on_failure() {
++        let mut m = two_cpu_mock();
++        let mut reg = RdRegistry::new();
++        let regions = [(RD0, 0xf6_0000)];
++        init_cpu_rd(&mut m, &mut reg, &regions, None, AFF_A, GICD, 8).unwrap();
++        init_cpu_rd(&mut m, &mut reg, &regions, None, AFF_B, GICD, 8).unwrap();
++        assert_eq!(init_cpu_rd(&mut m, &mut reg, &regions, None, AFF_B, GICD, 8), Ok(RD1));
++        assert_eq!(reg.lookup(AFF_A), Ok(RD0));
++        assert_eq!(reg.lookup(AFF_B), Ok(RD1));
++        // A failed re-init unmaps only B.
++        let only_a = [(RD0, GICR_FRAMES_V3)];
++        assert_eq!(
++            init_cpu_rd(&mut m, &mut reg, &only_a, None, AFF_B, GICD, 8),
++            Err(Gicv3Error::NoRedistributorForCpu(AFF_B))
++        );
++        assert_eq!(reg.lookup(AFF_A), Ok(RD0));
++        assert_eq!(reg.lookup(AFF_B), Err(Gicv3Error::NoRedistributorForCpu(AFF_B)));
++    }
++
++    #[test]
++    fn registry_missing_affinity_fails_without_mmio() {
++        let mut m = two_cpu_mock();
++        let mut reg = RdRegistry::new();
++        init_cpu_rd(&mut m, &mut reg, &[(RD0, 0xf6_0000)], None, AFF_A, GICD, 8).unwrap();
++        let (reads, writes) = (m.reads.get(), m.writes.len());
++        assert_eq!(reg.lookup(AFF_B), Err(Gicv3Error::NoRedistributorForCpu(AFF_B)));
++        assert_eq!(RdRegistry::new().lookup(AFF_A), Err(Gicv3Error::NoRedistributorForCpu(AFF_A)));
++        assert_eq!((m.reads.get(), m.writes.len()), (reads, writes));
++    }
++
++    #[test]
++    fn registry_distinguishes_affinities_differing_only_in_aff3() {
++        let lo = mpidr_affinity(0x0000_0001);
++        let hi = mpidr_affinity((0x7u64 << 32) | 0x0001);
++        assert_eq!(hi ^ lo, 0x0700_0000);
++        let mut m = MockMmio::with_rds(&[(RD0, lo, false), (RD1, hi, true)]);
++        let mut reg = RdRegistry::new();
++        let regions = [(RD0, 0xf6_0000)];
++        assert_eq!(init_cpu_rd(&mut m, &mut reg, &regions, None, hi, GICD, 8), Ok(RD1));
++        assert_eq!(reg.lookup(lo), Err(Gicv3Error::NoRedistributorForCpu(lo)));
++        assert_eq!(init_cpu_rd(&mut m, &mut reg, &regions, None, lo, GICD, 8), Ok(RD0));
++        assert_eq!(reg.lookup(hi), Ok(RD1));
++        assert_eq!(reg.lookup(lo), Ok(RD0));
++    }
++
++    #[test]
++    fn independent_controller_registries_do_not_clobber() {
++        let rd_c1 = 0x0a00_0000;
++        let mut m = MockMmio::with_rds(&[(RD0, AFF_A, true), (rd_c1, AFF_A, true)]);
++        let mut c0 = RdRegistry::new();
++        let mut c1 = RdRegistry::new();
++        init_cpu_rd(&mut m, &mut c0, &[(RD0, GICR_FRAMES_V3)], None, AFF_A, GICD, 8).unwrap();
++        init_cpu_rd(&mut m, &mut c1, &[(rd_c1, GICR_FRAMES_V4)], Some(GICR_FRAMES_V4), AFF_A, GICD, 8)
++            .unwrap();
++        assert_eq!(c0.lookup(AFF_A), Ok(RD0));
++        assert_eq!(c1.lookup(AFF_A), Ok(rd_c1));
++        c1.clear();
++        assert_eq!(c0.lookup(AFF_A), Ok(RD0));
++        assert_eq!(c1.lookup(AFF_A), Err(Gicv3Error::NoRedistributorForCpu(AFF_A)));
++    }
+ }

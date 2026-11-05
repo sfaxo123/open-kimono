@@ -1,0 +1,44 @@
+From d4143d3184eff531adb9ffe287b5b20df2b63477 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:40:50 +0000
+Subject: [PATCH 5/7] ramboot: include vesad for simplefb discovery
+
+Co-Authored-By: Codex <noreply@openai.com>
+---
+ Makefile                        | 3 ++-
+ init.initfs.d/90_ramboot.target | 2 +-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index b05afba8..5018f7ab 100644
+--- a/Makefile
++++ b/Makefile
+@@ -15,7 +15,7 @@ BUILD_FLAGS +=  --target-dir $(BUILD_DIR)
+ INITFS_BINS = ipcd init logd ramfs randd zerod \
+ 	acpid fbbootlogd hwd inputd lived \
+ 	pcid pcid-spawner rtcd vesad
+-RAMBOOT_BINS = ipcd init logd ramfs randd zerod rtcd ramsh spmid
++RAMBOOT_BINS = ipcd init logd ramfs randd zerod rtcd ramsh spmid vesad
+ INITFS_DRIVERS_BINS = nvmed virtio-blkd  virtio-gpud
+ BASE_BINS = fbcond getty inputd pcid pcid-spawner redoxerd audiod dhcpd ptyd netstack nbdd
+ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+@@ -152,6 +152,7 @@ ramboot-initfs:
+ 	cp "$(SRC_DIR)/init.initfs.d"/00_* "$(SRC_DIR)/init.initfs.d"/ramfs@.service \
+ 		"$(SRC_DIR)/init.initfs.d"/30_ramsh.service \
+ 		"$(SRC_DIR)/init.initfs.d"/30_spmid.service \
++		"$(SRC_DIR)/init.initfs.d"/20_vesad.service \
+ 		"$(SRC_DIR)/init.initfs.d"/90_ramboot.target "$(BUILD_DIR)/ramboot-initfs/lib/init.d/"
+ 	$(CARGO_HOST) run --manifest-path "$(SRC_DIR)/initfs/tools/Cargo.toml" --bin redox-initfs-ar -- \
+ 		"$(BUILD_DIR)/ramboot-initfs" "$(TARGET_DIR)/bootstrap" -o "$(BUILD_DIR)/ramboot-initfs.img"
+diff --git a/init.initfs.d/90_ramboot.target b/init.initfs.d/90_ramboot.target
+index 2d3eccba..08333941 100644
+--- a/init.initfs.d/90_ramboot.target
++++ b/init.initfs.d/90_ramboot.target
+@@ -1,3 +1,3 @@
+ [unit]
+ description = "RAM-only boot shell"
+-requires_weak = ["30_ramsh.service", "30_spmid.service"]
++requires_weak = ["20_vesad.service", "30_ramsh.service", "30_spmid.service"]
+-- 
+2.43.0
+

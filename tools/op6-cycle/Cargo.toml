@@ -1,0 +1,14 @@
+[package]
+name = "op6-cycle"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "One hands-free OnePlus 6 RAM-boot cycle: pmOS -> fastboot boot -> classify the USB outcome -> JSON receipt. Rust port of scripts/mac/op6-cycle.sh (drop-in: same CLI, exit codes, allowlist, receipt shape)."
+
+# Deliberately zero dependencies: the bash tool shells out to shasum and
+# date; the port implements SHA-256 and UTC civil conversion in-crate so
+# the binary builds offline on any host with a Rust toolchain.
+
+[[bin]]
+name = "op6-cycle"
+path = "src/main.rs"

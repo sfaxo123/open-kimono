@@ -1,0 +1,1502 @@
+From 5f570596dd1fd3680044a1382d44be480d580634 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:17:54 +0000
+Subject: [PATCH 03/21] Wire SDM845 PDC and TLMM interrupt domains
+
+Co-Authored-By: Codex <noreply@openai.com>
+---
+ docs/PROVENANCE.md                            |  13 +
+ docs/workbench/.gitignore                     |   6 +
+ docs/workbench/K1-EVIDENCE.md                 |  42 +++
+ docs/workbench/k1-host-tests.log              |   6 +-
+ docs/workbench/k1-irqchips.dtso               |  31 ++
+ src/arch/aarch64/device/generic_timer.rs      |   2 +-
+ src/arch/aarch64/device/irqchip/gic.rs        |   9 +-
+ src/arch/aarch64/device/irqchip/gicv3.rs      |   9 +-
+ .../aarch64/device/irqchip/irq_bcm2835.rs     |   2 +-
+ .../aarch64/device/irqchip/irq_bcm2836.rs     |   2 +-
+ src/arch/aarch64/device/irqchip/mod.rs        |   7 +
+ src/arch/aarch64/device/irqchip/null.rs       |   2 +-
+ src/arch/aarch64/device/irqchip/pdc.rs        | 186 ++++++++++++
+ src/arch/aarch64/device/irqchip/qcom_irq.rs   | 180 +++++++++++-
+ src/arch/aarch64/device/irqchip/tlmm.rs       | 162 +++++++++++
+ src/arch/aarch64/interrupt/irq.rs             |   6 +-
+ src/arch/riscv64/device/irqchip/hlic.rs       |   2 +-
+ src/arch/riscv64/device/irqchip/plic.rs       |   2 +-
+ src/arch/x86_shared/interrupt/irq.rs          |   4 +-
+ src/dtb/irqchip.rs                            | 266 ++++++++++++++++--
+ src/scheme/irq.rs                             |  45 ++-
+ 21 files changed, 919 insertions(+), 65 deletions(-)
+ create mode 100644 docs/PROVENANCE.md
+ create mode 100644 docs/workbench/.gitignore
+ create mode 100644 docs/workbench/K1-EVIDENCE.md
+ create mode 100644 docs/workbench/k1-irqchips.dtso
+ create mode 100644 src/arch/aarch64/device/irqchip/pdc.rs
+ create mode 100644 src/arch/aarch64/device/irqchip/tlmm.rs
+
+diff --git a/docs/PROVENANCE.md b/docs/PROVENANCE.md
+new file mode 100644
+index 00000000..4e51ee36
+--- /dev/null
++++ b/docs/PROVENANCE.md
+@@ -0,0 +1,13 @@
++# K1 kernel IRQ chip provenance
++
++The new Rust source is original MIT code. No upstream source file was copied.
++The following references supplied hardware facts and behavior only.
++
++| Upstream URL and commit | Path | SPDX/license | Use |
++| --- | --- | --- | --- |
++| https://github.com/torvalds/linux/tree/5b0764a53235d3c77e1ed674e836e1b3fe1a4b1f | `drivers/pinctrl/qcom/pinctrl-sdm845.c` | GPL-2.0 | spec-only: GPIO tile locations and 75 GPIO-to-PDC wiring pairs in `qcom_irq.rs` |
++| https://github.com/torvalds/linux/tree/5b0764a53235d3c77e1ed674e836e1b3fe1a4b1f | `arch/arm64/boot/dts/qcom/sdm845.dtsi` | GPL-2.0 | spec-only: PDC/TLMM DT node properties and PDC ranges |
++| https://github.com/openbsd/src/tree/20cb34434d36871c39729f7369062cba28fd06cb | `sys/dev/fdt/qcpdc.c` | ISC | spec-only: PDC register offsets, mask and type behavior |
++| https://github.com/openbsd/src/tree/20cb34434d36871c39729f7369062cba28fd06cb | `sys/dev/fdt/qcgpio_fdt.c` | ISC | spec-only: TLMM interrupt config and status register behavior |
++
++No GPL implementation text is included. The numerical maps above are SoC wiring facts.
+diff --git a/docs/workbench/.gitignore b/docs/workbench/.gitignore
+new file mode 100644
+index 00000000..ade45bba
+--- /dev/null
++++ b/docs/workbench/.gitignore
+@@ -0,0 +1,6 @@
++/*.dtb
++/*.dtbo
++/*-base.dts
++/*.iso
++/*.sha256
++/k1-live-mount/
+diff --git a/docs/workbench/K1-EVIDENCE.md b/docs/workbench/K1-EVIDENCE.md
+new file mode 100644
+index 00000000..e58243f4
+--- /dev/null
++++ b/docs/workbench/K1-EVIDENCE.md
+@@ -0,0 +1,42 @@
++# K1 host and QEMU evidence
++
++Branch: `op6/irqchips`. All output paths below are in this kernel worktree.
++
++## Host
++
++`rustc --edition=2024 --test src/arch/aarch64/device/irqchip/qcom_irq.rs -o /tmp/k1-qcom-irq-tests && /tmp/k1-qcom-irq-tests`
++
++`k1-host-tests.log`: four passing tests cover the SDM845 PDC ranges and GIC INTID offset, missing pins 109–114, trigger decoding, bank split, TLMM tile/type decoding, and GPIO wake mapping including unmapped GPIO 126.
++
++`make check ARCH=aarch64` and `make ARCH=aarch64 OBJCOPY=aarch64-linux-gnu-objcopy` passed (`k1-check.log`, `k1-build.log`). Existing compiler warnings remain. `cargo fmt --check` passed.
++
++`make check ARCH=x86_64` could not compile because this host lacks `nasm` (`k1-x86-check.log`); this is an environment gate, not an x86 pass.
++
++## DT-only QEMU
++
++Fixture: `k1-irqchips.dtso`. `k1-base.dtb` came from QEMU's `dumpdtb`; `dtc -@` and `fdtoverlay` produced `k1-virt-irqchips.dtb`. The fixture uses `redox,irqchip-probe-only`, so PDC and TLMM register reads/writes are skipped. Its PDC pin 100 maps to QEMU-supported SPI 32; the host test covers the actual SDM845 SPI 615 mapping for that pin. The fixture has `wakeup-parent` wired to PDC and requests read-only route probes for PDC pin 100 and TLMM GPIO 125.
++
++The image is a copy of the existing `w0b-live.iso` with this worktree's release kernel and `kernel.all`; its SHA-256 is in `k1-live.sha256`. Boot command:
++
++```sh
++(sleep 9; printf 'l'; sleep 1; printf '\r') | timeout --signal=TERM 45 qemu-system-aarch64 -machine virt,acpi=off,gic-version=3 -cpu max -smp 1 -m 2048 -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd -dtb docs/workbench/k1-virt-irqchips.dtb -drive file=docs/workbench/k1-live.iso,format=raw,if=virtio -display none -serial stdio -monitor none -net none > docs/workbench/k1-qemu-final.log 2>&1
++```
++
++`k1-qemu-final.log` records:
++
++```text
++PDC probe: phys=0xb220000 version=0x0 ranges=1
++PDC route: pin=100 GIC INTID=64 virq=64
++TLMM probe: phys=0x3400000 GPIOs=150 virqs=288..438
++IRQ probe route: controller=pinctrl@3400000 pin=125 flags=2 virq=64
++IRQ probe route: controller=interrupt-controller@b220000 pin=100 flags=2 virq=64
++redox login:
++```
++
++QEMU was stopped by the 45-second timeout (exit 124). The log also shows the previously documented userspace `virtio-blkd` MSI-X panic; the RAM-backed image reached login despite it. There is no claim of a delivered GPIO/PDC hardware interrupt.
++
++## Remaining hardware gates
++
++- Read the phone's PDC version and enable-bank state before physical arming; v3.2 register layout is deliberately rejected.
++- Confirm MMIO mapping attributes and TLMM tile/target behavior against the Linux oracle.
++- Exercise TLMM summary delivery and PDC wake edges on phone hardware; QEMU has no SDM845 PDC/TLMM model.
+diff --git a/docs/workbench/k1-host-tests.log b/docs/workbench/k1-host-tests.log
+index 4dd67288..59e793b1 100644
+--- a/docs/workbench/k1-host-tests.log
++++ b/docs/workbench/k1-host-tests.log
+@@ -1,6 +1,8 @@
+ 
+-running 2 tests
++running 4 tests
+ test tests::decodes_sdm845_ranges_and_gic_intids ... ok
++test tests::maps_wake_gpios_without_inventing_unwired_routes ... ok
++test tests::tlmm_gpio_specifiers_select_valid_tile_and_type ... ok
+ test tests::rejects_unusable_trigger_types_and_splits_bank_bit ... ok
+ 
+-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
++test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+diff --git a/docs/workbench/k1-irqchips.dtso b/docs/workbench/k1-irqchips.dtso
+new file mode 100644
+index 00000000..d5389d54
+--- /dev/null
++++ b/docs/workbench/k1-irqchips.dtso
+@@ -0,0 +1,31 @@
++/dts-v1/;
++/plugin/;
++/ {
++    fragment@0 {
++        target-path = "/";
++        __overlay__ {
++            pdc_test: interrupt-controller@b220000 {
++                compatible = "qcom,sdm845-pdc", "qcom,pdc";
++                reg = <0 0x0b220000 0 0x10000>;
++                qcom,pdc-ranges = <100 32 1>;
++                redox,probe-interrupt = <100 2>;
++                #interrupt-cells = <2>;
++                interrupt-parent = <0x8002>;
++                interrupt-controller;
++                redox,irqchip-probe-only;
++                phandle = <0x9000>;
++            };
++            tlmm_test: pinctrl@3400000 {
++                compatible = "qcom,sdm845-pinctrl";
++                reg = <0 0x03400000 0 0xc00000>;
++                interrupts = <0 208 4>;
++                interrupt-controller;
++                #interrupt-cells = <2>;
++                wakeup-parent = <&pdc_test>;
++                redox,probe-interrupt = <125 2>;
++                redox,irqchip-probe-only;
++                phandle = <0x9001>;
++            };
++        };
++    };
++};
+diff --git a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/generic_timer.rs
+index a0075fe9..374ba068 100644
+--- a/src/arch/aarch64/device/generic_timer.rs
++++ b/src/arch/aarch64/device/generic_timer.rs
+@@ -223,7 +223,7 @@ pub(crate) fn handle(hwirq: u32, raw_iar: u32, token: &mut CleanLockToken) -> bo
+         timeout::trigger(token);
+ 
+         if let Ok(irq) = u8::try_from(config.virq) {
+-            irq_trigger(irq, token);
++            irq_trigger(irq.into(), token);
+         }
+     }
+     context::switch::tick(token);
+diff --git a/src/arch/aarch64/device/irqchip/gic.rs b/src/arch/aarch64/device/irqchip/gic.rs
+index a89befc1..2098061b 100644
+--- a/src/arch/aarch64/device/irqchip/gic.rs
++++ b/src/arch/aarch64/device/irqchip/gic.rs
+@@ -221,7 +221,7 @@ impl InterruptController for GenericInterruptController {
+     fn irq_init(
+         &mut self,
+         fdt_opt: Option<&Fdt>,
+-        irq_desc: &mut [IrqDesc; 1024],
++        irq_desc: &mut [IrqDesc; 2048],
+         ic_idx: usize,
+         irq_idx: &mut usize,
+     ) -> Result<()> {
+@@ -248,7 +248,7 @@ impl InterruptController for GenericInterruptController {
+         while i < cnt && (idx + i < 1024) {
+             irq_desc[idx + i].basic.ic_idx = ic_idx;
+             irq_desc[idx + i].basic.ic_irq = i as u32;
+-            irq_desc[idx + i].basic.used = true;
++            irq_desc[idx + i].basic.used = false;
+ 
+             i += 1;
+         }
+@@ -286,7 +286,10 @@ impl InterruptController for GenericInterruptController {
+             IrqCell::L3(1, irq, _flags) => irq as usize + 16, // PPI
+             _ => return Err(Error::new(EINVAL)),
+         };
+-        return Ok(off + self.irq_range.0);
++        if off >= self.gic_dist_if.nirqs as usize {
++            return Err(Error::new(EINVAL));
++        }
++        Ok(off + self.irq_range.0)
+     }
+     fn irq_to_virq(&self, hwirq: u32) -> Option<usize> {
+         let hwirq = hwirq & 0x3ff;
+diff --git a/src/arch/aarch64/device/irqchip/gicv3.rs b/src/arch/aarch64/device/irqchip/gicv3.rs
+index fb435b8e..5cb1a437 100644
+--- a/src/arch/aarch64/device/irqchip/gicv3.rs
++++ b/src/arch/aarch64/device/irqchip/gicv3.rs
+@@ -84,7 +84,7 @@ impl InterruptController for GicV3 {
+     fn irq_init(
+         &mut self,
+         fdt_opt: Option<&Fdt>,
+-        irq_desc: &mut [IrqDesc; 1024],
++        irq_desc: &mut [IrqDesc; 2048],
+         ic_idx: usize,
+         irq_idx: &mut usize,
+     ) -> Result<()> {
+@@ -107,7 +107,7 @@ impl InterruptController for GicV3 {
+         while i < cnt && (idx + i < 1024) {
+             irq_desc[idx + i].basic.ic_idx = ic_idx;
+             irq_desc[idx + i].basic.ic_irq = i as u32;
+-            irq_desc[idx + i].basic.used = true;
++            irq_desc[idx + i].basic.used = false;
+ 
+             i += 1;
+         }
+@@ -144,7 +144,10 @@ impl InterruptController for GicV3 {
+             IrqCell::L3(1, irq, _flags) => irq as usize + 16, // PPI
+             _ => return Err(Error::new(EINVAL)),
+         };
+-        return Ok(off + self.irq_range.0);
++        if off >= self.gic_dist_if.nirqs as usize {
++            return Err(Error::new(EINVAL));
++        }
++        Ok(off + self.irq_range.0)
+     }
+     fn irq_to_virq(&self, hwirq: u32) -> Option<usize> {
+         if hwirq >= self.gic_dist_if.nirqs {
+diff --git a/src/arch/aarch64/device/irqchip/irq_bcm2835.rs b/src/arch/aarch64/device/irqchip/irq_bcm2835.rs
+index ed9a9b2e..0da1c585 100644
+--- a/src/arch/aarch64/device/irqchip/irq_bcm2835.rs
++++ b/src/arch/aarch64/device/irqchip/irq_bcm2835.rs
+@@ -137,7 +137,7 @@ impl InterruptController for Bcm2835ArmInterruptController {
+     fn irq_init(
+         &mut self,
+         fdt_opt: Option<&Fdt>,
+-        irq_desc: &mut [IrqDesc; 1024],
++        irq_desc: &mut [IrqDesc; 2048],
+         ic_idx: usize,
+         irq_idx: &mut usize,
+     ) -> Result<()> {
+diff --git a/src/arch/aarch64/device/irqchip/irq_bcm2836.rs b/src/arch/aarch64/device/irqchip/irq_bcm2836.rs
+index 7fa8c9bf..27e25ae5 100644
+--- a/src/arch/aarch64/device/irqchip/irq_bcm2836.rs
++++ b/src/arch/aarch64/device/irqchip/irq_bcm2836.rs
+@@ -130,7 +130,7 @@ impl InterruptController for Bcm2836ArmInterruptController {
+     fn irq_init(
+         &mut self,
+         fdt_opt: Option<&Fdt>,
+-        irq_desc: &mut [IrqDesc; 1024],
++        irq_desc: &mut [IrqDesc; 2048],
+         ic_idx: usize,
+         irq_idx: &mut usize,
+     ) -> Result<()> {
+diff --git a/src/arch/aarch64/device/irqchip/mod.rs b/src/arch/aarch64/device/irqchip/mod.rs
+index 3980679c..9b309aff 100644
+--- a/src/arch/aarch64/device/irqchip/mod.rs
++++ b/src/arch/aarch64/device/irqchip/mod.rs
+@@ -9,10 +9,17 @@ pub(crate) mod gicv3;
+ mod irq_bcm2835;
+ mod irq_bcm2836;
+ mod null;
++mod pdc;
++mod qcom_irq;
++mod tlmm;
+ 
+ pub(crate) fn new_irqchip(ic_str: &str) -> Option<Box<dyn InterruptController>> {
+     if ic_str.contains("arm,gic-v3") {
+         Some(Box::new(gicv3::GicV3::new()))
++    } else if ic_str.contains("qcom,sdm845-pdc") || ic_str.contains("qcom,pdc") {
++        Some(Box::new(pdc::Pdc::new()))
++    } else if ic_str.contains("qcom,sdm845-pinctrl") {
++        Some(Box::new(tlmm::Tlmm::new()))
+     } else if ic_str.contains("arm,cortex-a15-gic") || ic_str.contains("arm,gic-400") {
+         Some(Box::new(gic::GenericInterruptController::new()))
+     } else if ic_str.contains("brcm,bcm2836-l1-intc") {
+diff --git a/src/arch/aarch64/device/irqchip/null.rs b/src/arch/aarch64/device/irqchip/null.rs
+index b3118367..187edae0 100644
+--- a/src/arch/aarch64/device/irqchip/null.rs
++++ b/src/arch/aarch64/device/irqchip/null.rs
+@@ -22,7 +22,7 @@ impl InterruptController for Null {
+     fn irq_init(
+         &mut self,
+         _fdt_opt: Option<&Fdt>,
+-        _irq_desc: &mut [IrqDesc; 1024],
++        _irq_desc: &mut [IrqDesc; 2048],
+         _ic_idx: usize,
+         _irq_idx: &mut usize,
+     ) -> Result<()> {
+diff --git a/src/arch/aarch64/device/irqchip/pdc.rs b/src/arch/aarch64/device/irqchip/pdc.rs
+new file mode 100644
+index 00000000..a7c32d46
+--- /dev/null
++++ b/src/arch/aarch64/device/irqchip/pdc.rs
+@@ -0,0 +1,186 @@
++// SPDX-License-Identifier: MIT
++//! SDM845 PDC pass-through interrupt domain.
++
++use alloc::vec::Vec;
++use core::ptr::{read_volatile, write_volatile};
++
++use super::{qcom_irq, InterruptController};
++use crate::{
++    dtb::{
++        irqchip::{InterruptHandler, IrqCell, IrqDesc},
++        translate_mmio_address, Fdt,
++    },
++    sync::CleanLockToken,
++};
++use syscall::{Error, Result, EINVAL};
++
++pub struct Pdc {
++    base: usize,
++    ranges: Vec<qcom_irq::PdcRange>,
++    parent_virq_base: usize,
++    probe_only: bool,
++}
++
++impl Pdc {
++    pub fn new() -> Self {
++        Self {
++            base: 0,
++            ranges: Vec::new(),
++            parent_virq_base: 0,
++            probe_only: false,
++        }
++    }
++
++    fn read(&self, offset: usize) -> u32 {
++        unsafe { read_volatile((self.base + offset) as *const u32) }
++    }
++
++    fn write(&self, offset: usize, value: u32) {
++        unsafe { write_volatile((self.base + offset) as *mut u32, value) }
++    }
++
++    fn pin(&self, irq: IrqCell) -> Result<(u32, u32, u32)> {
++        let IrqCell::L2(pin, flags) = irq else {
++            return Err(Error::new(EINVAL));
++        };
++        let spi = qcom_irq::pdc_spi(&self.ranges, pin).ok_or(Error::new(EINVAL))?;
++        let (_, gic_flags) = qcom_irq::pdc_type(flags).ok_or(Error::new(EINVAL))?;
++        Ok((pin, spi, gic_flags))
++    }
++}
++
++impl InterruptHandler for Pdc {
++    fn irq_handler(&mut self, _irq: u32, _token: &mut CleanLockToken) {}
++}
++
++impl InterruptController for Pdc {
++    fn irq_init(
++        &mut self,
++        fdt_opt: Option<&Fdt>,
++        _irq_desc: &mut [IrqDesc; 2048],
++        _ic_idx: usize,
++        _irq_idx: &mut usize,
++    ) -> Result<()> {
++        let fdt = fdt_opt.ok_or(Error::new(EINVAL))?;
++        let node = fdt
++            .all_compatible(&["qcom,sdm845-pdc"])
++            .next()
++            .ok_or(Error::new(EINVAL))?;
++        let reg = node
++            .reg()
++            .and_then(|r| r.iter::<usize, usize>().next())
++            .and_then(|r| r.ok())
++            .ok_or(Error::new(EINVAL))?;
++        if reg.len < 0x10000 {
++            return Err(Error::new(EINVAL));
++        }
++        let phys = translate_mmio_address(fdt, &node, &reg).ok_or(Error::new(EINVAL))?;
++        self.base = crate::PHYS_OFFSET + phys;
++        self.probe_only = node.raw_property("redox,irqchip-probe-only").is_some();
++        let raw = node
++            .raw_property("qcom,pdc-ranges")
++            .ok_or(Error::new(EINVAL))?;
++        self.ranges = qcom_irq::parse_pdc_ranges(raw.value)
++            .ok_or(Error::new(EINVAL))?
++            .collect();
++        if self.ranges.iter().any(|r| {
++            r.count == 0
++                || r.first_pin.checked_add(r.count).is_none_or(|end| end > 256)
++                || r.first_spi.checked_add(r.count).is_none()
++        }) {
++            return Err(Error::new(EINVAL));
++        }
++        let version = if self.probe_only {
++            0
++        } else {
++            self.read(0x1000)
++        };
++        // v3.2 moved the enable bit into IRQ_CFG. Do not write the older
++        // enable banks on an unverified revision.
++        if ((version >> 8) & 0xffff) >= 0x0302 {
++            return Err(Error::new(EINVAL));
++        }
++        info!(
++            "PDC probe: phys={:#x} version={:#x} ranges={}",
++            phys,
++            version,
++            self.ranges.len()
++        );
++        // Firmware state is unknown. Mask every DT-mapped pin before userspace
++        // can request a wake IRQ. SDM845 uses the bank enable layout.
++        for range in &self.ranges {
++            for pin in range.first_pin..range.first_pin + range.count {
++                let (bank, bit) = qcom_irq::pdc_bank_bit(pin).ok_or(Error::new(EINVAL))?;
++                let offset = 0x10 + bank * 4;
++                if !self.probe_only {
++                    self.write(offset, self.read(offset) & !bit);
++                }
++            }
++        }
++        if let Some(range) = self.ranges.first() {
++            info!(
++                "PDC route: pin={} GIC INTID={} virq={}",
++                range.first_pin,
++                range.first_spi + 32,
++                self.parent_virq_base + range.first_spi as usize + 32
++            );
++        }
++        Ok(())
++    }
++
++    fn irq_ack(&mut self) -> u32 {
++        0
++    }
++    fn irq_eoi(&mut self, _irq_num: u32) {}
++    fn irq_enable(&mut self, pin: u32) {
++        if self.probe_only {
++            return;
++        }
++        if qcom_irq::pdc_spi(&self.ranges, pin).is_none() {
++            return;
++        }
++        if let Some((bank, bit)) = qcom_irq::pdc_bank_bit(pin) {
++            let offset = 0x10 + bank * 4;
++            self.write(offset, self.read(offset) | bit);
++        }
++    }
++    fn irq_disable(&mut self, pin: u32) {
++        if self.probe_only {
++            return;
++        }
++        if let Some((bank, bit)) = qcom_irq::pdc_bank_bit(pin) {
++            let offset = 0x10 + bank * 4;
++            self.write(offset, self.read(offset) & !bit);
++        }
++    }
++    fn irq_configure(&mut self, irq_data: IrqCell) -> Result<()> {
++        let (pin, _, _) = self.pin(irq_data)?;
++        if self.probe_only {
++            return Ok(());
++        }
++        let IrqCell::L2(_, flags) = irq_data else {
++            unreachable!()
++        };
++        let (kind, _) = qcom_irq::pdc_type(flags).ok_or(Error::new(EINVAL))?;
++        let offset = 0x110 + pin as usize * 4;
++        self.write(offset, (self.read(offset) & !7) | kind);
++        Ok(())
++    }
++    fn irq_xlate(&self, irq_data: IrqCell) -> Result<usize> {
++        let (_, spi, _) = self.pin(irq_data)?;
++        self.parent_virq_base
++            .checked_add(spi as usize + 32)
++            .ok_or(Error::new(EINVAL))
++    }
++    fn irq_to_virq(&self, pin: u32) -> Option<usize> {
++        let spi = qcom_irq::pdc_spi(&self.ranges, pin)?;
++        self.parent_virq_base.checked_add(spi as usize + 32)
++    }
++    fn irq_parent_spec(&self, irq_data: IrqCell) -> Option<IrqCell> {
++        let (_, spi, flags) = self.pin(irq_data).ok()?;
++        Some(IrqCell::L3(0, spi, flags))
++    }
++    fn irq_set_parent_virq_base(&mut self, base: usize) {
++        self.parent_virq_base = base;
++    }
++}
+diff --git a/src/arch/aarch64/device/irqchip/qcom_irq.rs b/src/arch/aarch64/device/irqchip/qcom_irq.rs
+index 56afd582..1569898f 100644
+--- a/src/arch/aarch64/device/irqchip/qcom_irq.rs
++++ b/src/arch/aarch64/device/irqchip/qcom_irq.rs
+@@ -47,25 +47,170 @@ pub fn pdc_bank_bit(pin: u32) -> Option<(usize, u32)> {
+     (pin < 256).then_some(((pin / 32) as usize, 1 << (pin % 32)))
+ }
+ 
++const TILE_RUNS: &[(u8, u8, usize)] = &[
++    (0, 3, 0x100000),
++    (4, 7, 0x500000),
++    (8, 11, 0x100000),
++    (12, 26, 0x900000),
++    (27, 30, 0x100000),
++    (31, 34, 0x500000),
++    (35, 37, 0x900000),
++    (38, 38, 0x500000),
++    (39, 39, 0x100000),
++    (40, 40, 0x900000),
++    (41, 48, 0x100000),
++    (49, 68, 0x500000),
++    (69, 78, 0x100000),
++    (79, 84, 0x500000),
++    (85, 88, 0x100000),
++    (89, 96, 0x900000),
++    (97, 121, 0x500000),
++    (122, 126, 0x100000),
++    (127, 149, 0x500000),
++];
++
++pub fn tlmm_pin_offset(pin: u32, register: usize) -> Option<usize> {
++    let (_, _, tile) = TILE_RUNS
++        .iter()
++        .find(|(first, last, _)| pin >= *first as u32 && pin <= *last as u32)?;
++    Some(tile + pin as usize * 0x1000 + register)
++}
++
++pub fn tlmm_type_bits(flags: u32) -> Option<u32> {
++    match flags {
++        1 => Some(0b01 << 2), // rising
++        2 => Some(0b10 << 2), // falling
++        3 => Some(0b11 << 2), // both
++        4 => Some(1 << 1),    // high
++        8 => Some(0),         // low
++        _ => None,
++    }
++}
++
++// SDM845 GPIO-to-PDC wiring data, used only for wake-capable GPIOs.
++const TLMM_WAKE_PINS: &[(u8, u8)] = &[
++    (1, 30),
++    (3, 31),
++    (5, 32),
++    (10, 33),
++    (11, 34),
++    (20, 35),
++    (22, 36),
++    (24, 37),
++    (26, 38),
++    (30, 39),
++    (31, 117),
++    (32, 41),
++    (34, 42),
++    (36, 43),
++    (37, 44),
++    (38, 45),
++    (39, 46),
++    (40, 47),
++    (41, 115),
++    (43, 49),
++    (44, 50),
++    (46, 51),
++    (48, 52),
++    (49, 118),
++    (52, 54),
++    (53, 55),
++    (54, 56),
++    (56, 57),
++    (57, 58),
++    (58, 59),
++    (59, 60),
++    (60, 61),
++    (61, 62),
++    (62, 63),
++    (63, 64),
++    (64, 65),
++    (66, 66),
++    (68, 67),
++    (71, 68),
++    (73, 69),
++    (77, 70),
++    (78, 71),
++    (79, 72),
++    (80, 73),
++    (84, 74),
++    (85, 75),
++    (86, 76),
++    (88, 77),
++    (89, 116),
++    (91, 79),
++    (92, 80),
++    (95, 81),
++    (96, 82),
++    (97, 83),
++    (101, 84),
++    (103, 85),
++    (104, 86),
++    (115, 90),
++    (116, 91),
++    (117, 92),
++    (118, 93),
++    (119, 94),
++    (120, 95),
++    (121, 96),
++    (122, 97),
++    (123, 98),
++    (124, 99),
++    (125, 100),
++    (127, 102),
++    (128, 103),
++    (129, 104),
++    (130, 105),
++    (132, 106),
++    (133, 107),
++    (145, 108),
++];
++
++pub fn tlmm_wake_pin(gpio: u32) -> Option<u32> {
++    TLMM_WAKE_PINS
++        .iter()
++        .find(|(g, _)| u32::from(*g) == gpio)
++        .map(|(_, p)| u32::from(*p))
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+ 
+     const SDM845: [PdcRange; 3] = [
+-        PdcRange { first_pin: 0, first_spi: 480, count: 94 },
+-        PdcRange { first_pin: 94, first_spi: 609, count: 15 },
+-        PdcRange { first_pin: 115, first_spi: 630, count: 7 },
++        PdcRange {
++            first_pin: 0,
++            first_spi: 480,
++            count: 94,
++        },
++        PdcRange {
++            first_pin: 94,
++            first_spi: 609,
++            count: 15,
++        },
++        PdcRange {
++            first_pin: 115,
++            first_spi: 630,
++            count: 7,
++        },
+     ];
+ 
+     #[test]
+     fn decodes_sdm845_ranges_and_gic_intids() {
+         let raw: [u8; 36] = [
+-            0,0,0,0, 0,0,1,224, 0,0,0,94,
+-            0,0,0,94, 0,0,2,97, 0,0,0,15,
+-            0,0,0,115, 0,0,2,118, 0,0,0,7,
++            0, 0, 0, 0, 0, 0, 1, 224, 0, 0, 0, 94, 0, 0, 0, 94, 0, 0, 2, 97, 0, 0, 0, 15, 0, 0, 0,
++            115, 0, 0, 2, 118, 0, 0, 0, 7,
+         ];
+         assert_eq!(parse_pdc_ranges(&raw).unwrap().collect::<Vec<_>>(), SDM845);
+-        for (pin, intid) in [(0,512), (93,605), (94,641), (108,655), (115,662), (121,668), (100,647)] {
++        for (pin, intid) in [
++            (0, 512),
++            (93, 605),
++            (94, 641),
++            (108, 655),
++            (115, 662),
++            (121, 668),
++            (100, 647),
++        ] {
+             assert_eq!(pdc_spi(&SDM845, pin).unwrap() + 32, intid);
+         }
+         for pin in 109..=114 {
+@@ -84,4 +229,25 @@ mod tests {
+         assert_eq!(pdc_bank_bit(100), Some((3, 1 << 4)));
+         assert_eq!(pdc_bank_bit(256), None);
+     }
++    #[test]
++    fn tlmm_gpio_specifiers_select_valid_tile_and_type() {
++        assert_eq!(tlmm_pin_offset(0, 8), Some(0x100008));
++        assert_eq!(tlmm_pin_offset(125, 8), Some(0x100000 + 125 * 0x1000 + 8));
++        assert_eq!(
++            tlmm_pin_offset(149, 0xc),
++            Some(0x500000 + 149 * 0x1000 + 0xc)
++        );
++        assert_eq!(tlmm_pin_offset(150, 8), None);
++        assert_eq!(tlmm_type_bits(2), Some(0b10 << 2));
++        assert_eq!(tlmm_type_bits(8), Some(0));
++        assert_eq!(tlmm_type_bits(0), None);
++    }
++    #[test]
++    fn maps_wake_gpios_without_inventing_unwired_routes() {
++        assert_eq!(tlmm_wake_pin(125), Some(100));
++        assert_eq!(tlmm_wake_pin(124), Some(99));
++        assert_eq!(tlmm_wake_pin(63), Some(64));
++        assert_eq!(tlmm_wake_pin(126), None);
++        assert_eq!(tlmm_wake_pin(150), None);
++    }
+ }
+diff --git a/src/arch/aarch64/device/irqchip/tlmm.rs b/src/arch/aarch64/device/irqchip/tlmm.rs
+new file mode 100644
+index 00000000..6d357630
+--- /dev/null
++++ b/src/arch/aarch64/device/irqchip/tlmm.rs
+@@ -0,0 +1,162 @@
++// SPDX-License-Identifier: MIT
++//! SDM845 TLMM GPIO interrupt domain (normal, non-wake summary path).
++
++use core::ptr::{read_volatile, write_volatile};
++
++use super::{qcom_irq, InterruptController};
++use crate::{
++    dtb::{
++        irqchip::{InterruptHandler, IrqCell, IrqDesc},
++        translate_mmio_address, Fdt,
++    },
++    scheme::irq::irq_trigger,
++    sync::CleanLockToken,
++};
++use syscall::{Error, Result, EINVAL};
++
++const GPIO_COUNT: usize = 150;
++// The 150 GPIO interrupt registers are split across three 4 MiB tiles.
++// These run boundaries are hardware facts from SDM845 pin group definitions.
++pub struct Tlmm {
++    base: usize,
++    virq_base: usize,
++    enabled: [bool; GPIO_COUNT],
++    probe_only: bool,
++}
++
++impl Tlmm {
++    pub fn new() -> Self {
++        Self {
++            base: 0,
++            virq_base: 0,
++            enabled: [false; GPIO_COUNT],
++            probe_only: false,
++        }
++    }
++    fn read(&self, offset: usize) -> u32 {
++        unsafe { read_volatile((self.base + offset) as *const u32) }
++    }
++    fn write(&self, offset: usize, value: u32) {
++        unsafe { write_volatile((self.base + offset) as *mut u32, value) }
++    }
++}
++
++impl InterruptHandler for Tlmm {
++    fn irq_handler(&mut self, _summary_virq: u32, token: &mut CleanLockToken) {
++        if self.probe_only {
++            return;
++        }
++        for pin in 0..GPIO_COUNT {
++            if !self.enabled[pin] {
++                continue;
++            }
++            let status = qcom_irq::tlmm_pin_offset(pin as u32, 0xc).unwrap();
++            if self.read(status) & 1 != 0 {
++                self.write(status, 1);
++                irq_trigger((self.virq_base + pin) as u16, token);
++            }
++        }
++    }
++}
++
++impl InterruptController for Tlmm {
++    fn irq_init(
++        &mut self,
++        fdt_opt: Option<&Fdt>,
++        irq_desc: &mut [IrqDesc; 2048],
++        ic_idx: usize,
++        irq_idx: &mut usize,
++    ) -> Result<()> {
++        let fdt = fdt_opt.ok_or(Error::new(EINVAL))?;
++        let node = fdt
++            .all_compatible(&["qcom,sdm845-pinctrl"])
++            .next()
++            .ok_or(Error::new(EINVAL))?;
++        let reg = node
++            .reg()
++            .and_then(|r| r.iter::<usize, usize>().next())
++            .and_then(|r| r.ok())
++            .ok_or(Error::new(EINVAL))?;
++        if reg.len < 0xc00000 || *irq_idx + GPIO_COUNT > irq_desc.len() {
++            return Err(Error::new(EINVAL));
++        }
++        let phys = translate_mmio_address(fdt, &node, &reg).ok_or(Error::new(EINVAL))?;
++        self.base = crate::PHYS_OFFSET + phys;
++        self.probe_only = node.raw_property("redox,irqchip-probe-only").is_some();
++        self.virq_base = *irq_idx;
++        for pin in 0..GPIO_COUNT {
++            irq_desc[*irq_idx + pin].basic.ic_idx = ic_idx;
++            irq_desc[*irq_idx + pin].basic.ic_irq = pin as u32;
++        }
++        *irq_idx += GPIO_COUNT;
++        info!(
++            "TLMM probe: phys={:#x} GPIOs={} virqs={}..{}",
++            phys, GPIO_COUNT, self.virq_base, *irq_idx
++        );
++        Ok(())
++    }
++    fn irq_ack(&mut self) -> u32 {
++        0
++    }
++    fn irq_eoi(&mut self, pin: u32) {
++        if self.probe_only {
++            return;
++        }
++        if let Some(offset) = qcom_irq::tlmm_pin_offset(pin, 0xc) {
++            self.write(offset, 1);
++        }
++    }
++    fn irq_enable(&mut self, pin: u32) {
++        if self.probe_only {
++            return;
++        }
++        let Some(offset) = qcom_irq::tlmm_pin_offset(pin, 8) else {
++            return;
++        };
++        self.enabled[pin as usize] = true;
++        self.write(offset, self.read(offset) | (3 << 5) | (1 << 4) | 1);
++    }
++    fn irq_disable(&mut self, pin: u32) {
++        if self.probe_only {
++            return;
++        }
++        let Some(offset) = qcom_irq::tlmm_pin_offset(pin, 8) else {
++            return;
++        };
++        self.enabled[pin as usize] = false;
++        self.write(offset, self.read(offset) & !1);
++    }
++    fn irq_configure(&mut self, irq_data: IrqCell) -> Result<()> {
++        let IrqCell::L2(pin, flags) = irq_data else {
++            return Err(Error::new(EINVAL));
++        };
++        let offset = qcom_irq::tlmm_pin_offset(pin, 8).ok_or(Error::new(EINVAL))?;
++        let bits = qcom_irq::tlmm_type_bits(flags).ok_or(Error::new(EINVAL))?;
++        if self.probe_only {
++            return Ok(());
++        }
++        self.write(offset, (self.read(offset) & !(0b111 << 1)) | bits);
++        Ok(())
++    }
++    fn irq_xlate(&self, irq_data: IrqCell) -> Result<usize> {
++        let IrqCell::L2(pin, flags) = irq_data else {
++            return Err(Error::new(EINVAL));
++        };
++        qcom_irq::tlmm_pin_offset(pin, 8)
++            .filter(|_| qcom_irq::tlmm_type_bits(flags).is_some())
++            .ok_or(Error::new(EINVAL))?;
++        Ok(self.virq_base + pin as usize)
++    }
++    fn irq_to_virq(&self, pin: u32) -> Option<usize> {
++        qcom_irq::tlmm_pin_offset(pin, 8).map(|_| self.virq_base + pin as usize)
++    }
++    fn irq_handler_eois_root(&self) -> bool {
++        true
++    }
++    fn irq_wakeup_spec(&self, irq_data: IrqCell) -> Option<IrqCell> {
++        let IrqCell::L2(gpio, flags) = irq_data else {
++            return None;
++        };
++        qcom_irq::tlmm_wake_pin(gpio).map(|pin| IrqCell::L2(pin, flags))
++    }
++}
+diff --git a/src/arch/aarch64/interrupt/irq.rs b/src/arch/aarch64/interrupt/irq.rs
+index adc5b550..41c67e8f 100644
+--- a/src/arch/aarch64/interrupt/irq.rs
++++ b/src/arch/aarch64/interrupt/irq.rs
+@@ -21,9 +21,13 @@ unsafe fn dispatch() {
+     }
+ 
+     if let Some(virq) = virq
+-        && virq < 1024
++        && virq < 2048
+     {
++        let child_eois_root = unsafe { IRQ_CHIP.child_eois_root(virq) };
+         unsafe { IRQ_CHIP.trigger_virq(virq as u32, &mut token) };
++        if child_eois_root {
++            irqchip::end_root(raw_iar);
++        }
+     } else {
+         println!("unexpected irq num {}", hwirq);
+         // IDs 1020..1023 are special/spurious GIC values and must not be
+diff --git a/src/arch/riscv64/device/irqchip/hlic.rs b/src/arch/riscv64/device/irqchip/hlic.rs
+index cc00c632..d1905b7e 100644
+--- a/src/arch/riscv64/device/irqchip/hlic.rs
++++ b/src/arch/riscv64/device/irqchip/hlic.rs
+@@ -101,7 +101,7 @@ impl InterruptController for Hlic {
+     fn irq_init(
+         &mut self,
+         fdt_opt: Option<&Fdt>,
+-        irq_desc: &mut [IrqDesc; 1024],
++        irq_desc: &mut [IrqDesc; 2048],
+         ic_idx: usize,
+         irq_idx: &mut usize,
+     ) -> syscall::Result<()> {
+diff --git a/src/arch/riscv64/device/irqchip/plic.rs b/src/arch/riscv64/device/irqchip/plic.rs
+index bb8f9b78..2795d973 100644
+--- a/src/arch/riscv64/device/irqchip/plic.rs
++++ b/src/arch/riscv64/device/irqchip/plic.rs
+@@ -113,7 +113,7 @@ impl InterruptController for Plic {
+     fn irq_init(
+         &mut self,
+         fdt_opt: Option<&Fdt>,
+-        irq_desc: &mut [IrqDesc; 1024],
++        irq_desc: &mut [IrqDesc; 2048],
+         ic_idx: usize,
+         irq_idx: &mut usize,
+     ) -> syscall::Result<()> {
+diff --git a/src/arch/x86_shared/interrupt/irq.rs b/src/arch/x86_shared/interrupt/irq.rs
+index a0b376bc..f06885c7 100644
+--- a/src/arch/x86_shared/interrupt/irq.rs
++++ b/src/arch/x86_shared/interrupt/irq.rs
+@@ -78,7 +78,7 @@ unsafe fn trigger(irq: u8) {
+             IrqMethod::Apic => ioapic_mask(irq),
+         }
+         let mut token = CleanLockToken::new();
+-        irq_trigger(irq, &mut token);
++        irq_trigger(irq.into(), &mut token);
+     }
+ }
+ 
+@@ -326,7 +326,7 @@ interrupt_error!(generic_irq, |_stack, code| {
+     // The reason why 128 is subtracted and added from the code, is that PUSH imm8 sign-extends the
+     // value, and the longer PUSH imm32 would make the generic_interrupts table twice as large
+     // (containing lots of useless NOPs).
+-    irq_trigger((code as i32).wrapping_add(128) as u8, &mut token);
++    irq_trigger((code as i32).wrapping_add(128) as u8 as u16, &mut token);
+ 
+     unsafe { lapic_eoi() };
+ });
+diff --git a/src/dtb/irqchip.rs b/src/dtb/irqchip.rs
+index 722618f2..3b40bd0b 100644
+--- a/src/dtb/irqchip.rs
++++ b/src/dtb/irqchip.rs
+@@ -158,7 +158,7 @@ pub trait InterruptController: InterruptHandler {
+     fn irq_init(
+         &mut self,
+         fdt_opt: Option<&Fdt>,
+-        irq_desc: &mut [IrqDesc; 1024],
++        irq_desc: &mut [IrqDesc; 2048],
+         ic_idx: usize,
+         irq_idx: &mut usize,
+     ) -> Result<()>;
+@@ -175,6 +175,18 @@ pub trait InterruptController: InterruptHandler {
+     }
+     fn irq_xlate(&self, irq_data: IrqCell) -> Result<usize>;
+     fn irq_to_virq(&self, hwirq: u32) -> Option<usize>;
++    /// Hierarchical domains can alias a parent virq and program their own
++    /// hardware on enable. The parent specifier is configured separately.
++    fn irq_parent_spec(&self, _irq_data: IrqCell) -> Option<IrqCell> {
++        None
++    }
++    fn irq_set_parent_virq_base(&mut self, _base: usize) {}
++    fn irq_handler_eois_root(&self) -> bool {
++        false
++    }
++    fn irq_wakeup_spec(&self, _irq_data: IrqCell) -> Option<IrqCell> {
++        None
++    }
+ }
+ 
+ pub struct IrqConnection {
+@@ -200,6 +212,7 @@ pub struct IrqDescItem {
+     pub child_ic_idx: Option<usize>, //ic idx in irq chip list
+     pub ic_irq: u32,                 //hwirq in ic
+     pub used: bool,
++    pub route: Option<(usize, u32)>,
+ }
+ 
+ pub struct IrqDesc {
+@@ -260,6 +273,31 @@ impl IrqChipList {
+                         parent_interrupt: gate_interrupt_address(parent_interrupt),
+                     });
+                 }
++                // A hierarchical domain such as PDC has an interrupt-parent
++                // but no single summary interrupt of its own.
++                if item.parents.is_empty()
++                    && let Some(parent_phandle) = node
++                        .raw_property("interrupt-parent")
++                        .and_then(|p| p.as_value::<u32>().ok())
++                        .map(PHandle::new)
++                {
++                    item.parents.push(IrqConnection {
++                        parent_phandle,
++                        parent: 0,
++                        parent_interrupt: None,
++                    });
++                }
++                if let Some(wakeup_parent) = node
++                    .raw_property("wakeup-parent")
++                    .and_then(|p| p.as_value::<u32>().ok())
++                    .map(PHandle::new)
++                {
++                    item.parents.push(IrqConnection {
++                        parent_phandle: wakeup_parent,
++                        parent: 0,
++                        parent_interrupt: None,
++                    });
++                }
+ 
+                 self.chips.push(item);
+             }
+@@ -304,23 +342,38 @@ impl IrqChipList {
+     fn init_inner3(
+         &mut self,
+         fdt_opt: Option<&Fdt>,
+-        irq_desc: &mut [IrqDesc; 1024],
++        irq_desc: &mut [IrqDesc; 2048],
+         mut queue: Vec<usize>,
+     ) {
+         //run init
+         let mut irq_idx: usize = 0;
+         let mut queue_idx = 0;
++        let mut deferred = 0;
+         while queue_idx < queue.len() {
+             let cur_idx = queue[queue_idx];
++            if self.chips[cur_idx]
++                .parents
++                .iter()
++                .any(|conn| !queue[..queue_idx].contains(&conn.parent))
++            {
++                deferred += 1;
++                assert!(deferred <= self.chips.len(), "IRQ chip parent cycle");
++                queue.push(cur_idx);
++                queue_idx += 1;
++                continue;
++            }
++            deferred = 0;
++            if let Some(connection) = self.chips[cur_idx].parents.first() {
++                let parent = &self.chips[connection.parent];
++                if let Ok(first_spi) = parent.ic.irq_xlate(IrqCell::L3(0, 0, 4)) {
++                    self.chips[cur_idx]
++                        .ic
++                        .irq_set_parent_virq_base(first_spi - 32);
++                }
++            }
+             let cur_chip = &mut self.chips[cur_idx];
+             for child in &cur_chip.children {
+-                if let Some(child_pos) = queue.iter().position(|x| *child == *x) {
+-                    assert!(
+-                        child_pos > queue_idx,
+-                        "IRQ chip tree has a cycle with phandle {} in it",
+-                        cur_chip.phandle.as_u32(),
+-                    );
+-                } else {
++                if !queue.contains(child) {
+                     queue.push(*child);
+                 }
+             }
+@@ -329,21 +382,35 @@ impl IrqChipList {
+                 .irq_init(fdt_opt, irq_desc, cur_idx, &mut irq_idx)
+                 .expect("Failed to initialize irq chip");
+ 
+-            let cur_chip = &self.chips[cur_idx];
+-            for connection in &cur_chip.parents {
+-                debug_assert!(queue[0..queue_idx].contains(&connection.parent));
+-                if let Some(parent_interrupt) = connection.parent_interrupt {
+-                    let parent = &self.chips[connection.parent];
+-                    match parent.ic.irq_xlate(parent_interrupt) {
++            let cur_phandle = self.chips[cur_idx].phandle;
++            let connections: Vec<_> = self.chips[cur_idx]
++                .parents
++                .iter()
++                .map(|c| (c.parent, c.parent_interrupt))
++                .collect();
++            for (parent_idx, parent_interrupt) in connections {
++                debug_assert!(queue[0..queue_idx].contains(&parent_idx));
++                if let Some(parent_interrupt) = parent_interrupt {
++                    let parent_phandle = self.chips[parent_idx].phandle;
++                    match self.chips[parent_idx].ic.irq_xlate(parent_interrupt) {
+                         Ok(virq) => {
+                             // assert is unused
+                             irq_desc[virq].basic.child_ic_idx = Some(cur_idx);
++                            irq_desc[virq].basic.used = true;
++                            // A summary interrupt is held by the parent GIC.
++                            self.chips[parent_idx]
++                                .ic
++                                .irq_configure(parent_interrupt)
++                                .expect("invalid interrupt controller summary trigger");
++                            self.chips[parent_idx]
++                                .ic
++                                .irq_enable(irq_desc[virq].basic.ic_irq);
+                         }
+                         _ => {
+                             error!(
+                                 "Cannot connect irq chip {} to parent irq {} : {:?}",
+-                                cur_chip.phandle.as_u32(),
+-                                parent.phandle.as_u32(),
++                                cur_phandle.as_u32(),
++                                parent_phandle.as_u32(),
+                                 parent_interrupt,
+                             );
+                         }
+@@ -359,7 +426,7 @@ impl IrqChipList {
+ pub struct IrqChipCore {
+     //TODO: support multi level interrupt constrollers
+     pub irq_chip_list: IrqChipList,
+-    pub irq_desc: [IrqDesc; 1024],
++    pub irq_desc: [IrqDesc; 2048],
+ }
+ 
+ impl IrqChipCore {
+@@ -375,6 +442,9 @@ impl IrqChipCore {
+         let irq_desc = &self.irq_desc[virq as usize];
+         let ic_idx = irq_desc.basic.ic_idx;
+         let hwirq = irq_desc.basic.ic_irq;
++        if let Some((route_idx, route_irq)) = irq_desc.basic.route {
++            self.irq_chip_list.chips[route_idx].ic.irq_enable(route_irq);
++        }
+ 
+         self.irq_chip_list.chips[ic_idx].ic.irq_enable(hwirq)
+     }
+@@ -384,6 +454,11 @@ impl IrqChipCore {
+         let irq_desc = &self.irq_desc[virq as usize];
+         let ic_idx = irq_desc.basic.ic_idx;
+         let hwirq = irq_desc.basic.ic_irq;
++        if let Some((route_idx, route_irq)) = irq_desc.basic.route {
++            self.irq_chip_list.chips[route_idx]
++                .ic
++                .irq_disable(route_irq);
++        }
+ 
+         self.irq_chip_list.chips[ic_idx].ic.irq_disable(hwirq)
+     }
+@@ -400,11 +475,102 @@ impl IrqChipCore {
+             3 => IrqCell::L3(irq_data[0], irq_data[1], irq_data[2]),
+             _ => return Err(Error::new(EINVAL)),
+         };
+-        self.irq_chip_list.chips[ic_idx].ic.irq_xlate(irq_data)
++        let chip = &self.irq_chip_list.chips[ic_idx];
++        if let Some(wake_spec) = chip.ic.irq_wakeup_spec(irq_data) {
++            let wake_parent = chip
++                .parents
++                .iter()
++                .find(|connection| connection.parent_interrupt.is_none())
++                .ok_or(Error::new(EINVAL))?;
++            return self.irq_chip_list.chips[wake_parent.parent]
++                .ic
++                .irq_xlate(wake_spec);
++        }
++        chip.ic.irq_xlate(irq_data)
++    }
++
++    pub fn irq_configure_route(&mut self, ic_idx: usize, data: &[u32]) -> Result<usize> {
++        let irq_data = match data {
++            [a] => IrqCell::L1(*a),
++            [a, b] => IrqCell::L2(*a, *b),
++            [a, b, c] => IrqCell::L3(*a, *b, *c),
++            _ => return Err(Error::new(EINVAL)),
++        };
++        let virq = self.irq_xlate(ic_idx, data)?;
++        if virq >= self.irq_desc.len() {
++            return Err(Error::new(EINVAL));
++        }
++        if let Some(wake_spec) = self.irq_chip_list.chips[ic_idx]
++            .ic
++            .irq_wakeup_spec(irq_data)
++        {
++            let wake_idx = self.irq_chip_list.chips[ic_idx]
++                .parents
++                .iter()
++                .find(|connection| connection.parent_interrupt.is_none())
++                .ok_or(Error::new(EINVAL))?
++                .parent;
++            let gic_idx = self.irq_chip_list.chips[wake_idx]
++                .parents
++                .first()
++                .ok_or(Error::new(EINVAL))?
++                .parent;
++            let gic_spec = self.irq_chip_list.chips[wake_idx]
++                .ic
++                .irq_parent_spec(wake_spec)
++                .ok_or(Error::new(EINVAL))?;
++            if self.irq_chip_list.chips[gic_idx].ic.irq_xlate(gic_spec)? != virq {
++                return Err(Error::new(EINVAL));
++            }
++            self.irq_chip_list.chips[gic_idx]
++                .ic
++                .irq_configure(gic_spec)?;
++            self.irq_chip_list.chips[wake_idx]
++                .ic
++                .irq_configure(wake_spec)?;
++            let IrqCell::L2(pin, _) = wake_spec else {
++                return Err(Error::new(EINVAL));
++            };
++            self.irq_desc[virq].basic.route = Some((wake_idx, pin));
++            return Ok(virq);
++        }
++        if let Some(parent_spec) = self.irq_chip_list.chips[ic_idx]
++            .ic
++            .irq_parent_spec(irq_data)
++        {
++            let parent_idx = self.irq_chip_list.chips[ic_idx]
++                .parents
++                .first()
++                .ok_or(Error::new(EINVAL))?
++                .parent;
++            if self.irq_chip_list.chips[parent_idx]
++                .ic
++                .irq_xlate(parent_spec)?
++                != virq
++            {
++                return Err(Error::new(EINVAL));
++            }
++            self.irq_chip_list.chips[parent_idx]
++                .ic
++                .irq_configure(parent_spec)?;
++            self.irq_chip_list.chips[ic_idx]
++                .ic
++                .irq_configure(irq_data)?;
++            let pin = match irq_data {
++                IrqCell::L2(pin, _) => pin,
++                _ => return Err(Error::new(EINVAL)),
++            };
++            self.irq_desc[virq].basic.route = Some((ic_idx, pin));
++        } else {
++            self.irq_chip_list.chips[ic_idx]
++                .ic
++                .irq_configure(irq_data)?;
++        }
++        Ok(virq)
+     }
+ 
+     pub fn trigger_virq(&mut self, virq: u32, token: &mut CleanLockToken) {
+-        if virq < 1024 {
++        if virq < 2048 {
+             let desc = &mut self.irq_desc[virq as usize];
+             match &mut desc.handler {
+                 Some(handler) => {
+@@ -414,13 +580,20 @@ impl IrqChipCore {
+                     if let Some(ic_idx) = desc.basic.child_ic_idx {
+                         self.irq_chip_list.chips[ic_idx].ic.irq_handler(virq, token);
+                     } else {
+-                        irq_trigger(virq as u8, token);
++                        irq_trigger(virq as u16, token);
+                     }
+                 }
+             }
+         }
+     }
+ 
++    pub fn child_eois_root(&self, virq: usize) -> bool {
++        self.irq_desc[virq]
++            .basic
++            .child_ic_idx
++            .is_some_and(|idx| self.irq_chip_list.chips[idx].ic.irq_handler_eois_root())
++    }
++
+     pub fn init(&mut self, fdt_opt: Option<&Fdt>) {
+         for (i, desc) in self.irq_desc.iter_mut().enumerate() {
+             desc.basic.idx = i;
+@@ -431,6 +604,40 @@ impl IrqChipCore {
+         let roots = self.irq_chip_list.init_inner2();
+         self.irq_chip_list
+             .init_inner3(fdt_opt, &mut self.irq_desc, roots);
++        if let Some(fdt) = fdt_opt {
++            for (_, node) in fdt.all_nodes() {
++                let Some(probe) = node.raw_property("redox,probe-interrupt") else {
++                    continue;
++                };
++                let Some(phandle) = node.property::<PHandle>() else {
++                    continue;
++                };
++                let Some(ic_idx) = self.phandle_to_ic_idx(phandle) else {
++                    continue;
++                };
++                if let Some(IrqCell::L2(pin, flags)) = irq_cell(probe.value) {
++                    match self.irq_xlate(ic_idx, &[pin, flags]) {
++                        Ok(virq) => {
++                            info!(
++                                "IRQ probe route: controller={} pin={} flags={} virq={}",
++                                node.name(),
++                                pin,
++                                flags,
++                                virq
++                            );
++                        }
++                        Err(err) => {
++                            error!(
++                                "IRQ probe route failed: controller={} pin={} {:?}",
++                                node.name(),
++                                pin,
++                                err
++                            );
++                        }
++                    }
++                }
++            }
++        }
+     }
+ 
+     pub fn phandle_to_ic_idx(&self, phandle: PHandle) -> Option<usize> {
+@@ -465,12 +672,13 @@ const INIT_IRQ_DESC: IrqDesc = IrqDesc {
+         ic_irq: 0,
+         child_ic_idx: None,
+         used: false,
++        route: None,
+     },
+     handler: INIT_HANDLER,
+ };
+ pub static mut IRQ_CHIP: IrqChipCore = IrqChipCore {
+     irq_chip_list: IrqChipList { chips: Vec::new() },
+-    irq_desc: [INIT_IRQ_DESC; 1024],
++    irq_desc: [INIT_IRQ_DESC; 2048],
+ };
+ 
+ pub fn init(fdt: &Fdt) {
+@@ -481,8 +689,8 @@ pub fn init(fdt: &Fdt) {
+ }
+ 
+ pub fn register_irq(virq: u32, handler: Box<dyn InterruptHandler>) {
+-    if virq >= 1024 {
+-        error!("irq {} exceed 1024!!!", virq);
++    if virq >= 2048 {
++        error!("irq {} exceed 2048!!!", virq);
+         return;
+     }
+ 
+@@ -497,18 +705,22 @@ pub fn register_irq(virq: u32, handler: Box<dyn InterruptHandler>) {
+ }
+ 
+ #[inline]
+-pub fn is_reserved(_cpu_id: LogicalCpuId, index: u8) -> bool {
+-    unsafe { IRQ_CHIP.irq_desc[index as usize].basic.used }
++pub fn is_reserved(_cpu_id: LogicalCpuId, index: u16) -> bool {
++    unsafe {
++        let desc = &IRQ_CHIP.irq_desc[index as usize];
++        desc.basic.used || desc.handler.is_some()
++    }
+ }
+ 
+ #[inline]
+-pub fn set_reserved(_cpu_id: LogicalCpuId, index: u8, reserved: bool) {
++pub fn set_reserved(_cpu_id: LogicalCpuId, index: u16, reserved: bool) {
+     unsafe {
+         IRQ_CHIP.irq_desc[index as usize].basic.used = reserved;
+         if reserved {
+             IRQ_CHIP.irq_enable(index as u32);
+         } else {
+             IRQ_CHIP.irq_disable(index as u32);
++            IRQ_CHIP.irq_desc[index as usize].basic.route = None;
+         }
+     }
+ }
+diff --git a/src/scheme/irq.rs b/src/scheme/irq.rs
+index 10abe0b8..20006b8f 100644
+--- a/src/scheme/irq.rs
++++ b/src/scheme/irq.rs
+@@ -38,12 +38,16 @@ use crate::{
+ 
+ ///
+ /// IRQ queues
+-pub(super) static COUNTS: Mutex<[usize; 224]> = Mutex::new([0; 224]);
++#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
++const IRQ_QUEUE_LEN: usize = 224;
++#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
++const IRQ_QUEUE_LEN: usize = 2048;
++pub(super) static COUNTS: Mutex<[usize; IRQ_QUEUE_LEN]> = Mutex::new([0; IRQ_QUEUE_LEN]);
+ static HANDLES: RwLock<L1, HandleMap<Handle>> = RwLock::new(HandleMap::new());
+ 
+ /// These are IRQs 0..=15 (corresponding to interrupt vectors 32..=47). They are opened without the
+ /// O_CREAT flag.
+-const BASE_IRQ_COUNT: u8 = 16;
++const BASE_IRQ_COUNT: u16 = 16;
+ 
+ /// These are the extended IRQs, 16..=223 (interrupt vectors 48..=255). Some of them are reserved
+ /// for other devices, and some other interrupt vectors like 0x80 (software interrupts) and
+@@ -51,7 +55,10 @@ const BASE_IRQ_COUNT: u8 = 16;
+ ///
+ /// Since these are non-sharable, they must be opened with O_CREAT, which then reserves them. They
+ /// are only freed when the file descriptor is closed.
+-const TOTAL_IRQ_COUNT: u8 = 224;
++#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
++const TOTAL_IRQ_COUNT: u16 = 224;
++#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
++const TOTAL_IRQ_COUNT: u16 = 2048;
+ 
+ const INO_TOPLEVEL: u64 = 0x8002_0000_0000_0000;
+ const INO_AVAIL: u64 = 0x8000_0000_0000_0000;
+@@ -59,7 +66,10 @@ const INO_BSP: u64 = 0x8001_0000_0000_0000;
+ const INO_PHANDLE: u64 = 0x8003_0000_0000_0000;
+ 
+ /// Add to the input queue
+-pub fn irq_trigger(irq: u8, token: &mut CleanLockToken) {
++pub fn irq_trigger(irq: u16, token: &mut CleanLockToken) {
++    if usize::from(irq) >= IRQ_QUEUE_LEN {
++        return;
++    }
+     COUNTS.lock()[irq as usize] += 1;
+     let fds: SmallVec<[usize; 8]> = {
+         HANDLES
+@@ -81,7 +91,7 @@ enum Handle {
+     SchemeRoot,
+     Irq {
+         ack: AtomicUsize,
+-        irq: u8,
++        irq: u16,
+         reservation: Option<IrqReservation>,
+     },
+     Avail(LogicalCpuId),
+@@ -93,11 +103,11 @@ enum Handle {
+ #[derive(Clone, Copy)]
+ struct IrqReservation {
+     cpu_id: LogicalCpuId,
+-    index: u8,
++    index: u16,
+ }
+ 
+ impl Handle {
+-    fn as_irq_handle(&self) -> Option<(&AtomicUsize, u8)> {
++    fn as_irq_handle(&self) -> Option<(&AtomicUsize, u16)> {
+         match self {
+             &Self::Irq { ref ack, irq, .. } => Some((ack, irq)),
+             _ => None,
+@@ -141,7 +151,7 @@ impl IrqScheme {
+         cpu_id: LogicalCpuId,
+         path_str: &str,
+     ) -> Result<(Handle, InternalFlags)> {
+-        let irq_number = u8::from_str(path_str).or(Err(Error::new(ENOENT)))?;
++        let irq_number = u16::from_str(path_str).or(Err(Error::new(ENOENT)))?;
+ 
+         Ok(
+             if irq_number < BASE_IRQ_COUNT && cpu_id == LogicalCpuId::BSP {
+@@ -164,12 +174,15 @@ impl IrqScheme {
+                 let reservation = if flags & O_STAT == 0 {
+                     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                     {
+-                        let index = irq_to_vector(irq_number);
++                        let index = irq_to_vector(irq_number as u8);
+                         if is_reserved(cpu_id, index) {
+                             return Err(Error::new(EEXIST));
+                         }
+                         set_reserved(cpu_id, index, true);
+-                        Some(IrqReservation { cpu_id, index })
++                        Some(IrqReservation {
++                            cpu_id,
++                            index: index.into(),
++                        })
+                     }
+                     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+                     None
+@@ -211,7 +224,7 @@ impl IrqScheme {
+                 let irq_number = IRQ_CHIP
+                     .irq_xlate(ic_idx, addr.as_slice())
+                     .or(Err(Error::new(ENOENT)))?;
+-                let irq_number = u8::try_from(irq_number).or(Err(Error::new(ENOENT)))?;
++                let irq_number = u16::try_from(irq_number).or(Err(Error::new(ENOENT)))?;
+                 if irq_number >= TOTAL_IRQ_COUNT {
+                     return Err(Error::new(ENOENT));
+                 }
+@@ -221,6 +234,7 @@ impl IrqScheme {
+                     if is_reserved(cpu_id, irq_number) {
+                         return Err(Error::new(EEXIST));
+                     }
++                    IRQ_CHIP.irq_configure_route(ic_idx, addr.as_slice())?;
+                     set_reserved(cpu_id, irq_number, true);
+                     Some(IrqReservation {
+                         cpu_id,
+@@ -246,8 +260,8 @@ impl IrqScheme {
+ const fn irq_to_vector(irq: u8) -> u8 {
+     irq + 32
+ }
+-const fn vector_to_irq(vector: u8) -> u8 {
+-    vector - 32
++const fn vector_to_irq(vector: u8) -> u16 {
++    (vector - 32) as u16
+ }
+ 
+ impl crate::scheme::KernelScheme for IrqScheme {
+@@ -343,7 +357,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
+             }
+             #[cfg(not(dtb))]
+             panic!("")
+-        } else if let Ok(plain_irq_number) = u8::from_str(path_str) {
++        } else if let Ok(plain_irq_number) = u16::from_str(path_str) {
+             if plain_irq_number < BASE_IRQ_COUNT {
+                 (
+                     Handle::Irq {
+@@ -465,6 +479,9 @@ impl crate::scheme::KernelScheme for IrqScheme {
+             ..
+         } = handle
+         {
++            #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
++            set_reserved(reservation.cpu_id, reservation.index as u8, false);
++            #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+             set_reserved(reservation.cpu_id, reservation.index, false);
+         }
+         Ok(())

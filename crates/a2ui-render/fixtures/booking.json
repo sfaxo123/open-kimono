@@ -1,0 +1,53 @@
+{
+  "name": "booking",
+  "description": "A booking form: a card of text fields, an image placeholder, and a confirm action whose context is bound to the model.",
+  "messages": [
+    {
+      "version": "v0.9",
+      "createSurface": { "surfaceId": "booking", "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json" }
+    },
+    {
+      "version": "v0.9",
+      "updateDataModel": {
+        "surfaceId": "booking",
+        "value": { "date": "2026-11-02", "guests": 4, "room": "101", "where": "Harbour Room" }
+      }
+    },
+    {
+      "version": "v0.9",
+      "updateComponents": {
+        "surfaceId": "booking",
+        "components": [
+          { "id": "root", "component": "Column", "children": ["head", "card", "pic", "row", "confirm"] },
+          {
+            "id": "head",
+            "component": "Text",
+            "variant": "h2",
+            "text": { "call": "formatString", "args": { "value": "Table for ${/guests}" }, "returnType": "string" }
+          },
+          { "id": "card", "component": "Card", "children": ["when", "guests", "room"] },
+          { "id": "when", "component": "TextField", "label": "Date", "value": { "path": "/date" }, "variant": "shortText" },
+          { "id": "guests", "component": "TextField", "label": "Guests", "value": { "path": "/guests" }, "variant": "number" },
+          { "id": "room", "component": "TextField", "label": "Room", "value": { "path": "/room" }, "variant": "shortText" },
+          { "id": "pic", "component": "Image", "url": "https://example.org/harbour-map.png", "description": "Map to the venue", "variant": "mediumFeature" },
+          { "id": "row", "component": "Row", "children": ["where_label", "where"] },
+          { "id": "where_label", "component": "Text", "variant": "caption", "text": "Room" },
+          { "id": "where", "component": "Text", "text": { "path": "/where" } },
+          {
+            "id": "confirm",
+            "component": "Button",
+            "variant": "primary",
+            "child": "confirm_label",
+            "action": {
+              "event": {
+                "name": "booking.confirm",
+                "context": { "date": { "path": "/date" }, "guests": { "path": "/guests" }, "room": { "path": "/room" } }
+              }
+            }
+          },
+          { "id": "confirm_label", "component": "Text", "text": "Confirm booking" }
+        ]
+      }
+    }
+  ]
+}

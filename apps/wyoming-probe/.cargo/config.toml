@@ -1,0 +1,12 @@
+# Hermetic cross-build: the aarch64-unknown-redox build runs inside the
+# cookbook `redox-base` container with `--network none` and no shared cargo
+# registry. `cargo vendor --offline` writes the full dependency graph to
+# out/wyoming-probe/vendor (worktree-local); regenerate with:
+#   cd apps/wyoming-probe && cargo vendor --offline ../../out/wyoming-probe/vendor
+# (same worktree pattern as apps/sandbox-demo/.cargo/config.toml; the path is
+# relative so it resolves identically on the host and inside the container.)
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "../../out/wyoming-probe/vendor"

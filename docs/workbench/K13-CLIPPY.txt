@@ -1,0 +1,2 @@
+    Checking qcom-rproc v0.1.0 ($HOME/Developer/experiments/redox-oneplus6-k13/crates/qcom-rproc)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.23s

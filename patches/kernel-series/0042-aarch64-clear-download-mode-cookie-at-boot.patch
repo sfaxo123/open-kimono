@@ -1,0 +1,65 @@
+From: Remy <remy@localhost>
+Subject: [PATCH] aarch64: clear the download-mode cookie during boot, not only at reset
+
+REVIEW-20261031-2230 F-5: the download-mode cookie was cleared
+only in kreset()/emergency_reset(). A reset that bypasses
+kreset - the P3 watchdog bite at +45 s on 2026-10-31 - finds
+the cookie still set and lands in Qualcomm CrashDump Mode.
+With the qcom-dload-mode-clear feature, qcom_scm::init() now
+also clears the cookie as soon as SCM availability is known
+(the earliest sound call site: PSCI firmware calls already
+execute in this phase, logging is live, the attempt is the
+bounded <=16-retry query and can never block boot). Success
+prints the 0038 line at boot; failure is a warning. The
+kreset/emergency clears stay.
+
+Agent: Remy (root of record)
+Model: Muse Wonder (muse-wonder-1.0)
+Provider: Meta
+
+---
+diff --git a/src/arch/aarch64/device/qcom_scm.rs b/src/arch/aarch64/device/qcom_scm.rs
+index 7d2486a1..356888ce 100644
+--- a/src/arch/aarch64/device/qcom_scm.rs
++++ b/src/arch/aarch64/device/qcom_scm.rs
+@@ -1,7 +1,12 @@
+ //! Narrow Qualcomm SCM support for clearing the download-mode cookie.
+ //!
+ //! This is opt-in because the OnePlus 6 firmware call has not been verified on
+-//! hardware. The normal reset path never invokes these SMC calls.
++//! hardware. Builds without the `qcom-dload-mode-clear` feature never invoke
++//! these SMC calls. With the feature, the cookie is cleared during boot
++//! (from init(), patch 0042) as well as in the reset entrypoints, so a
++//! reset that bypasses kreset() - a watchdog bite, a panic, a power cut -
++//! still lands in the normal boot path instead of Qualcomm CrashDump
++//! Mode (REVIEW-20261031-2230 F-5).
+ 
+ use core::arch::asm;
+ use core::sync::atomic::{AtomicBool, Ordering};
+@@ -34,6 +39,26 @@ pub fn init(fdt: &Fdt<'_>) {
+     if present {
+         info!("Qualcomm SCM node found; download-mode clear remains opt-in");
+     }
++    // P3 F-5 (REVIEW-20261031-2230): with the opt-in feature, also clear
++    // the download-mode cookie here, during boot - not only in the
++    // reset entrypoints. A reset that bypasses kreset() (a watchdog
++    // bite, a panic, a power cut) otherwise finds the cookie still set
++    // and lands in Qualcomm CrashDump Mode. This is the earliest sound
++    // call site: init() is the first moment SCM availability is known,
++    // PSCI firmware calls already execute in this phase (psci::init ran
++    // immediately before), and logging is live. The attempt is bounded
++    // (the availability query retries at most 16 times) and a failure
++    // is only a warning - it never blocks boot, and the
++    // kreset()/emergency_reset() clears stay in place regardless. The
++    // result line is the same one patch 0038 added to the reset paths,
++    // so the boot-time clear is visible on the panel/serial as well.
++    #[cfg(feature = "qcom-dload-mode-clear")]
++    if present {
++        match clear_download_mode() {
++            Ok(()) => { info!("qcom SCM: download-mode cleared"); }
++            Err(reason) => { warn!("Qualcomm SCM download-mode clear failed: {}", reason); }
++        }
++    }
+ }
+ 
+ /// Clears Qualcomm's download-mode cookie when the opt-in feature is enabled.

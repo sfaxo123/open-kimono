@@ -1,0 +1,233 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH 11/11] spmid: initialize memory and tolerate sparse v5 hardware
+
+diff --git a/drivers/spmid-core/src/lib.rs b/drivers/spmid-core/src/lib.rs
+--- a/drivers/spmid-core/src/lib.rs
++++ b/drivers/spmid-core/src/lib.rs
+@@ -25,7 +25,7 @@
+ pub struct Arbiter<M: Mmio> {
+     io: M,
+     windows: Windows,
+-    channels: [[Option<u16>; 256]; 16],
++    channels: Vec<Option<u16>>,
+ }
+ 
+ impl<M: Mmio> Arbiter<M> {
+@@ -35,15 +35,20 @@
+             return Err(Error::UnsupportedVersion(version));
+         }
+         let count = ((io.read_u32(windows.core + 4) & 0x7ff) as usize).min(MAX_CHANNELS);
+-        let mut channels = [[None; 256]; 16];
++        // The 4096-entry table belongs on the heap, not the small Redox driver stack.
++        let mut channels = vec![None; 16 * 256];
+         for apid in 0..count {
+             let entry = io.read_u32(windows.core + 0x900 + 4 * apid as u64);
++            if entry == 0 {
++                continue;
++            }
+             let sid = ((entry >> 16) & 0xf) as usize;
+             let pid = ((entry >> 8) & 0xff) as usize;
+-            let owner = (io.read_u32(windows.config + 4 * apid as u64) & 7) as u8;
++            let owner = (io.read_u32(windows.config + 0x700 + 4 * apid as u64) & 7) as u8;
+             // Prefer an APID owned by our EE, but observer reads work on either.
+-            if channels[sid][pid].is_none() || owner == windows.owner {
+-                channels[sid][pid] = Some(apid as u16);
++            let channel = &mut channels[sid * 256 + pid];
++            if channel.is_none() || owner == windows.owner {
++                *channel = Some(apid as u16);
+             }
+         }
+         Ok(Self {
+@@ -56,8 +61,9 @@
+     pub fn read_byte(&mut self, sid: u8, addr: u16) -> Result<u8, Error> {
+         let channel = self
+             .channels
+-            .get(sid as usize)
+-            .and_then(|pids| pids[(addr >> 8) as usize])
++            .get(sid as usize * 256 + (addr >> 8) as usize)
++            .copied()
++            .flatten()
+             .ok_or(Error::BadChannel)?;
+         let base = self.windows.observer + u64::from(channel) * 0x80;
+         self.io.write_u32(base + 4, 0);
+diff --git a/drivers/spmid-core/tests/arbiter.rs b/drivers/spmid-core/tests/arbiter.rs
+--- a/drivers/spmid-core/tests/arbiter.rs
++++ b/drivers/spmid-core/tests/arbiter.rs
+@@ -28,7 +28,7 @@
+             CORE + 0x900 + (i * 4) as u64,
+             ((*sid as u32) << 16) | ((*pid as u32) << 8),
+         );
+-        r(&mut t, CFG + (i * 4) as u64, 0);
++        r(&mut t, CFG + 0x700 + (i * 4) as u64, 0);
+     }
+     t
+ }
+@@ -157,3 +157,28 @@
+         }]
+     );
+ }
++
++#[test]
++fn sparse_v5_map_uses_real_apids_and_rejects_missing_gpio() {
++    let mut t = Trace::new();
++    r(&mut t, CORE, 0x5000_0000);
++    r(&mut t, CORE + 4, 512);
++    for apid in 0..512 {
++        let entry = match apid {
++            1 => 0x0100,
++            34 => 0x0800,
++            _ => 0,
++        };
++        r(&mut t, CORE + 0x900 + apid * 4, entry);
++        if entry != 0 {
++            r(&mut t, CFG + 0x700 + apid * 4, 0);
++        }
++    }
++    read(&mut t, 1, 4, 0x51);
++    read(&mut t, 34, 0x10, 0);
++    let mut arb = Arbiter::new(Replayer::strict(t), win()).unwrap();
++    assert_eq!(arb.pmic_type(), Ok(0x51));
++    assert_eq!(arb.read_byte(0, 0x810), Ok(0));
++    assert_eq!(arb.read_byte(0, 0xc410), Err(Error::BadChannel));
++    assert!(arb.into_io().finish().ok());
++}
+diff --git a/drivers/spmid/src/main.rs b/drivers/spmid/src/main.rs
+--- a/drivers/spmid/src/main.rs
++++ b/drivers/spmid/src/main.rs
+@@ -40,9 +40,10 @@
+                     .checked_add(4)
+                     .is_some_and(|end| end <= self.base + self.len as u64)
+         }
+-        fn ptr(&self, addr: u64) -> *mut u32 {
+-            assert!(self.contains(addr) && addr % 4 == 0);
+-            unsafe { (self.map.as_ptr() as *mut u8).add((addr - self.base) as usize) as *mut u32 }
++        fn ptr(&self, addr: u64) -> Option<*mut u32> {
++            (self.contains(addr) && addr % 4 == 0).then(|| unsafe {
++                (self.map.as_ptr() as *mut u8).add((addr - self.base) as usize) as *mut u32
++            })
+         }
+     }
+     struct Hardware {
+@@ -58,24 +59,31 @@
+                 config: Window::new(CFG, 0x26000)?,
+             })
+         }
+-        fn window(&self, addr: u64) -> &Window {
++        fn window(&self, addr: u64) -> Option<&Window> {
+             [&self.core, &self.observer, &self.config]
+                 .into_iter()
+                 .find(|w| w.contains(addr))
+-                .expect("SPMI MMIO outside mapped DT windows")
+         }
+     }
+     impl Mmio for Hardware {
+         fn read(&mut self, addr: u64, width: Width) -> u64 {
+-            assert_eq!(width, Width::W32);
+-            unsafe { self.window(addr).ptr(addr).read_volatile() as u64 }
++            if width != Width::W32 {
++                return 0;
++            }
++            self.window(addr)
++                .and_then(|window| window.ptr(addr))
++                .map(|ptr| unsafe { ptr.read_volatile() as u64 })
++                .unwrap_or(0)
+         }
+         fn write(&mut self, addr: u64, width: Width, value: u64) {
+-            assert_eq!(width, Width::W32);
+-            unsafe { self.window(addr).ptr(addr).write_volatile(value as u32) }
++            if width == Width::W32 {
++                if let Some(ptr) = self.window(addr).and_then(|window| window.ptr(addr)) {
++                    unsafe { ptr.write_volatile(value as u32) }
++                }
++            }
+         }
+     }
+-    pub fn run() -> Result<(), Box<dyn Error>> {
++    fn run_once() -> Result<(), Box<dyn Error>> {
+         let dtb = fs::read("/scheme/kernel.dtb")?;
+         let dt = fdt::Fdt::new(&dtb).map_err(|e| format!("invalid device tree: {e:?}"))?;
+         if dt.find_compatible(&["qcom,spmi-pmic-arb"]).is_none() {
+@@ -101,39 +109,66 @@
+             },
+         )
+         .map_err(|e| format!("SPMI arbiter probe: {e:?}"))?;
+-        let pmic_type = arb
+-            .pmic_type()
+-            .map_err(|e| format!("PMIC revision read: {e:?}"))?;
++        let pmic_type = arb.pmic_type().map_err(|e| format!("PMIC revision read: {e:?}"))?;
+         eprintln!("spmid: PMIC type 0x{pmic_type:02x}; power key enabled per OpenBSD qcpon status bit; verify on hardware before autostart");
+-        let mut input = ProducerHandle::new()?;
++        let mut input: Option<ProducerHandle> = None;
+         let mut buttons = Buttons::new(true);
++        let mut last_error = None;
+         loop {
+-            let levels = arb
+-                .sample()
+-                .map_err(|e| format!("SPMI button read: {e:?}"))?;
++            let levels = match arb.sample() {
++                Ok(levels) => {
++                    last_error = None;
++                    levels
++                }
++                Err(error) => {
++                    if last_error != Some(error) {
++                        eprintln!("spmid: SPMI button read: {error:?}; retrying");
++                        last_error = Some(error);
++                    }
++                    buttons = Buttons::new(true);
++                    thread::sleep(Duration::from_millis(50));
++                    continue;
++                }
++            };
+             for edge in buttons.update(levels) {
+                 let scancode = match edge.button {
+                     Button::Power => K_POWER,
+                     Button::VolumeDown => K_VOLUME_DOWN,
+                     Button::VolumeUp => K_VOLUME_UP,
+                 };
+-                input.write_event(
+-                    KeyEvent {
+-                        character: '\0',
+-                        scancode,
+-                        pressed: edge.pressed,
+-                    }
+-                    .to_event(),
+-                )?;
++                if input.is_none() {
++                    input = Some(ProducerHandle::new()?);
++                }
++                if let Some(input) = input.as_mut() {
++                    input.write_event(
++                        KeyEvent {
++                            character: '\0',
++                            scancode,
++                            pressed: edge.pressed,
++                        }
++                        .to_event(),
++                    )?;
++                }
+             }
+             thread::sleep(Duration::from_millis(50));
++        }
++    }
++    pub fn run() {
++        common::init();
++        loop {
++            if let Err(error) = run_once() {
++                eprintln!("spmid: {error}; retrying");
++                thread::sleep(Duration::from_secs(1));
++            } else {
++                return;
++            }
+         }
+     }
+ }
+ 
+ #[cfg(any(target_os = "redox", feature = "host-compile"))]
+-fn main() -> Result<(), Box<dyn std::error::Error>> {
+-    redox::run()
++fn main() {
++    redox::run();
+ }
+ #[cfg(not(any(target_os = "redox", feature = "host-compile")))]
+ fn main() {

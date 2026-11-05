@@ -1,0 +1,18 @@
+UEFI firmware (version 2024.02-2ubuntu0.10 built at 15:40:28 on Sep 23 2026)
+BdsDxe: loading Boot0001 "UEFI Misc Device" from VenHw(837DCA9E-E874-4D82-B29A-23FE0E23D1E2,003E000A00000000)
+BdsDxe: starting Boot0001 "UEFI Misc Device" from VenHw(837DCA9E-E874-4D82-B29A-23FE0E23D1E2,003E000A00000000)
+OnePlus 6 EFI diagnostic
+CurrentEL: EL1
+EFI memory map: 34 regions, 278529 pages (1088 MiB)
+  CONVENTIONAL 0x40000000 16384 pages
+  BOOT_SERVICES_DATA 0x44000000 32 pages
+  CONVENTIONAL 0x44020000 13768 pages
+  BOOT_SERVICES_DATA 0x475e8000 34 pages
+  BOOT_SERVICES_CODE 0x4760a000 55 pages
+  BOOT_SERVICES_DATA 0x47641000 2225 pages
+  BOOT_SERVICES_CODE 0x47ef2000 4 pages
+  BOOT_SERVICES_DATA 0x47ef6000 257 pages
+DTB: EFI configuration table entry absent
+GOP: 1280x800 stride=1280 format=BltOnly fb=None
+Press a key or wait 60 seconds...
+qemu-system-aarch64: terminating on signal 15 from pid 166688 (timeout)

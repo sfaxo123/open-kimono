@@ -1,0 +1,24 @@
+# V3 oracle transcript - read-only pmOS capture
+# captured: 2026-10-30T07:03:02Z UTC via ssh user@<phone-usb-ip> from <homelab-host>
+$ hostname
+oneplus-enchilada
+$ uname -a
+Linux oneplus-enchilada 7.1.0-rc1-sdm845 #5-postmarketos-qcom-sdm845 SMP PREEMPT Tue Jul 14 03:51:45 UTC  aarch64 Linux
+$ ls -l /sys/bus/platform/devices/a600000.usb/iommu_group
+lrwxrwxrwx    1 root     root             0 Oct 30 06:09 /sys/bus/platform/devices/a600000.usb/iommu_group -> ../../../../../kernel/iommu_groups/12
+$ cat /sys/kernel/iommu_groups/12/type
+DMA
+$ ls /sys/kernel/iommu_groups/12/devices
+a600000.usb
+$ sudo cat /sys/kernel/debug/usb/a600000.usb/regdump | grep -E GSNPSID\|GHWPARAMS
+GSNPSID = 0x5533300a
+GHWPARAMS0 = 0x4020400a
+GHWPARAMS1 = 0x0162493b
+GHWPARAMS2 = 0x30013c32
+GHWPARAMS3 = 0x10420085
+GHWPARAMS4 = 0x4782200c
+GHWPARAMS5 = 0x04202088
+GHWPARAMS6 = 0x07ea0020
+GHWPARAMS7 = 0x03080a65
+GHWPARAMS8 = 0x000007ea
+$ sudo cat /sys/kernel/debug/usb/a600000.usb/mode

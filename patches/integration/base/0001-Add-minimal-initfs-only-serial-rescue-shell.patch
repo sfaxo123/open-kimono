@@ -1,0 +1,264 @@
+From 4ec8d1400b2d98a844fad1ec946824b86f8f6251 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:13:48 +0000
+Subject: [PATCH 01/10] Add minimal initfs-only serial rescue shell
+
+Co-Authored-By: Codex <noreply@openai.com>
+---
+ .gitignore                      |  1 +
+ Cargo.lock                      |  7 ++++
+ Cargo.toml                      |  1 +
+ Makefile                        | 20 +++++++++++
+ docs/PROVENANCE.md              | 12 +++++++
+ init.initfs.d/30_ramsh.service  |  6 ++++
+ init.initfs.d/90_ramboot.target |  3 ++
+ init/src/main.rs                | 18 ++++++++--
+ ramsh/Cargo.toml                | 11 ++++++
+ ramsh/src/main.rs               | 62 +++++++++++++++++++++++++++++++++
+ 10 files changed, 139 insertions(+), 2 deletions(-)
+ create mode 100644 docs/PROVENANCE.md
+ create mode 100644 init.initfs.d/30_ramsh.service
+ create mode 100644 init.initfs.d/90_ramboot.target
+ create mode 100644 ramsh/Cargo.toml
+ create mode 100644 ramsh/src/main.rs
+
+diff --git a/.gitignore b/.gitignore
+index a5456eb4..6728821b 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,4 +1,5 @@
+ target/
++build/
+ sysroot/
+ 
+ # Local settings folder for Visual Studio Code
+diff --git a/Cargo.lock b/Cargo.lock
+index 9aaac3a9..aea570ed 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1886,6 +1886,13 @@ dependencies = [
+  "zerocopy",
+ ]
+ 
++[[package]]
++name = "ramsh"
++version = "0.1.0"
++dependencies = [
++ "libredox",
++]
++
+ [[package]]
+ name = "rand"
+ version = "0.4.6"
+diff --git a/Cargo.toml b/Cargo.toml
+index 67666be7..b301a082 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -14,6 +14,7 @@ members = [
+     "netstack",
+     "ptyd",
+     "ramfs",
++    "ramsh",
+     "randd",
+     "scheme-utils",
+     "zerod",
+diff --git a/Makefile b/Makefile
+index 6bdec714..369b9612 100644
+--- a/Makefile
++++ b/Makefile
+@@ -15,6 +15,7 @@ BUILD_FLAGS +=  --target-dir $(BUILD_DIR)
+ INITFS_BINS = ipcd init logd ramfs randd zerod \
+ 	acpid fbbootlogd hwd inputd lived \
+ 	pcid pcid-spawner rtcd vesad
++RAMBOOT_BINS = ipcd init logd ramfs randd zerod rtcd ramsh
+ INITFS_DRIVERS_BINS = nvmed virtio-blkd  virtio-gpud
+ BASE_BINS = fbcond getty inputd pcid pcid-spawner redoxerd audiod dhcpd ptyd netstack nbdd
+ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+@@ -134,3 +135,22 @@ install-base: base $(SYSROOT)/bin/redoxfs
+ 	ln -sf /scheme/libc/stdin $(DESTDIR)/dev/stdin
+ 	ln -sf /scheme/libc/stdout $(DESTDIR)/dev/stdout
+ 	ln -sf /scheme/libc/stderr $(DESTDIR)/dev/stderr
++
++# Build a small standalone initfs. The normal disk image keeps its existing contents.
++ramboot-initfs:
++	@mkdir -p "$(BUILD_DIR)"
++	CARGO_PROFILE_RELEASE_OPT_LEVEL=s CARGO_PROFILE_RELEASE_PANIC=abort \
++		$(CARGO) build $(BUILD_FLAGS) --manifest-path "$(SRC_DIR)/Cargo.toml" \
++		$(foreach bin,$(RAMBOOT_BINS),-p $(bin))
++	cd "$(SRC_DIR)/bootstrap" && RUSTFLAGS= $(CARGO) rustc $(BUILD_FLAGS) \
++		-- -Ctarget-feature=+crt-static -Clinker="$(LINKER)"
++	rm -rf "$(BUILD_DIR)/ramboot-initfs"
++	mkdir -p "$(BUILD_DIR)/ramboot-initfs/bin" "$(BUILD_DIR)/ramboot-initfs/lib/init.d"
++	for bin in $(RAMBOOT_BINS); do \
++		cp "$(TARGET_DIR)/$$bin" "$(BUILD_DIR)/ramboot-initfs/bin"; \
++	done
++	cp "$(SRC_DIR)/init.initfs.d"/00_* "$(SRC_DIR)/init.initfs.d"/ramfs@.service \
++		"$(SRC_DIR)/init.initfs.d"/30_ramsh.service \
++		"$(SRC_DIR)/init.initfs.d"/90_ramboot.target "$(BUILD_DIR)/ramboot-initfs/lib/init.d/"
++	$(CARGO_HOST) run --manifest-path "$(SRC_DIR)/initfs/tools/Cargo.toml" --bin redox-initfs-ar -- \
++		"$(BUILD_DIR)/ramboot-initfs" "$(TARGET_DIR)/bootstrap" -o "$(BUILD_DIR)/ramboot-initfs.img"
+diff --git a/docs/PROVENANCE.md b/docs/PROVENANCE.md
+new file mode 100644
+index 00000000..b78fea52
+--- /dev/null
++++ b/docs/PROVENANCE.md
+@@ -0,0 +1,12 @@
++# K3 provenance
++
++The following upstream MIT files were adapted in this branch. Their existing
++copyright and license notices remain in `LICENSE`.
++
++| Upstream URL and commit | Path | SPDX | Use |
++| --- | --- | --- | --- |
++| https://gitlab.redox-os.org/redox-os/base.git @ `d2ffc4ca46d68f83b33c1e929e68dd7a7409668c` | `Cargo.toml`, `Cargo.lock`, `Makefile`, `init/src/main.rs`, `.gitignore` | MIT | Adapted for the RAM-only init target and build |
++
++`ramsh/`, `init.initfs.d/30_ramsh.service`, and
++`init.initfs.d/90_ramboot.target` are original K3 MIT code; no donor code was
++copied into them.
+diff --git a/init.initfs.d/30_ramsh.service b/init.initfs.d/30_ramsh.service
+new file mode 100644
+index 00000000..e4676459
+--- /dev/null
++++ b/init.initfs.d/30_ramsh.service
+@@ -0,0 +1,6 @@
++[unit]
++description = "Serial RAM boot shell"
++
++[service]
++cmd = "ramsh"
++type = "oneshot_async"
+diff --git a/init.initfs.d/90_ramboot.target b/init.initfs.d/90_ramboot.target
+new file mode 100644
+index 00000000..f5f151c8
+--- /dev/null
++++ b/init.initfs.d/90_ramboot.target
+@@ -0,0 +1,3 @@
++[unit]
++description = "RAM-only boot shell"
++requires_weak = ["30_ramsh.service"]
+diff --git a/init/src/main.rs b/init/src/main.rs
+index c2aff750..08ca4517 100644
+--- a/init/src/main.rs
++++ b/init/src/main.rs
+@@ -146,10 +146,20 @@ fn main() {
+     scheduler.schedule_start_and_report_errors(&mut unit_store, runtime_target.clone());
+     unit_store.set_runtime_target(runtime_target);
+ 
+-    scheduler
+-        .schedule_start_and_report_errors(&mut unit_store, UnitId("90_initfs.target".to_owned()));
++    let ramboot = env::var("REDOX_RAMBOOT").as_deref() == Ok("1");
++    let initfs_target = if ramboot {
++        "90_ramboot.target"
++    } else {
++        "90_initfs.target"
++    };
++    scheduler.schedule_start_and_report_errors(&mut unit_store, UnitId(initfs_target.to_owned()));
+     scheduler.step(&mut unit_store, &mut init_config);
+ 
++    if ramboot {
++        eprintln!("init: RAM boot shell on /scheme/debug; no rootfs mounted");
++        wait_forever();
++    }
++
+     switch_root(
+         &mut unit_store,
+         &mut init_config,
+@@ -192,6 +202,10 @@ fn main() {
+ 
+     libredox::call::setrens(0, 0).expect("init: failed to enter null namespace");
+ 
++    wait_forever();
++}
++
++fn wait_forever() -> ! {
+     loop {
+         let mut status = 0;
+         libredox::call::waitpid(0, &mut status, 0).unwrap();
+diff --git a/ramsh/Cargo.toml b/ramsh/Cargo.toml
+new file mode 100644
+index 00000000..ac1f605e
+--- /dev/null
++++ b/ramsh/Cargo.toml
+@@ -0,0 +1,11 @@
++[package]
++name = "ramsh"
++version = "0.1.0"
++edition = "2024"
++license = "MIT"
++
++[dependencies]
++libredox.workspace = true
++
++[lints]
++workspace = true
+diff --git a/ramsh/src/main.rs b/ramsh/src/main.rs
+new file mode 100644
+index 00000000..ea5b9178
+--- /dev/null
++++ b/ramsh/src/main.rs
+@@ -0,0 +1,62 @@
++//! Small serial rescue shell for an initfs-only boot.
++
++use std::fs;
++use std::io::{self, BufRead, Write};
++
++use libredox::flag::{O_RDONLY, O_WRONLY};
++
++fn run() -> io::Result<()> {
++    let path = "/scheme/debug/no-preserve";
++    for (fd, flags) in [(0, O_RDONLY), (1, O_WRONLY), (2, O_WRONLY)] {
++        libredox::Fd::open(path, flags, 0)?.dup2(fd, &[])?;
++    }
++
++    let mut input = io::stdin().lock();
++    let mut line = String::new();
++    let mut out = io::stdout().lock();
++    writeln!(out, "Redox RAM shell. Type help for commands.")?;
++    loop {
++        write!(out, "ram:~$ ")?;
++        out.flush()?;
++        line.clear();
++        if input.read_line(&mut line)? == 0 {
++            break;
++        }
++        let command = line.trim();
++        if let Some(message) = command.strip_prefix("echo ") {
++            writeln!(out, "{message}")?;
++        } else {
++            match command {
++                "" => {}
++                "help" => writeln!(out, "help echo pwd ls cat exit")?,
++                "pwd" => writeln!(out, "/scheme/initfs")?,
++                "ls" => {
++                    for entry in fs::read_dir("/scheme/initfs")? {
++                        writeln!(out, "{}", entry?.file_name().to_string_lossy())?;
++                    }
++                }
++                "exit" => break,
++                _ if command.starts_with("cat ") => {
++                    let path = command[4..].trim();
++                    if path.starts_with('/') && !path.starts_with("/scheme/initfs/") {
++                        writeln!(out, "cat: path must be in /scheme/initfs")?;
++                    } else {
++                        let path = path.strip_prefix("/scheme/initfs/").unwrap_or(path);
++                        match fs::read_to_string(format!("/scheme/initfs/{path}")) {
++                            Ok(data) => write!(out, "{data}")?,
++                            Err(err) => writeln!(out, "cat: {err}")?,
++                        }
++                    }
++                }
++                _ => writeln!(out, "unknown command: {command}")?,
++            }
++        }
++    }
++    Ok(())
++}
++
++fn main() {
++    if let Err(err) = run() {
++        eprintln!("ramsh: {err}");
++    }
++}
+-- 
+2.43.0
+

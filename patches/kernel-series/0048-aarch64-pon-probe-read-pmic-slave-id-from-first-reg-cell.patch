@@ -1,0 +1,90 @@
+From: Remy <remy@localhost>
+Subject: [PATCH] aarch64: read the PMIC slave ID from the first reg cell in the PON probe
+
+The SDM845 SPMI arbiter declares #address-cells = <2>, so each
+pmic's reg property is two cells (<sid 0x0>). qcom_pon::probe read
+it with as_value::<u32>, whose fdt-crate parse accepts exactly
+four bytes, so the read failed for every pmic and the probe
+reported "no enabled qcom,pm8998-pon device-tree node" against a
+DTB that has the node - the PON write could never run. Found from
+the A1 gate serial (2026-11-01) and confirmed with a host replica
+of the probe walk against the pinned DTB: arbiter and its five
+regions parse, every pmic reg parses as the cell list [sid, 0],
+the PON child parses with reg 0x800. Read the property as a
+U32List and take the first cell via the pure sid_from_cells
+helper, mirroring Linux's of_property_read_u32. Host tests 27/27
+(1 new); mutation first->last RED on the new test, restore GREEN.
+---
+diff --git a/src/arch/aarch64/device/qcom_pon.rs b/src/arch/aarch64/device/qcom_pon.rs
+index 1fdeab7f..4f4bce36 100644
+--- a/src/arch/aarch64/device/qcom_pon.rs
++++ b/src/arch/aarch64/device/qcom_pon.rs
+@@ -502,6 +502,19 @@ static PON_REG: AtomicUsize = AtomicUsize::new(0);
+ /// never from hard-coded literals in the transaction path, so a DT
+ /// change fails safe (feature reports unavailable) instead of writing
+ /// to a wrong address. The region addresses are translated through the
++/// SPMI slave ID from a pmic node's `reg` cells, mirroring Linux's
++/// `of_property_read_u32` first-cell semantics. The SDM845 SPMI
++/// arbiter declares `#address-cells = <2>`, so each pmic's `reg` is
++/// TWO cells (`<sid 0x0>`); reading the property as a single `u32`
++/// fails the fdt crate's exact-length parse, and the probe silently
++/// skipped every pmic (gate evidence 2026-11-01: "no enabled
++/// qcom,pm8998-pon device-tree node" against a DTB that has the
++/// node). Returns None only for an empty cell list; the caller
++/// still applies the SID_MAX bound.
++pub(crate) fn sid_from_cells(cells: &[u32]) -> Option<u32> {
++    cells.first().copied()
++}
++
+ /// DT `ranges` chain and converted with the kernel's physical map,
+ /// which already registers every /soc child's ranges as device memory
+ /// (crate::dtb), so they remain mapped at reset time.
+@@ -548,7 +561,10 @@ pub fn init(fdt: &crate::dtb::Fdt<'_>) {
+ /// unavailable) rather than storing a value that would alias.
+ #[cfg(not(test))]
+ fn probe(fdt: &crate::dtb::Fdt<'_>) -> Option<([usize; 4], [usize; 4], u32, u32)> {
+-    use fdt::properties::{values::StringList, Status};
++    use fdt::properties::{
++        values::{StringList, U32List},
++        Status,
++    };
+ 
+     let arb = fdt
+         .all_compatible(&["qcom,spmi-pmic-arb"])
+@@ -601,9 +617,17 @@ fn probe(fdt: &crate::dtb::Fdt<'_>) -> Option<([usize; 4], [usize; 4], u32, u32)
+     // pon node's reg is the peripheral base (qcom-pon.c reads both with
+     // of_property_read_u32).
+     for pmic in arb.children() {
++        // The arbiter's #address-cells is 2, so a pmic `reg` is a
++        // two-cell list; read it as a list and take the first cell
++        // (sid_from_cells). as_value::<u32> fails on the 8-byte
++        // property and would skip every pmic.
+         let Some(sid) = pmic
+             .raw_property("reg")
+-            .and_then(|prop| prop.as_value::<u32>().ok())
++            .and_then(|prop| prop.as_value::<U32List>().ok())
++            .and_then(|list| {
++                let cells: alloc::vec::Vec<u32> = list.iter().collect();
++                sid_from_cells(&cells)
++            })
+         else {
+             continue;
+         };
+@@ -1240,4 +1264,17 @@ mod tests {
+         assert_eq!(result, Err("SPMI RW channel exceeds the FDT chnls span"));
+         assert!(bus.writes.is_empty());
+     }
++    #[test]
++    fn sid_from_cells_reads_first_cell() {
++        // The SDM845 encoding: arbiter #address-cells = <2>, so a
++        // pmic reg is <sid 0>. The first cell is the slave ID.
++        assert_eq!(sid_from_cells(&[]), None);
++        assert_eq!(sid_from_cells(&[0]), Some(0));
++        assert_eq!(sid_from_cells(&[0, 0]), Some(0));
++        assert_eq!(sid_from_cells(&[1, 0]), Some(1));
++        assert_eq!(sid_from_cells(&[3, 0]), Some(3));
++        // First-cell semantics: a trailing cell is never the ID.
++        assert_eq!(sid_from_cells(&[0, 1]), Some(0));
++    }
++
+ }

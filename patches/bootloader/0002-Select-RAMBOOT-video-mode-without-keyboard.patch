@@ -1,0 +1,35 @@
+From 3bf319686045ad0ab8156d36a2c38a6eece6f87c Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Tue, 27 Oct 2026 08:03:30 +0000
+Subject: [PATCH] ramboot: auto-select preferred GOP mode
+
+Series note (Remy, root, 2026-10-31): the op6/e1-demo bootloader fork already carries this change as 41317dc (whose subject this patch now carries) plus follow-up 55ded92. The original subject matched nothing in the fork's log, so integrate.sh's subject-based skip missed it, git am stopped on the already-present change, and 0003/0004 were silently never applied (R-1 attempt 1 root cause). Subject aligned to the fork's; patch content unchanged.
+
+Agent: Codex root
+Model: gpt-6-sol
+Provider: OpenAI
+Refs: perplexity-redox-hourly-safety-check
+---
+ src/main.rs | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/main.rs b/src/main.rs
+index 0b4ee2b..6ce5acc 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -160,6 +160,12 @@ fn select_mode(
+     }
+     println!();
+ 
++    // RAM boot must reach the kernel without a working firmware keyboard.
++    // Keep the preferred/current resolution (or largest-mode fallback) above.
++    if cfg!(feature = "ramboot") {
++        return modes.iter().find(|(mode, _)| mode.id == selected).map(|(mode, _)| *mode);
++    }
++
+     println!("Arrow keys and enter select mode");
+     #[cfg(not(feature = "ramboot"))]
+     let live_mode = os.get_text_position();
+-- 
+2.43.0
+

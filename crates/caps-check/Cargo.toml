@@ -1,0 +1,11 @@
+[package]
+name = "caps-check"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Pattern store with homelab sync log (A2.1): versioned, reversible learned patterns"
+
+[dependencies]
+
+[lib]
+path = "src/lib.rs"

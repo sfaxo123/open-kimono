@@ -1,0 +1,182 @@
+From e41f5bbdfe186a33288ed2a00da8c2c8e8768ab9 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 31 Oct 2026 21:27:25 +0000
+Subject: [PATCH] aarch64: add opt-in Qualcomm download-mode cookie clear
+
+Add a qcom-dload-mode-clear kernel feature, disabled by default. When enabled,
+check the device tree SCM node and firmware call availability, then clear the
+Qualcomm download-mode cookie before either AArch64 reset entrypoint.
+
+Agent: Codex
+Host: 3090
+Session: codex:01a193d7-050d-7ce0-8ae2-c123e25fe012
+Model: gpt-6-luna
+Provider: openai
+---
+ Cargo.toml                          |  1 +
+ src/arch/aarch64/device/mod.rs      |  2 +
+ src/arch/aarch64/device/qcom_scm.rs | 93 +++++++++++++++++++++++++++++
+ src/arch/aarch64/stop.rs            |  8 +++
+ 4 files changed, 104 insertions(+)
+ create mode 100644 src/arch/aarch64/device/qcom_scm.rs
+
+diff --git a/Cargo.toml b/Cargo.toml
+index c07d2be7..ca8efd9b 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -102,6 +102,7 @@ qemu_debug = []
+ serial_debug = []
+ system76_ec_debug = []
+ x86_kvm_pv = []
++qcom-dload-mode-clear = []
+ 
+ debugger = ["syscall_debug"]
+ syscall_debug = []
+diff --git a/src/arch/aarch64/device/mod.rs b/src/arch/aarch64/device/mod.rs
+index 6efc792b..7e1cc430 100644
+--- a/src/arch/aarch64/device/mod.rs
++++ b/src/arch/aarch64/device/mod.rs
+@@ -4,6 +4,7 @@ pub mod cpu;
+ pub mod generic_timer;
+ pub mod irqchip;
+ pub mod psci;
++pub mod qcom_scm;
+ pub mod rtc;
+ pub mod serial;
+ 
+@@ -47,6 +48,7 @@ pub unsafe fn init_devicetree(fdt: &Fdt) {
+     unsafe {
+         info!("PSCI INIT");
+         psci::init(fdt);
++        qcom_scm::init(fdt);
+         info!("CPU TOPOLOGY INIT");
+         cpu::init_topology(fdt);
+         info!("IRQCHIP INIT");
+diff --git a/src/arch/aarch64/device/qcom_scm.rs b/src/arch/aarch64/device/qcom_scm.rs
+new file mode 100644
+index 00000000..223add9a
+--- /dev/null
++++ b/src/arch/aarch64/device/qcom_scm.rs
+@@ -0,0 +1,93 @@
++//! Narrow Qualcomm SCM support for clearing the download-mode cookie.
++//!
++//! This is opt-in because the OnePlus 6 firmware call has not been verified on
++//! hardware. The normal reset path never invokes these SMC calls.
++
++use core::arch::asm;
++use core::sync::atomic::{AtomicBool, Ordering};
++
++use fdt::properties::Status;
++
++use crate::dtb::Fdt;
++
++const SCM_AVAILABLE: AtomicBool = AtomicBool::new(false);
++
++#[cfg(feature = "qcom-dload-mode-clear")]
++const SMC64_STANDARD_SIP: u64 = 0x4200_0000;
++#[cfg(feature = "qcom-dload-mode-clear")]
++const SMC64_FAST_SIP: u64 = 0xc200_0000;
++#[cfg(feature = "qcom-dload-mode-clear")]
++const SCM_INFO_IS_CALL_AVAILABLE: u64 = 0x0601;
++#[cfg(feature = "qcom-dload-mode-clear")]
++const SCM_BOOT_SET_DOWNLOAD_MODE: u64 = 0x0110;
++#[cfg(feature = "qcom-dload-mode-clear")]
++const SCM_BOOT_SET_DOWNLOAD_MODE_ID: u64 = 0x0200_0110;
++
++pub fn init(fdt: &Fdt<'_>) {
++    let present = fdt
++        .all_compatible(&["qcom,scm-sdm845", "qcom,scm"])
++        .any(|node| matches!(node.property::<Status>(), None | Some(Status::OKAY)));
++    SCM_AVAILABLE.store(present, Ordering::Release);
++    if present {
++        info!("Qualcomm SCM node found; download-mode clear remains opt-in");
++    }
++}
++
++/// Clears Qualcomm's download-mode cookie when the opt-in feature is enabled.
++/// The caller logs and handles errors before continuing with PSCI reset.
++#[cfg(feature = "qcom-dload-mode-clear")]
++pub fn clear_download_mode() -> Result<(), &'static str> {
++    if !SCM_AVAILABLE.load(Ordering::Acquire) {
++        return Err("no enabled qcom,scm device-tree node");
++    }
++
++    // Match Linux qcom_scm_is_call_available(): standard SMC64 SIP call,
++    // one value argument containing the owner-qualified BOOT command ID.
++    let available = unsafe {
++        smc64(
++            SMC64_STANDARD_SIP | SCM_INFO_IS_CALL_AVAILABLE,
++            1,
++            SCM_BOOT_SET_DOWNLOAD_MODE_ID,
++            0,
++        )
++    };
++    if available.0 != 0 {
++        return Err("SCM call-availability query failed");
++    }
++    if available.1 == 0 {
++        return Err("SCM BOOT_SET_DLOAD_MODE is unavailable");
++    }
++
++    // Match Linux __qcom_scm_set_dload_mode(false): fast SMC64 SIP call,
++    // QCOM_SCM_ARGS(2) with args { command, 0 }.
++    let result = unsafe {
++        smc64(
++            SMC64_FAST_SIP | SCM_BOOT_SET_DOWNLOAD_MODE,
++            2,
++            SCM_BOOT_SET_DOWNLOAD_MODE,
++            0,
++        )
++    };
++    if result.0 == 0 {
++        Ok(())
++    } else {
++        Err("SCM BOOT_SET_DLOAD_MODE(false) failed")
++    }
++}
++
++#[cfg(feature = "qcom-dload-mode-clear")]
++unsafe fn smc64(function_id: u64, arg_info: u64, arg0: u64, arg1: u64) -> (u64, u64) {
++    let mut result = function_id;
++    let mut returned_arg0 = arg0;
++    unsafe {
++        asm!(
++            "smc #0",
++            inout("x0") result,
++            inout("x1") arg_info => _,
++            inout("x2") returned_arg0,
++            inout("x3") arg1 => _,
++            options(nostack),
++        );
++    }
++    (result, returned_arg0)
++}
+diff --git a/src/arch/aarch64/stop.rs b/src/arch/aarch64/stop.rs
+index 5cd4b119..dd727e31 100644
+--- a/src/arch/aarch64/stop.rs
++++ b/src/arch/aarch64/stop.rs
+@@ -11,6 +11,10 @@ fn halt_after_failed_psci(operation: &str, error: psci::CallError) -> ! {
+ }
+ 
+ pub unsafe fn kreset() -> ! {
++    #[cfg(feature = "qcom-dload-mode-clear")]
++    if let Err(reason) = crate::arch::device::qcom_scm::clear_download_mode() {
++        warn!("Qualcomm SCM download-mode clear failed: {}", reason);
++    }
+     println!("kreset: PSCI SYSTEM_RESET (0x84000009)");
+     match psci::system_reset() {
+         Ok(()) => unreachable!(),
+@@ -19,6 +23,10 @@ pub unsafe fn kreset() -> ! {
+ }
+ 
+ pub unsafe fn emergency_reset() -> ! {
++    #[cfg(feature = "qcom-dload-mode-clear")]
++    if let Err(reason) = crate::arch::device::qcom_scm::clear_download_mode() {
++        warn!("Qualcomm SCM download-mode clear failed: {}", reason);
++    }
+     println!("emergency_reset: PSCI SYSTEM_RESET (0x84000009)");
+     match psci::system_reset() {
+         Ok(()) => unreachable!(),
+-- 
+2.43.0
+

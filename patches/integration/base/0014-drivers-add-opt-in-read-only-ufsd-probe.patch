@@ -1,0 +1,3787 @@
+From c03a443646e4db28eefc93b1a97b4c82c81e62e8 Mon Sep 17 00:00:00 2001
+From: DeepSeek Harness <dsh@nord.local>
+Date: Mon, 26 Oct 2026 00:57:06 +0000
+Subject: [PATCH] drivers: add opt-in read-only ufsd probe
+
+Vendor crates/ufs from the redox-oneplus6 repo as drivers/ufs-core and
+add drivers/ufsd: a one-shot probe that starts only when the kernel
+device tree declares qcom,sdm845-ufshc, brings the link up read-only
+(HCE cycle, DME link startup, NOP, fDeviceInit, LU enumeration, READ
+CAPACITY, one READ(10) of LBA 0..33) and prints the CRC-checked GPT
+header and ESP entry. The command builder is closed over the SCSI
+allowlist; no WRITE-class opcode can reach the bus (host tests in
+drivers/ufs-core).
+
+On the qemu-oneplus6 emulator QCOM vendor DME attributes are not
+modelled, so ufsd logs the MPHY_TX_FSM_STATE gap and retries without
+the vendor register path.
+
+Wire it into the ramboot-initfs profile only (RAMBOOT_BINS,
+30_ufsd.service, 90_ramboot.target); other profiles are unchanged.
+
+Agent: DeepSeek Harness
+Model: Qwen3.8-Flash-Next (5090 lane)
+Provider: Qwen
+Refs: EMU-UFS-RO
+---
+ Cargo.lock                                    |  17 ++
+ Cargo.toml                                    |   2 +
+ Makefile                                      |   3 +-
+ drivers/ufs-core/Cargo.toml                   |   9 +
+ drivers/ufs-core/src/device.rs                | 195 ++++++++++++++
+ drivers/ufs-core/src/dma.rs                   |  55 ++++
+ drivers/ufs-core/src/gpt.rs                   | 206 ++++++++++++++
+ drivers/ufs-core/src/hc.rs                    | 214 +++++++++++++++
+ drivers/ufs-core/src/lib.rs                   | 178 +++++++++++++
+ drivers/ufs-core/src/regs.rs                  | 109 ++++++++
+ drivers/ufs-core/src/scsi.rs                  | 251 +++++++++++++++++
+ drivers/ufs-core/src/upiu.rs                  | 252 ++++++++++++++++++
+ drivers/ufs-core/src/xfer.rs                  |  98 +++++++
+ drivers/ufs-core/tests/bringup.rs             | 230 ++++++++++++++++
+ drivers/ufs-core/tests/common/device.rs       | 251 +++++++++++++++++
+ drivers/ufs-core/tests/common/disk.rs         |  54 ++++
+ drivers/ufs-core/tests/common/luns.rs         | 127 +++++++++
+ drivers/ufs-core/tests/common/mod.rs          | 118 ++++++++
+ drivers/ufs-core/tests/common/model.rs        | 228 ++++++++++++++++
+ .../ufs-core/tests/fixtures/bringup_gpt.trace | 148 ++++++++++
+ drivers/ufs-core/tests/negative_bringup.rs    | 145 ++++++++++
+ drivers/ufs-core/tests/negative_io.rs         | 224 ++++++++++++++++
+ drivers/ufs-core/tests/replay.rs              | 157 +++++++++++
+ drivers/ufsd/Cargo.toml                       |  17 ++
+ drivers/ufsd/README.md                        |  17 ++
+ drivers/ufsd/src/main.rs                      | 200 ++++++++++++++
+ init.initfs.d/30_ufsd.service                 |   6 +
+ init.initfs.d/90_ramboot.target               |   2 +-
+ 28 files changed, 3511 insertions(+), 2 deletions(-)
+ create mode 100644 drivers/ufs-core/Cargo.toml
+ create mode 100644 drivers/ufs-core/src/device.rs
+ create mode 100644 drivers/ufs-core/src/dma.rs
+ create mode 100644 drivers/ufs-core/src/gpt.rs
+ create mode 100644 drivers/ufs-core/src/hc.rs
+ create mode 100644 drivers/ufs-core/src/lib.rs
+ create mode 100644 drivers/ufs-core/src/regs.rs
+ create mode 100644 drivers/ufs-core/src/scsi.rs
+ create mode 100644 drivers/ufs-core/src/upiu.rs
+ create mode 100644 drivers/ufs-core/src/xfer.rs
+ create mode 100644 drivers/ufs-core/tests/bringup.rs
+ create mode 100644 drivers/ufs-core/tests/common/device.rs
+ create mode 100644 drivers/ufs-core/tests/common/disk.rs
+ create mode 100644 drivers/ufs-core/tests/common/luns.rs
+ create mode 100644 drivers/ufs-core/tests/common/mod.rs
+ create mode 100644 drivers/ufs-core/tests/common/model.rs
+ create mode 100644 drivers/ufs-core/tests/fixtures/bringup_gpt.trace
+ create mode 100644 drivers/ufs-core/tests/negative_bringup.rs
+ create mode 100644 drivers/ufs-core/tests/negative_io.rs
+ create mode 100644 drivers/ufs-core/tests/replay.rs
+ create mode 100644 drivers/ufsd/Cargo.toml
+ create mode 100644 drivers/ufsd/README.md
+ create mode 100644 drivers/ufsd/src/main.rs
+ create mode 100644 init.initfs.d/30_ufsd.service
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 8e42ad04..6b846bce 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2766,6 +2766,23 @@ version = "1.20.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+ 
++[[package]]
++name = "ufs-core"
++version = "0.1.0"
++dependencies = [
++ "mmio-replay",
++]
++
++[[package]]
++name = "ufsd"
++version = "0.1.0"
++dependencies = [
++ "common",
++ "fdt 0.1.5",
++ "mmio-replay",
++ "ufs-core",
++]
++
+ [[package]]
+ name = "unicode-ident"
+ version = "1.0.24"
+diff --git a/Cargo.toml b/Cargo.toml
+index 2baa0887..c204c25d 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -38,6 +38,8 @@ members = [
+     "drivers/mmio-replay",
+     "drivers/spmid-core",
+     "drivers/spmid",
++    "drivers/ufs-core",
++    "drivers/ufsd",
+     "drivers/virtio-core",
+ 
+     "drivers/audio/ac97d",
+diff --git a/Makefile b/Makefile
+index e2c76a84..7eb300d3 100644
+--- a/Makefile
++++ b/Makefile
+@@ -15,7 +15,7 @@ BUILD_FLAGS +=  --target-dir $(BUILD_DIR)
+ INITFS_BINS = ipcd init logd traced ramfs randd zerod \
+ 	acpid fbbootlogd hwd inputd lived \
+ 	pcid pcid-spawner rtcd vesad
+-RAMBOOT_BINS = ipcd init logd traced ramfs randd zerod rtcd ramsh spmid inputd vesad geni-i2cd rmi4d
++RAMBOOT_BINS = ipcd init logd traced ramfs randd zerod rtcd ramsh spmid inputd vesad geni-i2cd rmi4d ufsd
+ INITFS_DRIVERS_BINS = nvmed virtio-blkd  virtio-gpud
+ BASE_BINS = fbcond getty inputd pcid pcid-spawner redoxerd audiod dhcpd ptyd netstack nbdd
+ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+@@ -152,6 +152,7 @@ ramboot-initfs:
+ 	cp "$(SRC_DIR)/init.initfs.d"/00_* "$(SRC_DIR)/init.initfs.d"/ramfs@.service \
+ 		"$(SRC_DIR)/init.initfs.d"/30_ramsh.service \
+ 		"$(SRC_DIR)/init.initfs.d"/30_spmid.service \
++		"$(SRC_DIR)/init.initfs.d"/30_ufsd.service \
+ 		"$(SRC_DIR)/init.initfs.d"/10_inputd.service \
+ 		"$(SRC_DIR)/init.initfs.d"/20_vesad.service \
+ 		"$(SRC_DIR)/init.initfs.d"/40_timeline_demo.service \
+diff --git a/drivers/ufs-core/Cargo.toml b/drivers/ufs-core/Cargo.toml
+new file mode 100644
+index 00000000..8b6839e0
+--- /dev/null
++++ b/drivers/ufs-core/Cargo.toml
+@@ -0,0 +1,9 @@
++[package]
++name = "ufs-core"
++version = "0.1.0"
++edition = "2021"
++license = "MIT"
++description = "Read-only UFS host controller core (UFSHCI 2.x + qcom,sdm845-ufshc vendor bits) behind the mmio-replay Mmio trait (Redox-on-OnePlus-6, task K10)."
++
++[dependencies]
++mmio-replay = { path = "../mmio-replay" }
+diff --git a/drivers/ufs-core/src/device.rs b/drivers/ufs-core/src/device.rs
+new file mode 100644
+index 00000000..54e063f1
+--- /dev/null
++++ b/drivers/ufs-core/src/device.rs
+@@ -0,0 +1,195 @@
++//! Device management: NOP, Query, descriptors, logical units (`specs/ufs.md` §4 steps 9–12).
++
++use crate::hc::{Completion, HostInfo, Ufshc};
++use crate::upiu;
++use crate::{Delay, Dma, Error, Result, Stage};
++use alloc::vec::Vec;
++use mmio_replay::Mmio;
++
++/// Descriptor IDN: device.
++pub const IDN_DEVICE: u8 = 0x00;
++/// Descriptor IDN: unit.
++pub const IDN_UNIT: u8 = 0x02;
++/// Descriptor IDN: geometry.
++pub const IDN_GEOMETRY: u8 = 0x07;
++/// Flag IDN: `fDeviceInit`.
++pub const FLAG_DEVICE_INIT: u8 = 0x01;
++/// Largest descriptor read (the length field is one byte).
++const DESC_MAX: u16 = 255;
++
++/// An enabled logical unit, from its unit descriptor.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct LogicalUnit {
++    /// LUN (0..32).
++    pub lun: u8,
++    /// Logical block size in bytes (`2^bLogicalBlockSize`).
++    pub block_size: u32,
++    /// `qLogicalBlockCount`.
++    pub block_count: u64,
++    /// `bLUWriteProtect` (0 none, 1 power-on, 2 permanent).
++    pub write_protect: u8,
++    /// `bBootLunID` (0 = not a boot LU, 1 = A, 2 = B).
++    pub boot_lun_id: u8,
++}
++
++/// What bring-up learned about the controller and device.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct DeviceInfo {
++    /// Controller identification.
++    pub host: HostInfo,
++    /// Device descriptor `wSpecVersion` (BCD, e.g. 0x0210).
++    pub spec_version: u16,
++    /// Device descriptor `wManufacturerID`.
++    pub manufacturer_id: u16,
++    /// Device descriptor `bNumberLU`.
++    pub number_lu: u8,
++    /// Geometry `qTotalRawDeviceCapacity` (512-byte units).
++    pub raw_capacity: u64,
++    /// LUNs scanned (8 or 32, from `bMaxNumberLU`).
++    pub max_lu: u8,
++    /// Enabled logical units in LUN order.
++    pub units: Vec<LogicalUnit>,
++}
++
++fn be16(b: &[u8], at: usize) -> u16 {
++    u16::from_be_bytes([b[at], b[at + 1]])
++}
++
++fn be64(b: &[u8], at: usize) -> u64 {
++    let mut a = [0u8; 8];
++    a.copy_from_slice(&b[at..at + 8]);
++    u64::from_be_bytes(a)
++}
++
++impl<M: Mmio, D: Dma, T: Delay> Ufshc<M, D, T> {
++    /// Full read-only bring-up: controller, link, list, NOP, `fDeviceInit`, LU table.
++    pub fn bring_up(&mut self) -> Result<DeviceInfo> {
++        self.enable()?;
++        self.link_startup()?;
++        self.start_list()?;
++        self.nop()?;
++        self.device_init()?;
++        self.enumerate()
++    }
++
++    /// NOP OUT → NOP IN; timeouts, OCS and response errors are retried `nop_attempts` times.
++    pub fn nop(&mut self) -> Result<()> {
++        let mut last = Error::Timeout(Stage::Doorbell);
++        for _ in 0..self.cfg.nop_attempts.max(1) {
++            let tag = self.next_tag();
++            match self.transfer(&upiu::nop_out(tag), 0) {
++                Ok(c) => match upiu::parse_header(&c.resp).response {
++                    0 => return Ok(()),
++                    r => last = Error::Response(r),
++                },
++                Err(e @ (Error::Ocs(_) | Error::Timeout(Stage::Doorbell))) => last = e,
++                Err(e) => return Err(e),
++            }
++        }
++        Err(last)
++    }
++
++    fn query(
++        &mut self,
++        function: u8,
++        opcode: u8,
++        idn: u8,
++        index: u8,
++        len: u16,
++    ) -> Result<Completion> {
++        let tag = self.next_tag();
++        let c = self.transfer(&upiu::query(tag, function, opcode, idn, index, len), 0)?;
++        match upiu::parse_header(&c.resp).response {
++            0 => Ok(c),
++            r => Err(Error::Response(r)),
++        }
++    }
++
++    /// READ DESCRIPTOR; returns `bLength` bytes after checking the IDN.
++    pub fn read_descriptor(&mut self, idn: u8, index: u8) -> Result<Vec<u8>> {
++        let c = self.query(
++            upiu::QUERY_FN_READ,
++            upiu::QOP_READ_DESC,
++            idn,
++            index,
++            DESC_MAX,
++        )?;
++        let mut d = c.resp[upiu::RESP_HDR_LEN..].to_vec();
++        if d.len() < 2 || d[1] != idn || (d[0] as usize) < 2 {
++            return Err(Error::Descriptor(idn));
++        }
++        d.truncate(d[0] as usize);
++        Ok(d)
++    }
++
++    /// READ FLAG.
++    pub fn read_flag(&mut self, idn: u8) -> Result<bool> {
++        let c = self.query(upiu::QUERY_FN_READ, upiu::QOP_READ_FLAG, idn, 0, 0)?;
++        Ok(upiu::query_value(&c.resp) & 1 != 0)
++    }
++
++    /// READ ATTRIBUTE (32-bit value).
++    pub fn read_attribute(&mut self, idn: u8, index: u8) -> Result<u32> {
++        let c = self.query(upiu::QUERY_FN_READ, upiu::QOP_READ_ATTR, idn, index, 0)?;
++        Ok(upiu::query_value(&c.resp))
++    }
++
++    /// SET FLAG `fDeviceInit`, then poll until the device clears it. The only Query write.
++    pub fn device_init(&mut self) -> Result<()> {
++        self.query(
++            upiu::QUERY_FN_WRITE,
++            upiu::QOP_SET_FLAG,
++            FLAG_DEVICE_INIT,
++            0,
++            0,
++        )?;
++        for _ in 0..self.cfg.polls.device_init {
++            if !self.read_flag(FLAG_DEVICE_INIT)? {
++                return Ok(());
++            }
++        }
++        Err(Error::Timeout(Stage::DeviceInit))
++    }
++
++    /// Device + geometry descriptors, then one unit descriptor per possible LUN.
++    pub fn enumerate(&mut self) -> Result<DeviceInfo> {
++        let dev = self.read_descriptor(IDN_DEVICE, 0)?;
++        if dev.len() < 0x1a {
++            return Err(Error::Descriptor(IDN_DEVICE));
++        }
++        let geo = self.read_descriptor(IDN_GEOMETRY, 0)?;
++        if geo.len() < 0x0d {
++            return Err(Error::Descriptor(IDN_GEOMETRY));
++        }
++        let max_lu = if geo[0x0c] == 1 { 32 } else { 8 };
++        let mut units = Vec::new();
++        for lun in 0..max_lu {
++            let u = self.read_descriptor(IDN_UNIT, lun)?;
++            if u.len() < 0x13 {
++                return Err(Error::Descriptor(IDN_UNIT));
++            }
++            if u[0x03] != 1 {
++                continue;
++            }
++            if !(9..=16).contains(&u[0x0a]) {
++                return Err(Error::Descriptor(IDN_UNIT));
++            }
++            units.push(LogicalUnit {
++                lun,
++                block_size: 1 << u[0x0a],
++                block_count: be64(&u, 0x0b),
++                write_protect: u[0x05],
++                boot_lun_id: u[0x04],
++            });
++        }
++        Ok(DeviceInfo {
++            host: self.info,
++            spec_version: be16(&dev, 0x10),
++            manufacturer_id: be16(&dev, 0x18),
++            number_lu: dev[0x06],
++            raw_capacity: be64(&geo, 0x04),
++            max_lu,
++            units,
++        })
++    }
++}
+diff --git a/drivers/ufs-core/src/dma.rs b/drivers/ufs-core/src/dma.rs
+new file mode 100644
+index 00000000..cb9bd1bf
+--- /dev/null
++++ b/drivers/ufs-core/src/dma.rs
+@@ -0,0 +1,55 @@
++//! The DMA region the controller reads requests from and writes responses into.
++//!
++//! One physically contiguous, uncached region holds everything (`specs/ufs.md` §4–5):
++//!
++//! ```text
++//! 0x0000  UTRL         32 slots × 32 B UTRD   (1 KiB aligned)
++//! 0x0400  UCD slot 0   request UPIU @+0, response UPIU @+512, PRDT @+1024 (128 B aligned)
++//! 0x1000  data buffer  data-in target for SCSI reads (rest of the region, ≤ 256 KiB used)
++//! ```
++
++/// A physically contiguous DMA buffer. Production: an uncached `/scheme/memory` allocation;
++/// tests: a byte vector shared with the device model.
++pub trait Dma {
++    /// Bus address of byte 0 (physical — U-Boot leaves the UFS SMMU stream in S1 bypass).
++    fn phys(&self) -> u64;
++    /// Region size in bytes.
++    fn size(&self) -> usize;
++    /// Copy `buf.len()` bytes starting at `off` into `buf`.
++    fn read(&mut self, off: usize, buf: &mut [u8]);
++    /// Copy `data` into the region at `off`.
++    fn write(&mut self, off: usize, data: &[u8]);
++}
++
++/// UTRL offset within the region.
++pub const UTRL_OFF: usize = 0x0;
++/// UTRD size.
++pub const UTRD_LEN: usize = 32;
++/// UCD (slot 0) offset within the region.
++pub const UCD_OFF: usize = 0x400;
++/// Request UPIU offset inside the UCD.
++pub const UCD_REQ: usize = 0;
++/// Response UPIU offset inside the UCD.
++pub const UCD_RESP: usize = 512;
++/// Response UPIU area size.
++pub const UCD_RESP_LEN: usize = 512;
++/// PRDT offset inside the UCD.
++pub const UCD_PRDT: usize = 1024;
++/// Data buffer offset within the region.
++pub const DATA_OFF: usize = 0x1000;
++/// Smallest usable region: list + UCD + one 4 KiB block.
++pub const MIN_LEN: usize = DATA_OFF + 4096;
++/// One PRDT entry carries at most 256 KiB.
++pub const MAX_PRDT_BYTES: usize = 256 * 1024;
++
++/// Bytes usable for one data-in transfer with this region.
++pub fn data_capacity(len: usize) -> usize {
++    len.saturating_sub(DATA_OFF).min(MAX_PRDT_BYTES)
++}
++
++/// Read a little-endian u32 from the region.
++pub fn read_u32(dma: &mut impl Dma, off: usize) -> u32 {
++    let mut b = [0u8; 4];
++    dma.read(off, &mut b);
++    u32::from_le_bytes(b)
++}
+diff --git a/drivers/ufs-core/src/gpt.rs b/drivers/ufs-core/src/gpt.rs
+new file mode 100644
+index 00000000..a6dadfde
+--- /dev/null
++++ b/drivers/ufs-core/src/gpt.rs
+@@ -0,0 +1,206 @@
++//! GUID Partition Table parsing (UEFI 2.x §5.3), CRC-checked, read-only.
++
++use crate::hc::Ufshc;
++use crate::{Delay, Dma, Error, Result};
++use alloc::string::String;
++use alloc::vec;
++use alloc::vec::Vec;
++use mmio_replay::Mmio;
++
++/// Why a GPT was rejected.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum GptError {
++    /// Block shorter than the header.
++    Truncated,
++    /// No `"EFI PART"` signature.
++    Signature,
++    /// Header size outside 92..=block size.
++    HeaderSize,
++    /// Header CRC32 mismatch.
++    HeaderCrc,
++    /// Entry size not 128 × 2^n (≤ 512) or more than 1024 entries.
++    EntryLayout,
++    /// Partition entry array CRC32 mismatch.
++    EntriesCrc,
++}
++
++/// GPT header fields.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct GptHeader {
++    /// LBA of this header.
++    pub current_lba: u64,
++    /// LBA of the backup header.
++    pub backup_lba: u64,
++    /// First usable LBA.
++    pub first_usable: u64,
++    /// Last usable LBA.
++    pub last_usable: u64,
++    /// Disk GUID (on-disk byte order).
++    pub disk_guid: [u8; 16],
++    /// Start of the entry array.
++    pub entries_lba: u64,
++    /// Number of entries.
++    pub num_entries: u32,
++    /// Size of one entry.
++    pub entry_size: u32,
++    /// CRC32 of the entry array.
++    pub entries_crc: u32,
++}
++
++/// One used partition entry.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct GptEntry {
++    /// Index in the entry array.
++    pub index: u32,
++    /// Partition type GUID (on-disk byte order).
++    pub type_guid: [u8; 16],
++    /// Unique GUID (on-disk byte order).
++    pub unique_guid: [u8; 16],
++    /// First LBA.
++    pub first_lba: u64,
++    /// Last LBA (inclusive).
++    pub last_lba: u64,
++    /// Attribute bits.
++    pub attributes: u64,
++    /// Name (UTF-16LE decoded, NUL-terminated).
++    pub name: String,
++}
++
++/// A parsed table.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct Gpt {
++    /// Header.
++    pub header: GptHeader,
++    /// Used entries (non-zero type GUID).
++    pub entries: Vec<GptEntry>,
++}
++
++/// CRC-32/ISO-HDLC (the GPT/zlib CRC), bitwise.
++pub fn crc32(data: &[u8]) -> u32 {
++    let mut crc = !0u32;
++    for &b in data {
++        crc ^= b as u32;
++        for _ in 0..8 {
++            crc = if crc & 1 != 0 {
++                (crc >> 1) ^ 0xedb8_8320
++            } else {
++                crc >> 1
++            };
++        }
++    }
++    !crc
++}
++
++fn le32(b: &[u8], at: usize) -> u32 {
++    u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
++}
++
++fn le64(b: &[u8], at: usize) -> u64 {
++    le32(b, at) as u64 | (le32(b, at + 4) as u64) << 32
++}
++
++fn guid(b: &[u8], at: usize) -> [u8; 16] {
++    let mut g = [0u8; 16];
++    g.copy_from_slice(&b[at..at + 16]);
++    g
++}
++
++/// Parse and CRC-check the header in `block` (the LBA-1 block).
++pub fn parse_header(block: &[u8]) -> core::result::Result<GptHeader, GptError> {
++    if block.len() < 92 {
++        return Err(GptError::Truncated);
++    }
++    if &block[0..8] != b"EFI PART" {
++        return Err(GptError::Signature);
++    }
++    let size = le32(block, 12) as usize;
++    if size < 92 || size > block.len() {
++        return Err(GptError::HeaderSize);
++    }
++    let mut h = block[..size].to_vec();
++    h[16..20].fill(0);
++    if crc32(&h) != le32(block, 16) {
++        return Err(GptError::HeaderCrc);
++    }
++    let header = GptHeader {
++        current_lba: le64(block, 24),
++        backup_lba: le64(block, 32),
++        first_usable: le64(block, 40),
++        last_usable: le64(block, 48),
++        disk_guid: guid(block, 56),
++        entries_lba: le64(block, 72),
++        num_entries: le32(block, 80),
++        entry_size: le32(block, 84),
++        entries_crc: le32(block, 88),
++    };
++    let es = header.entry_size;
++    if !(128..=512).contains(&es) || !es.is_power_of_two() || header.num_entries > 1024 {
++        return Err(GptError::EntryLayout);
++    }
++    Ok(header)
++}
++
++/// CRC-check the entry array and decode the used entries.
++pub fn parse_entries(h: &GptHeader, bytes: &[u8]) -> core::result::Result<Vec<GptEntry>, GptError> {
++    let total = h.num_entries as usize * h.entry_size as usize;
++    if bytes.len() < total {
++        return Err(GptError::Truncated);
++    }
++    if crc32(&bytes[..total]) != h.entries_crc {
++        return Err(GptError::EntriesCrc);
++    }
++    let mut out = Vec::new();
++    for (i, e) in bytes[..total].chunks(h.entry_size as usize).enumerate() {
++        if e[0..16].iter().all(|&b| b == 0) {
++            continue;
++        }
++        let units = e[56..128]
++            .chunks(2)
++            .map(|c| u16::from_le_bytes([c[0], c[1]]));
++        let name = char::decode_utf16(units.take_while(|&u| u != 0))
++            .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
++            .collect();
++        out.push(GptEntry {
++            index: i as u32,
++            type_guid: guid(e, 0),
++            unique_guid: guid(e, 16),
++            first_lba: le64(e, 32),
++            last_lba: le64(e, 40),
++            attributes: le64(e, 48),
++            name,
++        });
++    }
++    Ok(out)
++}
++
++impl<M: Mmio, D: Dma, T: Delay> Ufshc<M, D, T> {
++    /// Read and verify the primary GPT of a LU (header at LBA 1).
++    pub fn read_gpt(&mut self, lun: u8, block_size: u32) -> Result<Gpt> {
++        let bs = block_size as usize;
++        let mut block = vec![0u8; bs];
++        self.read(lun, 1, block_size, &mut block)?;
++        let header = parse_header(&block).map_err(Error::Gpt)?;
++        let bytes = header.num_entries as usize * header.entry_size as usize;
++        let mut array = vec![0u8; bytes.div_ceil(bs) * bs];
++        self.read(lun, header.entries_lba, block_size, &mut array)?;
++        let entries = parse_entries(&header, &array).map_err(Error::Gpt)?;
++        Ok(Gpt { header, entries })
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn crc32_check_value() {
++        assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
++        assert_eq!(crc32(b""), 0);
++    }
++
++    #[test]
++    fn header_rejects_garbage() {
++        assert_eq!(parse_header(&[0u8; 10]), Err(GptError::Truncated));
++        assert_eq!(parse_header(&[0u8; 512]), Err(GptError::Signature));
++    }
++}
+diff --git a/drivers/ufs-core/src/hc.rs b/drivers/ufs-core/src/hc.rs
+new file mode 100644
+index 00000000..72ffe2ad
+--- /dev/null
++++ b/drivers/ufs-core/src/hc.rs
+@@ -0,0 +1,214 @@
++//! Host controller: HCE cycle, Qualcomm hooks, UIC commands, UTRL setup, one-slot transfers.
++
++use crate::dma::{self, Dma};
++use crate::regs::{self, qcom};
++use crate::{Config, Delay, Error, Result, Stage};
++use alloc::vec::Vec;
++use mmio_replay::Mmio;
++
++/// Identification read during bring-up.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub struct HostInfo {
++    /// CAP register.
++    pub cap: u32,
++    /// VER register.
++    pub ver: u32,
++    /// Qualcomm `REG_UFS_HW_VERSION` (0 when not Qualcomm).
++    pub qcom_hw_version: u32,
++}
++
++/// A completed transfer: the response UPIU (header + data segment).
++pub(crate) struct Completion {
++    pub resp: Vec<u8>,
++}
++
++/// UFS host controller driver.
++pub struct Ufshc<M: Mmio, D: Dma, T: Delay> {
++    io: M,
++    base: u64,
++    pub(crate) dma: D,
++    pub(crate) delay: T,
++    pub(crate) cfg: Config,
++    pub(crate) info: HostInfo,
++    pub(crate) tag: u8,
++}
++
++impl<M: Mmio, D: Dma, T: Delay> Ufshc<M, D, T> {
++    /// Wrap a register window at `base` and a DMA region. No MMIO access happens here.
++    pub fn new(io: M, base: u64, dma: D, delay: T, cfg: Config) -> Result<Self> {
++        if dma.size() < dma::MIN_LEN || dma.phys() & 0xfff != 0 {
++            return Err(Error::DmaLayout);
++        }
++        Ok(Ufshc {
++            io,
++            base,
++            dma,
++            delay,
++            cfg,
++            info: HostInfo::default(),
++            tag: 0,
++        })
++    }
++
++    /// Identification registers read by [`Ufshc::enable`].
++    pub fn info(&self) -> HostInfo {
++        self.info
++    }
++
++    /// Give back the register window and DMA region.
++    pub fn into_parts(self) -> (M, D) {
++        (self.io, self.dma)
++    }
++
++    pub(crate) fn rd(&mut self, off: u64) -> u32 {
++        self.io.read_u32(self.base + off)
++    }
++
++    pub(crate) fn wr(&mut self, off: u64, v: u32) {
++        self.io.write_u32(self.base + off, v)
++    }
++
++    pub(crate) fn wait(
++        &mut self,
++        stage: Stage,
++        off: u64,
++        polls: u32,
++        ok: impl Fn(u32) -> bool,
++    ) -> Result<u32> {
++        for _ in 0..polls {
++            let v = self.rd(off);
++            if ok(v) {
++                return Ok(v);
++            }
++            self.delay.delay_us(self.cfg.poll_delay_us);
++        }
++        Err(Error::Timeout(stage))
++    }
++
++    /// Steps 1–5 of `specs/ufs.md` §4: identify, IE=0, HCE 1→0→1, Qualcomm QUniPro + PHY check.
++    pub fn enable(&mut self) -> Result<()> {
++        let cap = self.rd(regs::CAP);
++        let ver = self.rd(regs::VER);
++        let hw = if self.cfg.qcom.is_some() {
++            self.rd(qcom::HW_VERSION)
++        } else {
++            0
++        };
++        self.info = HostInfo {
++            cap,
++            ver,
++            qcom_hw_version: hw,
++        };
++        if cap & regs::CAP_LSDBS != 0 {
++            return Err(Error::Unsupported("single doorbell"));
++        }
++        let end = self.dma.phys() + self.dma.size() as u64 - 1;
++        if end > u32::MAX as u64 && cap & regs::CAP_64AS == 0 {
++            return Err(Error::Unsupported("64-bit addressing"));
++        }
++        self.wr(regs::IE, 0);
++        let hce = self.rd(regs::HCE);
++        if hce & regs::HCE_ENABLE != 0 {
++            self.wr(regs::HCE, hce & !regs::HCE_ENABLE);
++            let polls = self.cfg.polls.hce;
++            self.wait(Stage::HceDisable, regs::HCE, polls, |v| {
++                v & regs::HCE_ENABLE == 0
++            })?;
++        }
++        if self.cfg.qcom.is_some() {
++            let cfg1 = self.rd(qcom::CFG1);
++            self.wr(qcom::CFG1, cfg1 | qcom::CFG1_QUNIPRO_SEL);
++            if qcom::hw_major(hw) >= 5 {
++                let cfg0 = self.rd(qcom::CFG0);
++                self.wr(qcom::CFG0, cfg0 & !qcom::CFG0_QUNIPRO_G4_SEL);
++            }
++        }
++        self.wr(regs::HCE, regs::HCE_ENABLE);
++        self.delay.delay_us(self.cfg.hce_settle_us);
++        let polls = self.cfg.polls.hce;
++        self.wait(Stage::HceEnable, regs::HCE, polls, |v| {
++            v & regs::HCE_ENABLE != 0
++        })?;
++        if self.cfg.qcom.is_some() {
++            self.check_phy_hibern8()?;
++        }
++        Ok(())
++    }
++
++    fn check_phy_hibern8(&mut self) -> Result<()> {
++        let mut state = 0;
++        for _ in 0..self.cfg.polls.phy {
++            state = self.dme_get(qcom::MPHY_TX_FSM_STATE, 0)?;
++            if state == qcom::TX_FSM_HIBERN8 {
++                return Ok(());
++            }
++            self.delay.delay_us(self.cfg.poll_delay_us);
++        }
++        Err(Error::PhyNotReady(state))
++    }
++
++    /// Issue one UIC command; returns `UCMDARG3` (the DME_GET value).
++    pub fn uic(&mut self, opcode: u8, arg1: u32, arg2: u32, arg3: u32) -> Result<u32> {
++        let polls = self.cfg.polls.uic;
++        self.wait(Stage::UicReady, regs::HCS, polls, |v| {
++            v & regs::HCS_UCRDY != 0
++        })?;
++        self.wr(regs::UCMDARG1, arg1);
++        self.wr(regs::UCMDARG2, arg2);
++        self.wr(regs::UCMDARG3, arg3);
++        self.wr(regs::UICCMD, opcode as u32);
++        self.wait(Stage::UicComplete, regs::IS, polls, |v| {
++            v & regs::IS_UCCS != 0
++        })?;
++        self.wr(regs::IS, regs::IS_UCCS);
++        let result = (self.rd(regs::UCMDARG2) & 0xff) as u8;
++        if result != 0 {
++            return Err(Error::Uic { opcode, result });
++        }
++        Ok(self.rd(regs::UCMDARG3))
++    }
++
++    /// DME_GET of a local attribute.
++    pub fn dme_get(&mut self, attr: u16, sel: u16) -> Result<u32> {
++        self.uic(regs::DME_GET, ((attr as u32) << 16) | sel as u32, 0, 0)
++    }
++
++    /// DME_SET of a local, volatile ("normal" set type) attribute.
++    pub fn dme_set(&mut self, attr: u16, sel: u16, value: u32) -> Result<()> {
++        self.uic(regs::DME_SET, ((attr as u32) << 16) | sel as u32, 0, value)
++            .map(|_| ())
++    }
++
++    /// Steps 6–7: Qualcomm pre-link-startup DME setup, `DME_LINKSTARTUP`, HCS.DP check.
++    pub fn link_startup(&mut self) -> Result<()> {
++        if let Some(q) = self.cfg.qcom {
++            let mut v = self.dme_get(qcom::DME_VS_CORE_CLK_CTRL, 0)?;
++            v &= !(qcom::CLK_1US_CYCLES_MASK | qcom::CORE_CLK_DIV_EN);
++            v |= q.unipro_core_clk_mhz as u32;
++            self.dme_set(qcom::DME_VS_CORE_CLK_CTRL, 0, v)?;
++            let lanes = self.dme_get(regs::PA_CONNECTED_TX_DATA_LANES, 0)?;
++            for lane in 0..lanes.min(4) {
++                self.dme_set(regs::TX_LCC_ENABLE, lane as u16, 0)?;
++            }
++        }
++        self.uic(regs::DME_LINKSTARTUP, 0, 0, 0)?;
++        if self.rd(regs::HCS) & regs::HCS_DP == 0 {
++            return Err(Error::NoDevice);
++        }
++        Ok(())
++    }
++
++    /// Step 8: clear residual IS, program the UTRL base, check ready, run.
++    pub fn start_list(&mut self) -> Result<()> {
++        let is = self.rd(regs::IS);
++        self.wr(regs::IS, is);
++        let base = self.dma.phys() + dma::UTRL_OFF as u64;
++        self.wr(regs::UTRLBA, base as u32);
++        self.wr(regs::UTRLBAU, (base >> 32) as u32);
++        if self.rd(regs::HCS) & regs::HCS_UTRLRDY == 0 || self.rd(regs::UTRLDBR) != 0 {
++            return Err(Error::ListNotReady);
++        }
++        self.wr(regs::UTRLRSR, 1);
++        Ok(())
++    }
++}
+diff --git a/drivers/ufs-core/src/lib.rs b/drivers/ufs-core/src/lib.rs
+new file mode 100644
+index 00000000..049a3a3e
+--- /dev/null
++++ b/drivers/ufs-core/src/lib.rs
+@@ -0,0 +1,178 @@
++//! `ufs-core` — read-only UFS host controller core for the OnePlus 6 (`qcom,sdm845-ufshc`).
++//!
++//! Spec: `specs/ufs.md`. The driver takes the register window through the `mmio-replay`
++//! [`Mmio`] trait and its descriptor/data memory through [`Dma`], so every step is host-testable
++//! against a register + UTRD/UPIU model or a replayed phone trace.
++//!
++//! Bring-up ([`Ufshc::bring_up`]): HCE cycle with the Qualcomm QUniPro/PHY checks, UIC
++//! `DME_LINKSTARTUP`, UTRL setup, NOP OUT/IN, `fDeviceInit`, device/geometry/unit descriptors →
++//! logical-unit table. Then [`Ufshc::read_capacity`], [`Ufshc::read`] and [`Ufshc::read_gpt`].
++//!
++//! **Read-only by construction:** no UTRD with host-to-device direction is ever built, the SCSI
++//! layer only accepts an opcode allowlist ([`scsi::Cmd`], [`Ufshc::scsi_raw`]) and the only Query
++//! write is the volatile `fDeviceInit` flag.
++
++#![no_std]
++#![forbid(unsafe_code)]
++#![deny(missing_docs)]
++
++extern crate alloc;
++
++mod device;
++pub mod dma;
++pub mod gpt;
++mod hc;
++pub mod regs;
++pub mod scsi;
++pub mod upiu;
++mod xfer;
++
++pub use device::{DeviceInfo, LogicalUnit};
++pub use dma::Dma;
++pub use hc::{HostInfo, Ufshc};
++pub use mmio_replay::Mmio;
++
++/// Where a bounded wait ran out.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Stage {
++    /// HCE did not drop to 0.
++    HceDisable,
++    /// HCE did not come back to 1.
++    HceEnable,
++    /// The PHY TX FSM never reached HIBERN8 after HCE.
++    PhyHibern8,
++    /// HCS.UCRDY never set.
++    UicReady,
++    /// IS.UCCS never set.
++    UicComplete,
++    /// The transfer doorbell never cleared.
++    Doorbell,
++    /// The slot did not clear after UTRLCLR.
++    Clear,
++    /// `fDeviceInit` never read back 0.
++    DeviceInit,
++}
++
++/// Driver errors. Every error path leaves the controller without an outstanding slot.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub enum Error {
++    /// The controller lacks a capability this driver needs.
++    Unsupported(&'static str),
++    /// The DMA region is too small or misaligned.
++    DmaLayout,
++    /// A bounded wait expired.
++    Timeout(Stage),
++    /// `MPHY_TX_FSM_STATE` after HCE (the firmware-initialised PHY did not survive).
++    PhyNotReady(u32),
++    /// A UIC command returned a non-zero config result code.
++    Uic {
++        /// UIC opcode.
++        opcode: u8,
++        /// `UCMDARG2[7:0]`.
++        result: u8,
++    },
++    /// Link startup completed but HCS.DP is clear.
++    NoDevice,
++    /// HCS.UTRLRDY clear or a stale doorbell after list setup.
++    ListNotReady,
++    /// A fatal IS bit was raised during a transfer (raw IS value).
++    Fatal(u32),
++    /// Overall Command Status in the UTRD was not success.
++    Ocs(u8),
++    /// The response UPIU had the wrong transaction code or task tag.
++    BadUpiu,
++    /// The UPIU response field was not "target success".
++    Response(u8),
++    /// The SCSI status was CHECK CONDITION.
++    CheckCondition(scsi::Sense),
++    /// Another non-GOOD SCSI status.
++    ScsiStatus(u8),
++    /// A command outside the read-only allowlist; nothing was sent.
++    Refused(u8),
++    /// A descriptor was shorter than its fixed fields or had the wrong IDN.
++    Descriptor(u8),
++    /// Invalid caller argument (LUN, length, buffer); nothing was sent.
++    InvalidArgument,
++    /// The device returned fewer data-in bytes than requested (bytes received).
++    ShortTransfer(usize),
++    /// GPT parse failure.
++    Gpt(gpt::GptError),
++}
++
++/// Result alias.
++pub type Result<T> = core::result::Result<T, Error>;
++
++/// Busy-wait hook between polls (production: a short sleep; tests: no-op).
++pub trait Delay {
++    /// Wait about `us` microseconds.
++    fn delay_us(&mut self, us: u32);
++}
++
++/// A [`Delay`] that returns immediately.
++#[derive(Clone, Copy, Debug, Default)]
++pub struct NoDelay;
++
++impl Delay for NoDelay {
++    fn delay_us(&mut self, _us: u32) {}
++}
++
++/// Qualcomm vendor settings.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct Qcom {
++    /// `core_clk_unipro` in MHz for `DME_VS_CORE_CLK_CTRL` (DT top OPP: 150).
++    pub unipro_core_clk_mhz: u8,
++}
++
++/// Poll budgets (iterations, each followed by `poll_delay_us`).
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct Polls {
++    /// HCE enable/disable.
++    pub hce: u32,
++    /// PHY HIBERN8 check (DME_GET per poll).
++    pub phy: u32,
++    /// UIC ready / completion.
++    pub uic: u32,
++    /// Transfer doorbell.
++    pub transfer: u32,
++    /// Slot clear after a timeout.
++    pub clear: u32,
++    /// `fDeviceInit` read-back queries.
++    pub device_init: u32,
++}
++
++/// Driver configuration.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct Config {
++    /// `Some` on `qcom,*-ufshc`.
++    pub qcom: Option<Qcom>,
++    /// Poll budgets.
++    pub polls: Polls,
++    /// Delay between polls, µs.
++    pub poll_delay_us: u32,
++    /// Delay after writing HCE = 1 before the first read-back, µs (Linux/FreeBSD: 100).
++    pub hce_settle_us: u32,
++    /// NOP OUT attempts (Linux `NOP_OUT_RETRIES` = 10).
++    pub nop_attempts: u8,
++}
++
++impl Config {
++    /// SDM845 defaults: Qualcomm hooks on, timeouts in line with FreeBSD/Linux.
++    pub const fn sdm845() -> Self {
++        Config {
++            qcom: Some(Qcom {
++                unipro_core_clk_mhz: 150,
++            }),
++            polls: Polls {
++                hce: 1_000,
++                phy: 1_000,
++                uic: 5_000,
++                transfer: 100_000,
++                clear: 1_000,
++                device_init: 2_000,
++            },
++            poll_delay_us: 100,
++            hce_settle_us: 100,
++            nop_attempts: 10,
++        }
++    }
++}
+diff --git a/drivers/ufs-core/src/regs.rs b/drivers/ufs-core/src/regs.rs
+new file mode 100644
+index 00000000..fd0caceb
+--- /dev/null
++++ b/drivers/ufs-core/src/regs.rs
+@@ -0,0 +1,109 @@
++//! UFSHCI register offsets/bits and the Qualcomm vendor additions (`specs/ufs.md` §3).
++
++/// Host Controller Capabilities.
++pub const CAP: u64 = 0x00;
++/// UFS version.
++pub const VER: u64 = 0x08;
++/// Interrupt Status (write-1-to-clear).
++pub const IS: u64 = 0x20;
++/// Interrupt Enable.
++pub const IE: u64 = 0x24;
++/// Host Controller Status.
++pub const HCS: u64 = 0x30;
++/// Host Controller Enable.
++pub const HCE: u64 = 0x34;
++/// UTP Transfer Request List base, low 32 bits.
++pub const UTRLBA: u64 = 0x50;
++/// UTP Transfer Request List base, high 32 bits.
++pub const UTRLBAU: u64 = 0x54;
++/// UTRL doorbell.
++pub const UTRLDBR: u64 = 0x58;
++/// UTRL clear (a 0 bit clears that slot).
++pub const UTRLCLR: u64 = 0x5c;
++/// UTRL run/stop.
++pub const UTRLRSR: u64 = 0x60;
++/// UIC command opcode.
++pub const UICCMD: u64 = 0x90;
++/// UIC command argument 1 (`attr << 16 | selector`).
++pub const UCMDARG1: u64 = 0x94;
++/// UIC command argument 2 (`[7:0]` config result code).
++pub const UCMDARG2: u64 = 0x98;
++/// UIC command argument 3 (value).
++pub const UCMDARG3: u64 = 0x9c;
++
++/// CAP: number of transfer slots minus one.
++pub const CAP_NUTRS_MASK: u32 = 0xff;
++/// CAP: 64-bit addressing supported.
++pub const CAP_64AS: u32 = 1 << 24;
++/// CAP: legacy single doorbell *not* supported.
++pub const CAP_LSDBS: u32 = 1 << 29;
++
++/// IS: UTP transfer request completion.
++pub const IS_UTRCS: u32 = 1 << 0;
++/// IS: UIC error.
++pub const IS_UE: u32 = 1 << 2;
++/// IS: UIC command completion.
++pub const IS_UCCS: u32 = 1 << 10;
++/// IS: device fatal error.
++pub const IS_DFES: u32 = 1 << 11;
++/// IS: UTP error.
++pub const IS_UTPES: u32 = 1 << 12;
++/// IS: host controller fatal error.
++pub const IS_HCFES: u32 = 1 << 16;
++/// IS: system bus fatal error.
++pub const IS_SBFES: u32 = 1 << 17;
++/// IS bits that abort a transfer.
++pub const IS_FATAL: u32 = IS_UE | IS_DFES | IS_UTPES | IS_HCFES | IS_SBFES;
++
++/// HCS: device present.
++pub const HCS_DP: u32 = 1 << 0;
++/// HCS: transfer request list ready.
++pub const HCS_UTRLRDY: u32 = 1 << 1;
++/// HCS: UIC command ready.
++pub const HCS_UCRDY: u32 = 1 << 3;
++
++/// HCE: host controller enable.
++pub const HCE_ENABLE: u32 = 1 << 0;
++
++/// UIC opcode DME_GET.
++pub const DME_GET: u8 = 0x01;
++/// UIC opcode DME_SET.
++pub const DME_SET: u8 = 0x02;
++/// UIC opcode DME_PEER_GET.
++pub const DME_PEER_GET: u8 = 0x03;
++/// UIC opcode DME_LINKSTARTUP.
++pub const DME_LINKSTARTUP: u8 = 0x16;
++
++/// UniPro `PA_ConnectedTxDataLanes`.
++pub const PA_CONNECTED_TX_DATA_LANES: u16 = 0x1561;
++/// M-PHY TX `TX_LCC_ENABLE` (selector = lane).
++pub const TX_LCC_ENABLE: u16 = 0x002c;
++
++/// Qualcomm vendor registers and DME attributes (Linux `ufs-qcom.h`, facts only).
++pub mod qcom {
++    /// `REG_UFS_CFG0`.
++    pub const CFG0: u64 = 0xd8;
++    /// `REG_UFS_CFG1`.
++    pub const CFG1: u64 = 0xdc;
++    /// `REG_UFS_HW_VERSION`.
++    pub const HW_VERSION: u64 = 0xe4;
++    /// CFG0: `QUNIPRO_G4_SEL` (cleared on HW major >= 5 only).
++    pub const CFG0_QUNIPRO_G4_SEL: u32 = 1 << 5;
++    /// CFG1: `QUNIPRO_SEL`.
++    pub const CFG1_QUNIPRO_SEL: u32 = 1 << 0;
++    /// DME `MPHY_TX_FSM_STATE` (selector = lane).
++    pub const MPHY_TX_FSM_STATE: u16 = 0x0041;
++    /// `MPHY_TX_FSM_STATE` value once the PHY reached HIBERN8 after HCE.
++    pub const TX_FSM_HIBERN8: u32 = 1;
++    /// DME `DME_VS_CORE_CLK_CTRL`.
++    pub const DME_VS_CORE_CLK_CTRL: u16 = 0xd002;
++    /// `DME_VS_CORE_CLK_CTRL` cycles-per-µs field (HW major < 4).
++    pub const CLK_1US_CYCLES_MASK: u32 = 0xff;
++    /// `DME_VS_CORE_CLK_CTRL` `CORE_CLK_DIV_EN`.
++    pub const CORE_CLK_DIV_EN: u32 = 1 << 8;
++
++    /// Major field of `HW_VERSION`.
++    pub fn hw_major(ver: u32) -> u32 {
++        ver >> 28
++    }
++}
+diff --git a/drivers/ufs-core/src/scsi.rs b/drivers/ufs-core/src/scsi.rs
+new file mode 100644
+index 00000000..d898f41e
+--- /dev/null
++++ b/drivers/ufs-core/src/scsi.rs
+@@ -0,0 +1,251 @@
++//! Read-only SCSI over COMMAND UPIUs (`specs/ufs.md` §4 "SCSI").
++
++use crate::hc::Ufshc;
++use crate::{dma, upiu};
++use crate::{Delay, Dma, Error, Result};
++use mmio_replay::Mmio;
++
++/// The only opcodes this driver will ever put in a CDB.
++pub const ALLOWED_OPCODES: [u8; 5] = [0x00, 0x03, 0x12, 0x25, 0x28];
++
++/// SCSI status CHECK CONDITION.
++const CHECK_CONDITION: u8 = 0x02;
++/// Sense key UNIT ATTENTION.
++pub const UNIT_ATTENTION: u8 = 0x06;
++
++/// Read-only command set.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Cmd {
++    /// TEST UNIT READY.
++    TestUnitReady,
++    /// REQUEST SENSE (18 bytes, fixed format).
++    RequestSense,
++    /// INQUIRY (36 bytes standard data).
++    Inquiry,
++    /// READ CAPACITY(10) (8 bytes).
++    ReadCapacity10,
++    /// READ(10).
++    Read10 {
++        /// First logical block.
++        lba: u32,
++        /// Block count.
++        blocks: u16,
++    },
++}
++
++impl Cmd {
++    /// The 16-byte CDB field of the COMMAND UPIU.
++    pub fn cdb(&self) -> [u8; 16] {
++        let mut c = [0u8; 16];
++        match *self {
++            Cmd::TestUnitReady => {}
++            Cmd::RequestSense => {
++                c[0] = 0x03;
++                c[4] = 18;
++            }
++            Cmd::Inquiry => {
++                c[0] = 0x12;
++                c[4] = 36;
++            }
++            Cmd::ReadCapacity10 => c[0] = 0x25,
++            Cmd::Read10 { lba, blocks } => {
++                c[0] = 0x28;
++                c[2..6].copy_from_slice(&lba.to_be_bytes());
++                c[7..9].copy_from_slice(&blocks.to_be_bytes());
++            }
++        }
++        c
++    }
++
++    /// Expected data-in length.
++    pub fn data_len(&self, block_size: u32) -> usize {
++        match *self {
++            Cmd::TestUnitReady => 0,
++            Cmd::RequestSense => 18,
++            Cmd::Inquiry => 36,
++            Cmd::ReadCapacity10 => 8,
++            Cmd::Read10 { blocks, .. } => blocks as usize * block_size as usize,
++        }
++    }
++}
++
++/// Decoded sense data.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub struct Sense {
++    /// Sense key.
++    pub key: u8,
++    /// Additional sense code.
++    pub asc: u8,
++    /// Additional sense code qualifier.
++    pub ascq: u8,
++}
++
++/// Parse fixed (0x70/0x71) or descriptor (0x72/0x73) format sense data.
++pub fn parse_sense(b: &[u8]) -> Sense {
++    let at = |i: usize| b.get(i).copied().unwrap_or(0);
++    match at(0) & 0x7f {
++        0x72 | 0x73 => Sense {
++            key: at(1) & 0xf,
++            asc: at(2),
++            ascq: at(3),
++        },
++        _ => Sense {
++            key: at(2) & 0xf,
++            asc: at(12),
++            ascq: at(13),
++        },
++    }
++}
++
++/// READ CAPACITY(10) result.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct Capacity {
++    /// Last addressable LBA.
++    pub last_lba: u32,
++    /// Block length in bytes.
++    pub block_size: u32,
++}
++
++impl<M: Mmio, D: Dma, T: Delay> Ufshc<M, D, T> {
++    /// Run an allowlisted command on a regular LU; data-in lands in `out`. Returns bytes received.
++    pub fn scsi(&mut self, lun: u8, cmd: Cmd, block_size: u32, out: &mut [u8]) -> Result<usize> {
++        self.scsi_raw(lun, &cmd.cdb(), cmd.data_len(block_size), out)
++    }
++
++    /// Run a raw CDB. Anything whose opcode is not in [`ALLOWED_OPCODES`] is refused before
++    /// any register or DMA access.
++    pub fn scsi_raw(
++        &mut self,
++        lun: u8,
++        cdb: &[u8],
++        data_len: usize,
++        out: &mut [u8],
++    ) -> Result<usize> {
++        let op = *cdb.first().ok_or(Error::InvalidArgument)?;
++        if !ALLOWED_OPCODES.contains(&op) {
++            return Err(Error::Refused(op));
++        }
++        if cdb.len() > 16 || lun > 0x7f || data_len > out.len() {
++            return Err(Error::InvalidArgument);
++        }
++        let mut c = [0u8; 16];
++        c[..cdb.len()].copy_from_slice(cdb);
++        for attempt in 0..2 {
++            let tag = self.next_tag();
++            let done = self.transfer(&upiu::command(tag, lun, data_len as u32, &c), data_len)?;
++            let hdr = upiu::parse_header(&done.resp);
++            if hdr.response != 0 {
++                return Err(Error::Response(hdr.response));
++            }
++            match hdr.status {
++                0 => {
++                    let r = &done.resp;
++                    let residual = u32::from_be_bytes([r[12], r[13], r[14], r[15]]) as usize;
++                    let got = data_len.saturating_sub(residual);
++                    self.copy_data(&mut out[..got]);
++                    return Ok(got);
++                }
++                CHECK_CONDITION => {
++                    let sense = parse_sense(upiu::sense(&done.resp));
++                    if sense.key == UNIT_ATTENTION && attempt == 0 {
++                        continue;
++                    }
++                    return Err(Error::CheckCondition(sense));
++                }
++                s => return Err(Error::ScsiStatus(s)),
++            }
++        }
++        unreachable!("loop returns on its second attempt")
++    }
++
++    /// READ CAPACITY(10).
++    pub fn read_capacity(&mut self, lun: u8) -> Result<Capacity> {
++        let mut b = [0u8; 8];
++        let got = self.scsi(lun, Cmd::ReadCapacity10, 0, &mut b)?;
++        if got != 8 {
++            return Err(Error::ShortTransfer(got));
++        }
++        Ok(Capacity {
++            last_lba: u32::from_be_bytes([b[0], b[1], b[2], b[3]]),
++            block_size: u32::from_be_bytes([b[4], b[5], b[6], b[7]]),
++        })
++    }
++
++    /// READ(10) whole blocks starting at `lba` into `buf`, chunked to the DMA buffer.
++    pub fn read(&mut self, lun: u8, lba: u64, block_size: u32, buf: &mut [u8]) -> Result<()> {
++        let bs = block_size as usize;
++        if bs == 0 || !buf.len().is_multiple_of(bs) {
++            return Err(Error::InvalidArgument);
++        }
++        let per = (dma::data_capacity(self.dma.size()) / bs).min(u16::MAX as usize);
++        if per == 0 || lba + (buf.len() / bs) as u64 > u32::MAX as u64 + 1 {
++            return Err(Error::InvalidArgument);
++        }
++        let mut lba = lba as u32;
++        for chunk in buf.chunks_mut(per * bs) {
++            let blocks = (chunk.len() / bs) as u16;
++            let got = self.scsi(lun, Cmd::Read10 { lba, blocks }, block_size, chunk)?;
++            if got != chunk.len() {
++                return Err(Error::ShortTransfer(got));
++            }
++            lba = lba.wrapping_add(blocks as u32);
++        }
++        Ok(())
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn cdbs_are_read_only_and_well_formed() {
++        let r = Cmd::Read10 {
++            lba: 0x0102_0304,
++            blocks: 2,
++        }
++        .cdb();
++        assert_eq!(&r[..10], &[0x28, 0, 1, 2, 3, 4, 0, 0, 2, 0]);
++        assert_eq!(Cmd::Read10 { lba: 0, blocks: 3 }.data_len(4096), 12288);
++        for c in [
++            Cmd::TestUnitReady,
++            Cmd::RequestSense,
++            Cmd::Inquiry,
++            Cmd::ReadCapacity10,
++            Cmd::Read10 { lba: 0, blocks: 1 },
++        ] {
++            assert!(ALLOWED_OPCODES.contains(&c.cdb()[0]));
++        }
++        // No write-class opcode can sneak into the allowlist.
++        for op in [
++            0x0a, 0x2a, 0x2e, 0x35, 0x41, 0x42, 0x8a, 0x91, 0x93, 0xaa, 0x55, 0x15, 0x1b, 0x3b,
++        ] {
++            assert!(!ALLOWED_OPCODES.contains(&op), "opcode {op:#x}");
++        }
++    }
++
++    #[test]
++    fn sense_fixed_and_descriptor_formats() {
++        let mut f = [0u8; 18];
++        f[0] = 0x70;
++        f[2] = 0x06;
++        f[12] = 0x29;
++        assert_eq!(
++            parse_sense(&f),
++            Sense {
++                key: 6,
++                asc: 0x29,
++                ascq: 0
++            }
++        );
++        assert_eq!(
++            parse_sense(&[0x72, 0x05, 0x24, 0x01]),
++            Sense {
++                key: 5,
++                asc: 0x24,
++                ascq: 1
++            }
++        );
++        assert_eq!(parse_sense(&[]), Sense::default());
++    }
++}
+diff --git a/drivers/ufs-core/src/upiu.rs b/drivers/ufs-core/src/upiu.rs
+new file mode 100644
+index 00000000..debaa55f
+--- /dev/null
++++ b/drivers/ufs-core/src/upiu.rs
+@@ -0,0 +1,252 @@
++//! UTRD/PRDT (little-endian) and UPIU (big-endian) encoders/decoders (`specs/ufs.md` §4).
++
++/// Transaction code NOP OUT.
++pub const NOP_OUT: u8 = 0x00;
++/// Transaction code COMMAND.
++pub const COMMAND: u8 = 0x01;
++/// Transaction code QUERY REQUEST.
++pub const QUERY_REQUEST: u8 = 0x16;
++/// Transaction code NOP IN.
++pub const NOP_IN: u8 = 0x20;
++/// Transaction code RESPONSE.
++pub const RESPONSE: u8 = 0x21;
++/// Transaction code QUERY RESPONSE.
++pub const QUERY_RESPONSE: u8 = 0x36;
++
++/// Every request UPIU this driver builds is 32 bytes (header + 20 B; no data-out segment).
++pub const REQ_LEN: usize = 32;
++/// Header + fixed fields of every response; the data segment follows.
++pub const RESP_HDR_LEN: usize = 32;
++
++/// COMMAND flags: read (R bit in `[7:4]` = 0x4).
++pub const FLAG_READ: u8 = 0x40;
++
++/// Query function: standard read request.
++pub const QUERY_FN_READ: u8 = 0x01;
++/// Query function: standard write request.
++pub const QUERY_FN_WRITE: u8 = 0x81;
++/// Query opcode: read descriptor.
++pub const QOP_READ_DESC: u8 = 0x01;
++/// Query opcode: read attribute.
++pub const QOP_READ_ATTR: u8 = 0x03;
++/// Query opcode: read flag.
++pub const QOP_READ_FLAG: u8 = 0x05;
++/// Query opcode: set flag.
++pub const QOP_SET_FLAG: u8 = 0x06;
++
++/// UTRD data direction.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Direction {
++    /// No data phase.
++    None = 0,
++    /// Device to host (reads). Host-to-device (1) is never built by this driver.
++    DeviceToHost = 2,
++}
++
++/// Fields of one UTRD.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct Utrd {
++    /// Data direction.
++    pub dir: Direction,
++    /// UCD bus address (128-byte aligned).
++    pub ucd: u64,
++    /// Response UPIU offset in dwords.
++    pub resp_off_dw: u16,
++    /// Response UPIU length in dwords.
++    pub resp_len_dw: u16,
++    /// PRDT offset in dwords.
++    pub prdt_off_dw: u16,
++    /// PRDT entry count.
++    pub prdt_len: u16,
++}
++
++/// OCS value the host presets so a completion that never happened is visible.
++pub const OCS_INVALID: u8 = 0x0f;
++
++impl Utrd {
++    /// Encode: command type 1 (UFS storage), interrupt bit set, OCS preset invalid.
++    pub fn encode(&self) -> [u8; 32] {
++        let mut d = [0u8; 32];
++        let dw0 = (1u32 << 28) | ((self.dir as u32) << 25) | (1 << 24);
++        d[0..4].copy_from_slice(&dw0.to_le_bytes());
++        d[8] = OCS_INVALID;
++        d[16..20].copy_from_slice(&(self.ucd as u32).to_le_bytes());
++        d[20..24].copy_from_slice(&((self.ucd >> 32) as u32).to_le_bytes());
++        d[24..26].copy_from_slice(&self.resp_len_dw.to_le_bytes());
++        d[26..28].copy_from_slice(&self.resp_off_dw.to_le_bytes());
++        d[28..30].copy_from_slice(&self.prdt_len.to_le_bytes());
++        d[30..32].copy_from_slice(&self.prdt_off_dw.to_le_bytes());
++        d
++    }
++}
++
++/// One PRDT entry: `{addr lo, addr hi, reserved, byte_count - 1}`.
++pub fn prdt_entry(addr: u64, len: usize) -> [u8; 16] {
++    let mut e = [0u8; 16];
++    e[0..4].copy_from_slice(&(addr as u32).to_le_bytes());
++    e[4..8].copy_from_slice(&((addr >> 32) as u32).to_le_bytes());
++    e[12..16].copy_from_slice(&((len as u32) - 1).to_le_bytes());
++    e
++}
++
++/// NOP OUT UPIU.
++pub fn nop_out(tag: u8) -> [u8; REQ_LEN] {
++    let mut u = [0u8; REQ_LEN];
++    u[0] = NOP_OUT;
++    u[3] = tag;
++    u
++}
++
++/// QUERY REQUEST UPIU (no data-out segment; only read/set-flag opcodes are built).
++pub fn query(tag: u8, function: u8, opcode: u8, idn: u8, index: u8, length: u16) -> [u8; REQ_LEN] {
++    let mut u = [0u8; REQ_LEN];
++    u[0] = QUERY_REQUEST;
++    u[3] = tag;
++    u[5] = function;
++    u[12] = opcode;
++    u[13] = idn;
++    u[14] = index;
++    u[18..20].copy_from_slice(&length.to_be_bytes());
++    u
++}
++
++/// COMMAND UPIU carrying a SCSI CDB (reads only).
++pub fn command(tag: u8, lun: u8, expected_len: u32, cdb: &[u8; 16]) -> [u8; REQ_LEN] {
++    let mut u = [0u8; REQ_LEN];
++    u[0] = COMMAND;
++    u[1] = if expected_len > 0 { FLAG_READ } else { 0 };
++    u[2] = lun;
++    u[3] = tag;
++    u[12..16].copy_from_slice(&expected_len.to_be_bytes());
++    u[16..32].copy_from_slice(cdb);
++    u
++}
++
++/// The decoded fixed part of a response UPIU.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct RespHeader {
++    /// Transaction code (low 6 bits).
++    pub trans: u8,
++    /// Task tag echoed by the device.
++    pub tag: u8,
++    /// UPIU response field (0 = target success; query response code for QUERY RESPONSE).
++    pub response: u8,
++    /// SCSI status (COMMAND RESPONSE).
++    pub status: u8,
++    /// Data segment length.
++    pub data_len: u16,
++}
++
++/// Decode the response header from the first 12 bytes.
++pub fn parse_header(r: &[u8]) -> RespHeader {
++    RespHeader {
++        trans: r[0] & 0x3f,
++        tag: r[3],
++        response: r[6],
++        status: r[7],
++        data_len: u16::from_be_bytes([r[10], r[11]]),
++    }
++}
++
++/// QUERY RESPONSE value field (bytes 20-23, big-endian; flag value in byte 23).
++pub fn query_value(r: &[u8]) -> u32 {
++    u32::from_be_bytes([r[20], r[21], r[22], r[23]])
++}
++
++/// COMMAND RESPONSE sense bytes (length @32, data @34), clamped to the buffer.
++pub fn sense(r: &[u8]) -> &[u8] {
++    let n = u16::from_be_bytes([r[32], r[33]]) as usize;
++    let end = (34 + n).min(r.len());
++    &r[34..end]
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn utrd_layout_matches_ufshci() {
++        let d = Utrd {
++            dir: Direction::DeviceToHost,
++            ucd: 0x1_2345_6780,
++            resp_off_dw: 128,
++            resp_len_dw: 128,
++            prdt_off_dw: 256,
++            prdt_len: 1,
++        }
++        .encode();
++        // DW0: command type 1 [31:28], direction 2 [26:25], interrupt [24].
++        assert_eq!(u32::from_le_bytes([d[0], d[1], d[2], d[3]]), 0x1500_0000);
++        assert_eq!(d[8], OCS_INVALID);
++        assert_eq!(
++            u32::from_le_bytes([d[16], d[17], d[18], d[19]]),
++            0x2345_6780
++        );
++        assert_eq!(u32::from_le_bytes([d[20], d[21], d[22], d[23]]), 0x1);
++        assert_eq!(&d[24..32], &[128, 0, 128, 0, 1, 0, 0, 1]);
++    }
++
++    #[test]
++    fn no_data_utrd_has_direction_zero() {
++        let d = Utrd {
++            dir: Direction::None,
++            ucd: 0,
++            resp_off_dw: 0,
++            resp_len_dw: 0,
++            prdt_off_dw: 0,
++            prdt_len: 0,
++        }
++        .encode();
++        assert_eq!(u32::from_le_bytes([d[0], d[1], d[2], d[3]]), 0x1100_0000);
++    }
++
++    #[test]
++    fn prdt_byte_count_is_minus_one() {
++        let e = prdt_entry(0x9_0000_1000, 4096);
++        assert_eq!(&e[0..8], &[0x00, 0x10, 0, 0, 9, 0, 0, 0]);
++        assert_eq!(u32::from_le_bytes([e[12], e[13], e[14], e[15]]), 4095);
++    }
++
++    #[test]
++    fn command_upiu_is_big_endian_read() {
++        let mut cdb = [0u8; 16];
++        cdb[0] = 0x28;
++        let u = command(7, 3, 0x1000, &cdb);
++        assert_eq!(&u[0..4], &[COMMAND, FLAG_READ, 3, 7]);
++        assert_eq!(&u[12..16], &[0, 0, 0x10, 0]);
++        assert_eq!(u[16], 0x28);
++        assert_eq!(
++            command(0, 0, 0, &[0; 16])[1],
++            0,
++            "no data phase → no R flag"
++        );
++    }
++
++    #[test]
++    fn query_upiu_fields() {
++        let u = query(5, QUERY_FN_READ, QOP_READ_DESC, 0x07, 2, 255);
++        assert_eq!(u[0], QUERY_REQUEST);
++        assert_eq!(u[3], 5);
++        assert_eq!(u[5], QUERY_FN_READ);
++        assert_eq!(&u[12..16], &[QOP_READ_DESC, 0x07, 2, 0]);
++        assert_eq!(&u[18..20], &[0, 255]);
++        assert_eq!(&u[10..12], &[0, 0], "no data-out segment");
++    }
++
++    #[test]
++    fn response_header_and_sense() {
++        let mut r = [0u8; 64];
++        r[0] = 0x80 | RESPONSE; // HD bit set must be ignored
++        r[3] = 9;
++        r[6] = 0;
++        r[7] = 2;
++        r[10..12].copy_from_slice(&20u16.to_be_bytes());
++        r[32..34].copy_from_slice(&18u16.to_be_bytes());
++        r[34] = 0x70;
++        let h = parse_header(&r);
++        assert_eq!((h.trans, h.tag, h.status, h.data_len), (RESPONSE, 9, 2, 20));
++        assert_eq!(sense(&r).len(), 18);
++        r[32..34].copy_from_slice(&0xffffu16.to_be_bytes());
++        assert_eq!(sense(&r).len(), 30, "length clamped to the response buffer");
++    }
++}
+diff --git a/drivers/ufs-core/src/xfer.rs b/drivers/ufs-core/src/xfer.rs
+new file mode 100644
+index 00000000..d6028442
+--- /dev/null
++++ b/drivers/ufs-core/src/xfer.rs
+@@ -0,0 +1,98 @@
++//! One-slot UTP transfers: build UCD + UTRD in DMA, ring, poll, clear on timeout (`specs/ufs.md` §4).
++
++use crate::dma::{self, Dma};
++use crate::hc::{Completion, Ufshc};
++use crate::regs;
++use crate::upiu::{self, Direction, Utrd};
++use crate::{Delay, Error, Result, Stage};
++use alloc::vec;
++use mmio_replay::Mmio;
++
++/// The only slot used (single outstanding request, polled).
++const SLOT: u32 = 0;
++
++impl<M: Mmio, D: Dma, T: Delay> Ufshc<M, D, T> {
++    pub(crate) fn next_tag(&mut self) -> u8 {
++        let t = self.tag;
++        self.tag = self.tag.wrapping_add(1);
++        t
++    }
++
++    /// Run one request UPIU in slot 0, receiving up to `data_len` bytes into the data buffer.
++    pub(crate) fn transfer(
++        &mut self,
++        req: &[u8; upiu::REQ_LEN],
++        data_len: usize,
++    ) -> Result<Completion> {
++        // PRDT byte counts are dword granular; the UPIU carries the exact expected length.
++        let prdt_bytes = (data_len + 3) & !3;
++        if prdt_bytes > dma::data_capacity(self.dma.size()) {
++            return Err(Error::InvalidArgument);
++        }
++        let phys = self.dma.phys();
++        let ucd = dma::UCD_OFF;
++        self.dma.write(ucd, &[0u8; dma::UCD_PRDT]);
++        self.dma.write(ucd + dma::UCD_REQ, req);
++        let (dir, prdt_len) = if data_len > 0 {
++            let e = upiu::prdt_entry(phys + dma::DATA_OFF as u64, prdt_bytes);
++            self.dma.write(ucd + dma::UCD_PRDT, &e);
++            (Direction::DeviceToHost, 1)
++        } else {
++            (Direction::None, 0)
++        };
++        let utrd = Utrd {
++            dir,
++            ucd: phys + ucd as u64,
++            resp_off_dw: (dma::UCD_RESP / 4) as u16,
++            resp_len_dw: (dma::UCD_RESP_LEN / 4) as u16,
++            prdt_off_dw: (dma::UCD_PRDT / 4) as u16,
++            prdt_len,
++        };
++        let slot_off = dma::UTRL_OFF + SLOT as usize * dma::UTRD_LEN;
++        self.dma.write(slot_off, &utrd.encode());
++        self.wr(regs::UTRLDBR, 1 << SLOT);
++        self.wait_slot()?;
++        self.wr(regs::IS, regs::IS_UTRCS);
++        let ocs = (dma::read_u32(&mut self.dma, slot_off + 8) & 0xff) as u8;
++        if ocs != 0 {
++            return Err(Error::Ocs(ocs));
++        }
++        let mut resp = vec![0u8; dma::UCD_RESP_LEN];
++        self.dma.read(ucd + dma::UCD_RESP, &mut resp);
++        let hdr = upiu::parse_header(&resp);
++        let total = (upiu::RESP_HDR_LEN + hdr.data_len as usize).min(resp.len());
++        resp.truncate(total);
++        if hdr.tag != req[3] || hdr.trans != (req[0] | 0x20) {
++            return Err(Error::BadUpiu);
++        }
++        Ok(Completion { resp })
++    }
++
++    fn wait_slot(&mut self) -> Result<()> {
++        for _ in 0..self.cfg.polls.transfer {
++            let is = self.rd(regs::IS);
++            if is & regs::IS_FATAL != 0 {
++                self.clear_slot()?;
++                return Err(Error::Fatal(is));
++            }
++            if self.rd(regs::UTRLDBR) & (1 << SLOT) == 0 {
++                return Ok(());
++            }
++            self.delay.delay_us(self.cfg.poll_delay_us);
++        }
++        self.clear_slot()?;
++        Err(Error::Timeout(Stage::Doorbell))
++    }
++
++    fn clear_slot(&mut self) -> Result<()> {
++        self.wr(regs::UTRLCLR, !(1u32 << SLOT));
++        let polls = self.cfg.polls.clear;
++        self.wait(Stage::Clear, regs::UTRLDBR, polls, |v| v & (1 << SLOT) == 0)
++            .map(|_| ())
++    }
++
++    /// Copy `out.len()` bytes of the last data-in transfer out of the DMA buffer.
++    pub(crate) fn copy_data(&mut self, out: &mut [u8]) {
++        self.dma.read(dma::DATA_OFF, out);
++    }
++}
+diff --git a/drivers/ufs-core/tests/bringup.rs b/drivers/ufs-core/tests/bringup.rs
+new file mode 100644
+index 00000000..e7a8e3f3
+--- /dev/null
++++ b/drivers/ufs-core/tests/bringup.rs
+@@ -0,0 +1,230 @@
++//! Happy-path bring-up against the register + UPIU model (`specs/ufs.md` §4).
++
++mod common;
++
++use common::device::Seen;
++use common::model::CORE_CLK_CTRL_RESET;
++use common::{config, phone_device, rig, BASE};
++use mmio_replay::{Op, Recorder};
++use ufs_core::regs::{self, qcom};
++use ufs_core::scsi::Cmd;
++use ufs_core::{LogicalUnit, NoDelay, Ufshc};
++
++#[test]
++fn bring_up_enumerates_enabled_logical_units() {
++    let (mut m, dma) = rig(phone_device());
++    let info = Ufshc::new(&mut m, BASE, dma, NoDelay, config())
++        .unwrap()
++        .bring_up()
++        .unwrap();
++    assert_eq!(info.host.cap, 0x0107_001f);
++    assert_eq!(info.host.qcom_hw_version, 0x3001_0000);
++    assert_eq!(
++        (
++            info.spec_version,
++            info.manufacturer_id,
++            info.number_lu,
++            info.max_lu
++        ),
++        (0x0210, 0x01ce, 3, 8)
++    );
++    assert_eq!(info.raw_capacity, 0x0773_0000);
++    let lu = |lun, block_count, boot_lun_id, write_protect| LogicalUnit {
++        lun,
++        block_size: 4096,
++        block_count,
++        write_protect,
++        boot_lun_id,
++    };
++    assert_eq!(
++        info.units,
++        vec![lu(0, 64, 0, 0), lu(1, 16, 1, 1), lu(3, 8, 0, 0)]
++    );
++    // Unit descriptors for all 8 LUNs were read, nothing beyond.
++    let unit_reads = m
++        .dev
++        .seen
++        .iter()
++        .filter(|s| {
++            matches!(
++                s,
++                Seen::Query {
++                    opcode: 1,
++                    idn: 2,
++                    ..
++                }
++            )
++        })
++        .count();
++    assert_eq!(unit_reads, 8);
++}
++
++#[test]
++fn qualcomm_vendor_setup_is_applied_before_link_startup() {
++    let (mut m, dma) = rig(phone_device());
++    Ufshc::new(&mut m, BASE, dma, NoDelay, config())
++        .unwrap()
++        .bring_up()
++        .unwrap();
++    assert_eq!(m.cfg1 & qcom::CFG1_QUNIPRO_SEL, 1);
++    assert_eq!(m.cfg0, 0, "CFG0 untouched on HW major 3");
++    assert_eq!(m.ie, 0, "polling: interrupts stay disabled");
++    let clk = m.dme[&(qcom::DME_VS_CORE_CLK_CTRL, 0)];
++    assert_ne!(clk, CORE_CLK_CTRL_RESET);
++    assert_eq!(clk & 0x1ff, 150, "150 cycles/us, CORE_CLK_DIV_EN cleared");
++    assert_eq!(m.dme[&(regs::TX_LCC_ENABLE, 0)], 0);
++    assert_eq!(m.dme[&(regs::TX_LCC_ENABLE, 1)], 0);
++    let ops: Vec<u8> = m.uic_log.iter().map(|u| u.0).collect();
++    // HIBERN8 check, core clk RMW, lane count, 2 × LCC off, link startup.
++    assert_eq!(ops, vec![1, 1, 2, 1, 2, 2, 0x16]);
++    assert!(m.link_up && m.rsr == 1);
++    assert_eq!(m.utrlba, common::DMA_PHYS);
++}
++
++#[test]
++fn enabled_controller_is_cycled_through_hce_zero() {
++    let (mut m, dma) = rig(phone_device());
++    m.hce = true; // U-Boot left it running
++    let mut hc = Ufshc::new(Recorder::new(&mut m), BASE, dma, NoDelay, config()).unwrap();
++    hc.enable().unwrap();
++    let trace = hc.into_parts().0.into_trace();
++    let hce: Vec<u64> = trace
++        .events
++        .iter()
++        .filter(|e| e.op == Op::Write && e.addr == BASE + regs::HCE)
++        .map(|e| e.value)
++        .collect();
++    assert_eq!(hce, vec![0, 1]);
++}
++
++#[test]
++fn non_qualcomm_config_never_touches_vendor_registers() {
++    let (mut m, dma) = rig(phone_device());
++    let mut cfg = config();
++    cfg.qcom = None;
++    let mut hc = Ufshc::new(Recorder::new(&mut m), BASE, dma, NoDelay, cfg).unwrap();
++    hc.bring_up().unwrap();
++    let trace = hc.into_parts().0.into_trace();
++    assert!(
++        trace.events.iter().all(|e| e.addr - BASE < 0xc0),
++        "vendor window 0xc0.. untouched"
++    );
++}
++
++#[test]
++fn read_capacity_inquiry_and_blocks() {
++    let (mut m, dma) = rig(phone_device());
++    let mut hc = Ufshc::new(&mut m, BASE, dma, NoDelay, config()).unwrap();
++    hc.bring_up().unwrap();
++    let cap = hc.read_capacity(0).unwrap();
++    assert_eq!((cap.last_lba, cap.block_size), (63, 4096));
++    let mut inq = [0u8; 36];
++    assert_eq!(hc.scsi(0, Cmd::Inquiry, 0, &mut inq).unwrap(), 36);
++    assert_eq!(&inq[8..16], b"SAMSUNG ");
++    assert_eq!(hc.scsi(3, Cmd::TestUnitReady, 0, &mut []).unwrap(), 0);
++    let mut sense = [0u8; 18];
++    assert_eq!(hc.scsi(3, Cmd::RequestSense, 0, &mut sense).unwrap(), 18);
++    let mut blk = vec![0u8; 4096];
++    hc.read(3, 1, 4096, &mut blk).unwrap();
++    assert_eq!(blk[0], 0x42);
++}
++
++#[test]
++fn large_read_is_chunked_to_the_dma_buffer() {
++    let dev = phone_device();
++    let expect = dev.luns[0].data[20 * 4096..27 * 4096].to_vec();
++    // 3 data blocks of room → a 7-block read needs 3 READ(10)s.
++    let dma = common::SharedDma::new(common::DMA_PHYS, 0x1000 + 3 * 4096);
++    let mut m = common::model::UfsModel::sdm845(dma.clone(), dev);
++    let mut hc = Ufshc::new(&mut m, BASE, dma, NoDelay, config()).unwrap();
++    hc.bring_up().unwrap();
++    let mut buf = vec![0u8; 7 * 4096];
++    hc.read(0, 20, 4096, &mut buf).unwrap();
++    assert_eq!(buf, expect);
++    drop(hc);
++    let reads: Vec<_> = m
++        .dev
++        .seen
++        .iter()
++        .filter(|s| matches!(s, Seen::Command { opcode: 0x28, .. }))
++        .collect();
++    assert_eq!(reads.len(), 3);
++}
++
++#[test]
++fn gpt_of_user_and_boot_lus() {
++    let (mut m, dma) = rig(phone_device());
++    let mut hc = Ufshc::new(&mut m, BASE, dma, NoDelay, config()).unwrap();
++    hc.bring_up().unwrap();
++    let g = hc.read_gpt(0, 4096).unwrap();
++    let names: Vec<_> = g
++        .entries
++        .iter()
++        .map(|e| (e.name.as_str(), e.first_lba, e.last_lba))
++        .collect();
++    assert_eq!(
++        names,
++        vec![("ssd", 6, 7), ("misc", 8, 9), ("userdata", 10, 58)]
++    );
++    assert_eq!(
++        (
++            g.header.current_lba,
++            g.header.backup_lba,
++            g.header.num_entries
++        ),
++        (1, 63, 128)
++    );
++    let b = hc.read_gpt(1, 4096).unwrap();
++    assert_eq!(b.entries[1].name, "xbl_config_a");
++    assert_eq!(b.entries[0].type_guid, common::disk::TYPE_GUID);
++}
++
++#[test]
++fn whole_session_sends_no_write_of_any_kind() {
++    let (mut m, dma) = rig(phone_device());
++    let mut hc = Ufshc::new(&mut m, BASE, dma, NoDelay, config()).unwrap();
++    hc.bring_up().unwrap();
++    hc.read_gpt(0, 4096).unwrap();
++    hc.read_gpt(1, 4096).unwrap();
++    hc.read_capacity(3).unwrap();
++    assert_eq!(hc.read_attribute(0x00, 0).unwrap(), 1, "bBootLunEn");
++    drop(hc);
++    assert!(!m.dev.saw_write());
++    let flag_writes = m
++        .dev
++        .seen
++        .iter()
++        .filter(|s| matches!(s, Seen::Query { function: 0x81, .. }))
++        .count();
++    assert_eq!(flag_writes, 1, "only SET_FLAG fDeviceInit");
++}
++
++#[test]
++fn unit_attention_is_retried_once() {
++    let mut dev = phone_device();
++    dev.faults.unit_attention = true;
++    let (mut m, dma) = rig(dev);
++    let mut hc = Ufshc::new(&mut m, BASE, dma, NoDelay, config()).unwrap();
++    hc.bring_up().unwrap();
++    assert_eq!(hc.read_capacity(0).unwrap().last_lba, 63);
++}
++
++#[test]
++fn transient_nop_failures_are_retried() {
++    let mut dev = phone_device();
++    dev.faults.nop_ocs = vec![0x05, 0x05];
++    dev.faults.device_init_busy = 3;
++    let (mut m, dma) = rig(dev);
++    Ufshc::new(&mut m, BASE, dma, NoDelay, config())
++        .unwrap()
++        .bring_up()
++        .unwrap();
++    assert_eq!(m.dev.seen.iter().filter(|s| **s == Seen::Nop).count(), 3);
++    let polls = m
++        .dev
++        .seen
++        .iter()
++        .filter(|s| matches!(s, Seen::Query { opcode: 5, .. }))
++        .count();
++    assert_eq!(polls, 4, "fDeviceInit read until clear");
++}
+diff --git a/drivers/ufs-core/tests/common/device.rs b/drivers/ufs-core/tests/common/device.rs
+new file mode 100644
+index 00000000..513fc968
+--- /dev/null
++++ b/drivers/ufs-core/tests/common/device.rs
+@@ -0,0 +1,251 @@
++//! The UFS *device* side: decodes one UTRD + UCD from DMA, answers NOP/QUERY/COMMAND UPIUs,
++//! writes the response UPIU, data-in through the PRDT and the OCS. Also records every request so
++//! tests can prove no write ever left the host.
++
++use super::luns::Lu;
++use super::SharedDma;
++
++/// Injected device faults (each consumed when it fires, unless noted).
++#[derive(Clone, Default)]
++pub struct Faults {
++    /// OCS for the next N NOP OUTs.
++    pub nop_ocs: Vec<u8>,
++    /// OCS for the next COMMAND UPIU.
++    pub command_ocs: Option<u8>,
++    /// Report UNIT ATTENTION on the first command to each LU.
++    pub unit_attention: bool,
++    /// CHECK CONDITION (key, asc) on every READ(10).
++    pub read_error: Option<(u8, u8)>,
++    /// Residual count reported on the next data-in command.
++    pub residual: Option<u32>,
++    /// Number of READ FLAG fDeviceInit polls that still return 1 (`u32::MAX` = forever).
++    pub device_init_busy: u32,
++    /// Echo a wrong task tag in the next response.
++    pub bad_tag: bool,
++    /// Return this IDN in descriptor responses instead of the requested one.
++    pub wrong_idn: Option<u8>,
++}
++
++/// Every request as seen by the device.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub enum Seen {
++    Nop,
++    Query {
++        function: u8,
++        opcode: u8,
++        idn: u8,
++        index: u8,
++    },
++    Command {
++        lun: u8,
++        opcode: u8,
++        flags: u8,
++        dir: u8,
++    },
++}
++
++pub struct UfsDevice {
++    pub luns: Vec<Lu>,
++    pub max_lu_code: u8,
++    pub faults: Faults,
++    pub seen: Vec<Seen>,
++    pub device_init: bool,
++    pub attention_done: Vec<bool>,
++}
++
++pub fn be(b: &[u8]) -> u64 {
++    b.iter().fold(0, |a, &x| a << 8 | x as u64)
++}
++
++fn le(b: &[u8]) -> u64 {
++    b.iter().rev().fold(0, |a, &x| a << 8 | x as u64)
++}
++
++impl UfsDevice {
++    pub fn new(luns: Vec<Lu>) -> Self {
++        let n = luns.len();
++        UfsDevice {
++            luns,
++            max_lu_code: 0,
++            faults: Faults::default(),
++            seen: Vec::new(),
++            device_init: false,
++            attention_done: vec![false; n],
++        }
++    }
++
++    /// Process the UTRD at bus address `utrd`. Mirrors what the controller + device do on a doorbell.
++    pub fn process(&mut self, mem: &SharedDma, utrd: u64) {
++        let d = mem.get(utrd, 32);
++        let dw0 = le(&d[0..4]) as u32;
++        let ucd = le(&d[16..24]);
++        let resp_len = le(&d[24..26]) as usize * 4;
++        let resp_off = le(&d[26..28]) as usize * 4;
++        let prdt_n = le(&d[28..30]) as usize;
++        let prdt_off = le(&d[30..32]) as usize * 4;
++        let dir = ((dw0 >> 25) & 3) as u8;
++        let ocs = if dw0 >> 28 != 1 || !ucd.is_multiple_of(128) || resp_len < 32 {
++            0x01
++        } else {
++            let req = mem.get(ucd, 32);
++            let mut resp = vec![0u8; 512];
++            let mut data = Vec::new();
++            let ocs = self.respond(&req, dir, &mut resp, &mut data);
++            let ocs = if ocs == 0 {
++                self.data_in(mem, ucd, prdt_off, prdt_n, &data)
++            } else {
++                ocs
++            };
++            mem.put(ucd + resp_off as u64, &resp[..resp_len.min(512)]);
++            ocs
++        };
++        mem.put(utrd + 8, &[ocs]);
++    }
++
++    fn data_in(&self, mem: &SharedDma, ucd: u64, prdt_off: usize, n: usize, data: &[u8]) -> u8 {
++        let mut done = 0;
++        for i in 0..n {
++            let e = mem.get(ucd + (prdt_off + 16 * i) as u64, 16);
++            let (addr, dbc) = (le(&e[0..8]), le(&e[12..16]) as usize + 1);
++            if dbc % 4 != 0 {
++                return 0x02;
++            }
++            let take = dbc.min(data.len() - done);
++            mem.put(addr, &data[done..done + take]);
++            done += take;
++        }
++        if done < data.len() {
++            0x03
++        } else {
++            0
++        }
++    }
++
++    fn respond(&mut self, req: &[u8], dir: u8, resp: &mut [u8], data: &mut Vec<u8>) -> u8 {
++        let tag = if std::mem::take(&mut self.faults.bad_tag) {
++            req[3] ^ 0xff
++        } else {
++            req[3]
++        };
++        resp[3] = tag;
++        match req[0] & 0x3f {
++            0x00 => {
++                self.seen.push(Seen::Nop);
++                if !self.faults.nop_ocs.is_empty() {
++                    return self.faults.nop_ocs.remove(0);
++                }
++                resp[0] = 0x20;
++                0
++            }
++            0x16 => {
++                self.query(req, resp);
++                0
++            }
++            0x01 => self.command(req, dir, resp, data),
++            _ => 0x01,
++        }
++    }
++
++    fn query(&mut self, req: &[u8], resp: &mut [u8]) {
++        let (function, opcode, idn, index) = (req[5], req[12], req[13], req[14]);
++        self.seen.push(Seen::Query {
++            function,
++            opcode,
++            idn,
++            index,
++        });
++        resp[0] = 0x36;
++        resp[5] = function;
++        resp[12..16].copy_from_slice(&req[12..16]);
++        let code = match (function, opcode, idn) {
++            (0x01, 0x01, _) => match self.descriptor(idn, index) {
++                Some(mut d) => {
++                    if let Some(w) = self.faults.wrong_idn {
++                        d[1] = w;
++                    }
++                    let n = d.len().min(be(&req[18..20]) as usize);
++                    resp[10..12].copy_from_slice(&(n as u16).to_be_bytes());
++                    resp[18..20].copy_from_slice(&(n as u16).to_be_bytes());
++                    resp[32..32 + n].copy_from_slice(&d[..n]);
++                    0
++                }
++                None if idn == 0x02 => 0xfc,
++                None => 0xfd,
++            },
++            (0x01, 0x05, 0x01) => {
++                let busy = self.device_init && self.faults.device_init_busy > 0;
++                if busy && self.faults.device_init_busy != u32::MAX {
++                    self.faults.device_init_busy -= 1;
++                }
++                resp[23] = busy as u8;
++                0
++            }
++            (0x01, 0x03, 0x00) => {
++                resp[20..24].copy_from_slice(&1u32.to_be_bytes());
++                0
++            }
++            (0x81, 0x06, 0x01) => {
++                self.device_init = true;
++                0
++            }
++            (0x81, _, _) => 0xf7,
++            _ => 0xfe,
++        };
++        resp[6] = code;
++    }
++
++    fn command(&mut self, req: &[u8], dir: u8, resp: &mut [u8], data: &mut Vec<u8>) -> u8 {
++        let (lun, flags, exp) = (req[2], req[1], be(&req[12..16]) as usize);
++        let cdb = &req[16..32];
++        self.seen.push(Seen::Command {
++            lun,
++            opcode: cdb[0],
++            flags,
++            dir,
++        });
++        if let Some(o) = self.faults.command_ocs.take() {
++            return o;
++        }
++        resp[0] = 0x21;
++        let status = match self.scsi(lun, cdb, data) {
++            Ok(()) => 0,
++            Err((key, asc)) => {
++                resp[32..34].copy_from_slice(&18u16.to_be_bytes());
++                resp[34] = 0x70;
++                resp[36] = key;
++                resp[46] = asc;
++                resp[10..12].copy_from_slice(&20u16.to_be_bytes());
++                data.clear();
++                2
++            }
++        };
++        resp[7] = status;
++        if data.len() > exp {
++            data.truncate(exp);
++        }
++        let residual = self.faults.residual.take().unwrap_or(0) as usize + (exp - data.len());
++        data.truncate(exp - residual.min(exp));
++        if status == 0 {
++            resp[12..16].copy_from_slice(&(residual as u32).to_be_bytes());
++        }
++        if !data.is_empty() && dir != 2 {
++            0x02
++        } else {
++            0
++        }
++    }
++
++    /// True when a host→device transfer, a W flag or a write-class Query was ever seen.
++    pub fn saw_write(&self) -> bool {
++        self.seen.iter().any(|s| match *s {
++            Seen::Command { flags, dir, .. } => flags & 0x20 != 0 || dir == 1,
++            Seen::Query {
++                function: 0x81,
++                opcode,
++                idn,
++                ..
++            } => !(opcode == 0x06 && idn == 0x01),
++            _ => false,
++        })
++    }
++}
+diff --git a/drivers/ufs-core/tests/common/disk.rs b/drivers/ufs-core/tests/common/disk.rs
+new file mode 100644
+index 00000000..9155ee5d
+--- /dev/null
++++ b/drivers/ufs-core/tests/common/disk.rs
+@@ -0,0 +1,54 @@
++//! Builds logical-unit images with a valid primary GPT (UEFI layout, CRCs via `ufs_core::gpt`).
++
++use ufs_core::gpt::crc32;
++
++pub const TYPE_GUID: [u8; 16] = [
++    0xa2, 0xa0, 0xd0, 0xeb, 0xe5, 0xb9, 0x33, 0x44, 0x87, 0xc0, 0x68, 0xb6, 0xb7, 0x26, 0x99, 0xc7,
++];
++const ENTRIES: u32 = 128;
++const ENTRY_SIZE: u32 = 128;
++
++/// A block-addressed image of `blocks` × `bs` bytes; block N's first 8 bytes hold `N` (LE) for
++/// non-GPT blocks so reads can be checked, partitions are `(name, first, last)`.
++pub fn gpt_image(bs: usize, blocks: u64, parts: &[(&str, u64, u64)]) -> Vec<u8> {
++    let mut img = vec![0u8; bs * blocks as usize];
++    for n in 0..blocks {
++        let at = n as usize * bs;
++        img[at..at + 8].copy_from_slice(&n.to_le_bytes());
++        img[at + 8] = 0xa5;
++    }
++    let array_len = (ENTRIES * ENTRY_SIZE) as usize;
++    let array_blocks = array_len.div_ceil(bs) as u64;
++    let mut array = vec![0u8; array_len];
++    for (i, (name, first, last)) in parts.iter().enumerate() {
++        let e = &mut array[i * ENTRY_SIZE as usize..(i + 1) * ENTRY_SIZE as usize];
++        e[0..16].copy_from_slice(&TYPE_GUID);
++        e[16] = i as u8 + 1;
++        e[32..40].copy_from_slice(&first.to_le_bytes());
++        e[40..48].copy_from_slice(&last.to_le_bytes());
++        for (j, u) in name.encode_utf16().enumerate() {
++            e[56 + 2 * j..58 + 2 * j].copy_from_slice(&u.to_le_bytes());
++        }
++    }
++    let mut h = vec![0u8; 92];
++    h[0..8].copy_from_slice(b"EFI PART");
++    h[8..12].copy_from_slice(&0x0001_0000u32.to_le_bytes());
++    h[12..16].copy_from_slice(&92u32.to_le_bytes());
++    h[24..32].copy_from_slice(&1u64.to_le_bytes());
++    h[32..40].copy_from_slice(&(blocks - 1).to_le_bytes());
++    h[40..48].copy_from_slice(&(2 + array_blocks).to_le_bytes());
++    h[48..56].copy_from_slice(&(blocks - 2 - array_blocks).to_le_bytes());
++    h[56] = 0x6f; // disk GUID byte 0
++    h[72..80].copy_from_slice(&2u64.to_le_bytes());
++    h[80..84].copy_from_slice(&ENTRIES.to_le_bytes());
++    h[84..88].copy_from_slice(&ENTRY_SIZE.to_le_bytes());
++    h[88..92].copy_from_slice(&crc32(&array).to_le_bytes());
++    let crc = crc32(&h);
++    h[16..20].copy_from_slice(&crc.to_le_bytes());
++    img[bs..2 * bs].fill(0);
++    img[bs..bs + 92].copy_from_slice(&h);
++    let a = 2 * bs;
++    img[a..a + array_blocks as usize * bs].fill(0);
++    img[a..a + array_len].copy_from_slice(&array);
++    img
++}
+diff --git a/drivers/ufs-core/tests/common/luns.rs b/drivers/ufs-core/tests/common/luns.rs
+new file mode 100644
+index 00000000..1279ebbe
+--- /dev/null
++++ b/drivers/ufs-core/tests/common/luns.rs
+@@ -0,0 +1,127 @@
++//! Logical units and the device's descriptor + SCSI answers.
++
++use super::device::{be, UfsDevice};
++
++/// One logical unit.
++#[derive(Clone)]
++pub struct Lu {
++    pub enabled: bool,
++    pub block_shift: u8,
++    pub boot_id: u8,
++    pub write_protect: u8,
++    pub data: Vec<u8>,
++}
++
++impl Lu {
++    pub fn new(block_shift: u8, data: Vec<u8>) -> Self {
++        Lu {
++            enabled: true,
++            block_shift,
++            boot_id: 0,
++            write_protect: 0,
++            data,
++        }
++    }
++    pub fn disabled() -> Self {
++        Lu {
++            enabled: false,
++            block_shift: 12,
++            boot_id: 0,
++            write_protect: 0,
++            data: Vec::new(),
++        }
++    }
++    pub fn bs(&self) -> usize {
++        1 << self.block_shift
++    }
++    pub fn blocks(&self) -> u64 {
++        (self.data.len() / self.bs()) as u64
++    }
++}
++
++impl UfsDevice {
++    pub fn descriptor(&self, idn: u8, index: u8) -> Option<Vec<u8>> {
++        match idn {
++            0x00 => {
++                let mut d = vec![0u8; 0x40];
++                d[0] = 0x40;
++                d[6] = self.luns.iter().filter(|l| l.enabled).count() as u8;
++                d[0x10..0x12].copy_from_slice(&0x0210u16.to_be_bytes());
++                d[0x18..0x1a].copy_from_slice(&0x01ceu16.to_be_bytes());
++                Some(d)
++            }
++            0x07 => {
++                let mut d = vec![0u8; 0x48];
++                d[0] = 0x48;
++                d[1] = 0x07;
++                d[4..12].copy_from_slice(&0x0773_0000u64.to_be_bytes());
++                d[0x0c] = self.max_lu_code;
++                Some(d)
++            }
++            0x02 => {
++                let max = if self.max_lu_code == 1 { 32 } else { 8 };
++                if index >= max {
++                    return None;
++                }
++                let lu = self
++                    .luns
++                    .get(index as usize)
++                    .cloned()
++                    .unwrap_or_else(Lu::disabled);
++                let mut d = vec![0u8; 0x2d];
++                d[0] = 0x2d;
++                d[1] = 0x02;
++                d[2] = index;
++                d[3] = lu.enabled as u8;
++                d[4] = lu.boot_id;
++                d[5] = lu.write_protect;
++                d[0x0a] = lu.block_shift;
++                d[0x0b..0x13].copy_from_slice(&lu.blocks().to_be_bytes());
++                Some(d)
++            }
++            _ => None,
++        }
++    }
++
++    pub fn scsi(&mut self, lun: u8, cdb: &[u8], data: &mut Vec<u8>) -> Result<(), (u8, u8)> {
++        let lu = match self.luns.get(lun as usize) {
++            Some(lu) if lu.enabled => lu.clone(),
++            _ => return Err((0x05, 0x25)),
++        };
++        if self.faults.unit_attention && !self.attention_done[lun as usize] {
++            self.attention_done[lun as usize] = true;
++            return Err((0x06, 0x29));
++        }
++        match cdb[0] {
++            0x00 => Ok(()),
++            0x03 => {
++                data.extend_from_slice(&[0x70, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
++                Ok(())
++            }
++            0x12 => {
++                let mut inq = vec![0u8; 36];
++                inq[8..16].copy_from_slice(b"SAMSUNG ");
++                data.extend_from_slice(&inq);
++                Ok(())
++            }
++            0x25 => {
++                data.extend_from_slice(&((lu.blocks() - 1) as u32).to_be_bytes());
++                data.extend_from_slice(&(lu.bs() as u32).to_be_bytes());
++                Ok(())
++            }
++            0x28 => {
++                if let Some(e) = self.faults.read_error {
++                    return Err(e);
++                }
++                let (lba, n) = (be(&cdb[2..6]), be(&cdb[7..9]));
++                if lba + n > lu.blocks() {
++                    return Err((0x05, 0x21));
++                }
++                let (a, b) = (lba as usize * lu.bs(), (lba + n) as usize * lu.bs());
++                data.extend_from_slice(&lu.data[a..b]);
++                Ok(())
++            }
++            _ => Err((0x05, 0x20)),
++        }
++    }
++}
+diff --git a/drivers/ufs-core/tests/common/mod.rs b/drivers/ufs-core/tests/common/mod.rs
+new file mode 100644
+index 00000000..21cf8500
+--- /dev/null
++++ b/drivers/ufs-core/tests/common/mod.rs
+@@ -0,0 +1,118 @@
++//! Host test fixtures: shared DMA memory, the UFS device (UPIU responder), the UFSHCI register
++//! model and a GPT disk builder. Not every test binary uses every item.
++#![allow(dead_code)]
++
++pub mod device;
++pub mod disk;
++pub mod luns;
++pub mod model;
++
++use std::cell::RefCell;
++use std::rc::Rc;
++use ufs_core::Dma;
++
++/// Register window base used by all tests (the SDM845 `std` region).
++pub const BASE: u64 = 0x01d8_4000;
++/// Bus address of the test DMA region.
++pub const DMA_PHYS: u64 = 0x9a00_0000;
++
++/// A DMA region shared between the driver and the device model.
++#[derive(Clone)]
++pub struct SharedDma {
++    pub mem: Rc<RefCell<Vec<u8>>>,
++    pub phys: u64,
++}
++
++impl SharedDma {
++    pub fn new(phys: u64, size: usize) -> Self {
++        SharedDma {
++            mem: Rc::new(RefCell::new(vec![0; size])),
++            phys,
++        }
++    }
++
++    /// Translate a bus address into a region offset (panics outside the region: a driver bug).
++    pub fn off(&self, addr: u64, len: usize) -> usize {
++        let off = addr
++            .checked_sub(self.phys)
++            .expect("DMA address below region") as usize;
++        assert!(
++            off + len <= self.mem.borrow().len(),
++            "DMA access past region end"
++        );
++        off
++    }
++
++    pub fn get(&self, addr: u64, len: usize) -> Vec<u8> {
++        let off = self.off(addr, len);
++        self.mem.borrow()[off..off + len].to_vec()
++    }
++
++    pub fn put(&self, addr: u64, data: &[u8]) {
++        let off = self.off(addr, data.len());
++        self.mem.borrow_mut()[off..off + data.len()].copy_from_slice(data);
++    }
++}
++
++impl Dma for SharedDma {
++    fn phys(&self) -> u64 {
++        self.phys
++    }
++    fn size(&self) -> usize {
++        self.mem.borrow().len()
++    }
++    fn read(&mut self, off: usize, buf: &mut [u8]) {
++        buf.copy_from_slice(&self.mem.borrow()[off..off + buf.len()]);
++    }
++    fn write(&mut self, off: usize, data: &[u8]) {
++        self.mem.borrow_mut()[off..off + data.len()].copy_from_slice(data);
++    }
++}
++
++/// Default test region: list + UCD + 64 KiB of data buffer.
++pub fn dma() -> SharedDma {
++    SharedDma::new(DMA_PHYS, 0x1000 + 0x10000)
++}
++
++/// Config with small poll budgets so negative tests stay fast and traces stay short.
++pub fn config() -> ufs_core::Config {
++    let mut c = ufs_core::Config::sdm845();
++    c.polls = ufs_core::Polls {
++        hce: 8,
++        phy: 4,
++        uic: 8,
++        transfer: 16,
++        clear: 8,
++        device_init: 8,
++    };
++    c.nop_attempts = 3;
++    c
++}
++
++/// A OnePlus-6-shaped device: LU0 user data (GPT), LU1 boot LU A (GPT), LU2 disabled,
++/// LU3 enabled without a GPT. All 4 KiB blocks.
++pub fn phone_device() -> device::UfsDevice {
++    let lu0 = disk::gpt_image(
++        4096,
++        64,
++        &[("ssd", 6, 7), ("misc", 8, 9), ("userdata", 10, 58)],
++    );
++    let lu1 = disk::gpt_image(4096, 16, &[("xbl_a", 6, 8), ("xbl_config_a", 9, 10)]);
++    let mut boot = luns::Lu::new(12, lu1);
++    boot.boot_id = 1;
++    boot.write_protect = 1;
++    let mut raw = vec![0u8; 8 * 4096];
++    raw[4096] = 0x42;
++    device::UfsDevice::new(vec![
++        luns::Lu::new(12, lu0),
++        boot,
++        luns::Lu::disabled(),
++        luns::Lu::new(12, raw),
++    ])
++}
++
++/// Model + driver over the default DMA region.
++pub fn rig(dev: device::UfsDevice) -> (model::UfsModel, SharedDma) {
++    let dma = dma();
++    (model::UfsModel::sdm845(dma.clone(), dev), dma)
++}
+diff --git a/drivers/ufs-core/tests/common/model.rs b/drivers/ufs-core/tests/common/model.rs
+new file mode 100644
+index 00000000..506199f1
+--- /dev/null
++++ b/drivers/ufs-core/tests/common/model.rs
+@@ -0,0 +1,228 @@
++//! UFSHCI register model with Qualcomm vendor registers. On a doorbell it hands the slot's UTRD
++//! to [`UfsDevice`]. Unknown offsets and non-32-bit accesses panic: they are driver bugs.
++
++use super::device::UfsDevice;
++use super::{SharedDma, BASE};
++use mmio_replay::{Mmio, Width};
++use std::collections::BTreeMap;
++use ufs_core::regs::{self, qcom};
++
++/// Register-level faults.
++#[derive(Clone, Default)]
++pub struct HwFaults {
++    pub phy_dead: bool,
++    pub link_result: u8,
++    pub no_device: bool,
++    pub hce_stuck_on: bool,
++    pub hce_stuck_off: bool,
++    pub uic_silent: bool,
++    pub hang_doorbell: bool,
++    pub clear_ignored: bool,
++    pub fatal_is: Option<u32>,
++    pub list_not_ready: bool,
++}
++
++pub struct UfsModel {
++    pub dma: SharedDma,
++    pub dev: UfsDevice,
++    pub hw: HwFaults,
++    pub cap: u32,
++    pub ver: u32,
++    pub hw_version: u32,
++    pub hce: bool,
++    pub link_up: bool,
++    pub is: u32,
++    pub ie: u32,
++    pub cfg0: u32,
++    pub cfg1: u32,
++    pub utrlba: u64,
++    pub rsr: u32,
++    pub dbr: u32,
++    pub args: [u32; 3],
++    pub dme: BTreeMap<(u16, u16), u32>,
++    pub uic_log: Vec<(u8, u32, u32)>,
++}
++
++/// Reset value of `DME_VS_CORE_CLK_CTRL` in the model (DIV_EN set, wrong cycle count).
++pub const CORE_CLK_CTRL_RESET: u32 = 0x0000_0113;
++
++impl UfsModel {
++    /// An SDM845-like controller: 32 slots, 64-bit addressing, UFSHCI 2.0, qcom HW 3.1.0.
++    pub fn sdm845(dma: SharedDma, dev: UfsDevice) -> Self {
++        UfsModel {
++            dma,
++            dev,
++            hw: HwFaults::default(),
++            cap: 0x0107_001f,
++            ver: 0x0000_0200,
++            hw_version: 0x3001_0000,
++            hce: false,
++            link_up: false,
++            is: 0,
++            ie: 0,
++            cfg0: 0,
++            cfg1: 0,
++            utrlba: 0,
++            rsr: 0,
++            dbr: 0,
++            args: [0; 3],
++            dme: BTreeMap::new(),
++            uic_log: Vec::new(),
++        }
++    }
++
++    fn reset_unipro(&mut self) {
++        self.link_up = false;
++        self.rsr = 0;
++        self.dbr = 0;
++        self.dme.clear();
++        self.dme
++            .insert((qcom::DME_VS_CORE_CLK_CTRL, 0), CORE_CLK_CTRL_RESET);
++    }
++
++    fn hcs(&self) -> u32 {
++        let mut v = 0;
++        if self.hce {
++            v |= regs::HCS_UCRDY;
++        }
++        if self.link_up && !self.hw.no_device {
++            v |= regs::HCS_DP;
++            if !self.hw.list_not_ready {
++                v |= regs::HCS_UTRLRDY;
++            }
++        }
++        v
++    }
++
++    fn uic(&mut self, op: u8) {
++        self.uic_log.push((op, self.args[0], self.args[2]));
++        if self.hw.uic_silent {
++            return;
++        }
++        let key = ((self.args[0] >> 16) as u16, self.args[0] as u16);
++        let mut result = 0;
++        match op {
++            regs::DME_GET => {
++                let v = match key.0 {
++                    qcom::MPHY_TX_FSM_STATE => Some(if self.hw.phy_dead {
++                        0
++                    } else {
++                        qcom::TX_FSM_HIBERN8
++                    }),
++                    regs::PA_CONNECTED_TX_DATA_LANES => Some(2),
++                    _ => self.dme.get(&key).copied(),
++                };
++                match v {
++                    Some(v) => self.args[2] = v,
++                    None => result = 0x01,
++                }
++            }
++            regs::DME_SET => {
++                self.dme.insert(key, self.args[2]);
++            }
++            regs::DME_LINKSTARTUP => {
++                result = self.hw.link_result;
++                if result == 0 && !self.hw.phy_dead {
++                    self.link_up = true;
++                }
++            }
++            _ => result = 0x01,
++        }
++        self.args[1] = result as u32;
++        self.is |= regs::IS_UCCS;
++    }
++
++    fn doorbell(&mut self, v: u32) {
++        if self.rsr == 0 {
++            return;
++        }
++        if let Some(f) = self.hw.fatal_is {
++            self.is |= f;
++            self.dbr |= v;
++            return;
++        }
++        if self.hw.hang_doorbell {
++            self.dbr |= v;
++            return;
++        }
++        for slot in 0..32 {
++            if v & (1 << slot) != 0 {
++                let utrd = self.utrlba + 32 * slot as u64;
++                self.dev.process(&self.dma, utrd);
++                self.is |= regs::IS_UTRCS;
++            }
++        }
++    }
++}
++
++impl Mmio for UfsModel {
++    fn read(&mut self, addr: u64, width: Width) -> u64 {
++        assert_eq!(width, Width::W32, "UFSHCI registers are 32-bit");
++        (match addr - BASE {
++            regs::CAP => self.cap,
++            regs::VER => self.ver,
++            regs::IS => self.is,
++            regs::IE => self.ie,
++            regs::HCS => self.hcs(),
++            regs::HCE => self.hce as u32,
++            regs::UTRLBA => self.utrlba as u32,
++            regs::UTRLBAU => (self.utrlba >> 32) as u32,
++            regs::UTRLDBR => self.dbr,
++            regs::UTRLRSR => self.rsr,
++            regs::UCMDARG1 => self.args[0],
++            regs::UCMDARG2 => self.args[1],
++            regs::UCMDARG3 => self.args[2],
++            qcom::CFG0 => self.cfg0,
++            qcom::CFG1 => self.cfg1,
++            qcom::HW_VERSION => self.hw_version,
++            off => panic!("read of unmodelled register {off:#x}"),
++        }) as u64
++    }
++
++    fn write(&mut self, addr: u64, width: Width, value: u64) {
++        assert_eq!(width, Width::W32, "UFSHCI registers are 32-bit");
++        let v = value as u32;
++        match addr - BASE {
++            regs::IS => self.is &= !v,
++            regs::IE => self.ie = v,
++            regs::HCE if v & regs::HCE_ENABLE != 0 => {
++                if !self.hw.hce_stuck_off {
++                    self.hce = true;
++                    self.reset_unipro();
++                }
++            }
++            regs::HCE => {
++                if !self.hw.hce_stuck_on {
++                    self.hce = false;
++                    self.reset_unipro();
++                }
++            }
++            regs::UTRLBA => self.utrlba = (self.utrlba & !0xffff_ffff) | v as u64,
++            regs::UTRLBAU => self.utrlba = (self.utrlba & 0xffff_ffff) | (v as u64) << 32,
++            regs::UTRLRSR => self.rsr = v & 1,
++            regs::UTRLDBR => self.doorbell(v),
++            regs::UTRLCLR => {
++                if !self.hw.clear_ignored {
++                    self.dbr &= v;
++                }
++            }
++            regs::UCMDARG1 => self.args[0] = v,
++            regs::UCMDARG2 => self.args[1] = v,
++            regs::UCMDARG3 => self.args[2] = v,
++            regs::UICCMD => self.uic(v as u8),
++            qcom::CFG0 => self.cfg0 = v,
++            qcom::CFG1 => self.cfg1 = v,
++            off => panic!("write of unmodelled register {off:#x} = {v:#x}"),
++        }
++    }
++}
++
++/// `mmio-replay` has no blanket `&mut T` impl; this lets tests keep the model after the driver.
++impl Mmio for &mut UfsModel {
++    fn read(&mut self, addr: u64, width: Width) -> u64 {
++        (**self).read(addr, width)
++    }
++    fn write(&mut self, addr: u64, width: Width, value: u64) {
++        (**self).write(addr, width, value)
++    }
++}
+diff --git a/drivers/ufs-core/tests/fixtures/bringup_gpt.trace b/drivers/ufs-core/tests/fixtures/bringup_gpt.trace
+new file mode 100644
+index 00000000..13a56057
+--- /dev/null
++++ b/drivers/ufs-core/tests/fixtures/bringup_gpt.trace
+@@ -0,0 +1,148 @@
++{"op":"r","width":32,"addr":"0x1d84000","value":"0x107001f","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84008","value":"0x200","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d840e4","value":"0x30010000","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84024","value":"0x0","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84034","value":"0x0","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d840dc","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d840dc","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84034","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84034","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84030","value":"0x8","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84094","value":"0x410000","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84098","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d8409c","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84090","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x400","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x400","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84098","value":"0x0","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d8409c","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84030","value":"0x8","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84094","value":"0xd0020000","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84098","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d8409c","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84090","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x400","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x400","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84098","value":"0x0","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d8409c","value":"0x113","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84030","value":"0x8","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84094","value":"0xd0020000","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84098","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d8409c","value":"0x96","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84090","value":"0x2","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x400","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x400","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84098","value":"0x0","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d8409c","value":"0x96","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84030","value":"0x8","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84094","value":"0x15610000","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84098","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d8409c","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84090","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x400","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x400","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84098","value":"0x0","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d8409c","value":"0x2","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84030","value":"0x8","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84094","value":"0x2c0000","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84098","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d8409c","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84090","value":"0x2","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x400","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x400","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84098","value":"0x0","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d8409c","value":"0x0","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84030","value":"0x8","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84094","value":"0x2c0001","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84098","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d8409c","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84090","value":"0x2","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x400","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x400","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84098","value":"0x0","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d8409c","value":"0x0","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84030","value":"0x8","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84094","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84098","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d8409c","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84090","value":"0x16","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x400","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x400","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84098","value":"0x0","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d8409c","value":"0x0","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84030","value":"0xb","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84050","value":"0x9a000000","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84054","value":"0x0","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84030","value":"0xb","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84060","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84058","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
++{"op":"r","width":32,"addr":"0x1d84058","value":"0x0","delay_us":0}
++{"op":"w","width":32,"addr":"0x1d84020","value":"0x1","delay_us":0}
+diff --git a/drivers/ufs-core/tests/negative_bringup.rs b/drivers/ufs-core/tests/negative_bringup.rs
+new file mode 100644
+index 00000000..197ec04c
+--- /dev/null
++++ b/drivers/ufs-core/tests/negative_bringup.rs
+@@ -0,0 +1,145 @@
++//! Bring-up failure paths: each ends in a typed error before the list runs.
++
++mod common;
++
++use common::model::UfsModel;
++use common::{config, phone_device, rig, SharedDma, BASE, DMA_PHYS};
++use mmio_replay::{Replayer, Trace};
++use ufs_core::regs;
++use ufs_core::{Error, NoDelay, Stage, Ufshc};
++
++fn up(m: &mut UfsModel, d: SharedDma) -> Ufshc<&mut UfsModel, SharedDma, NoDelay> {
++    let mut hc = Ufshc::new(m, BASE, d, NoDelay, config()).unwrap();
++    hc.bring_up().unwrap();
++    hc
++}
++
++fn bring_up_err(f: impl FnOnce(&mut UfsModel)) -> (Error, UfsModel) {
++    let (mut m, d) = rig(phone_device());
++    f(&mut m);
++    let e = Ufshc::new(&mut m, BASE, d, NoDelay, config())
++        .unwrap()
++        .bring_up()
++        .unwrap_err();
++    (e, m)
++}
++
++#[test]
++fn link_startup_failure_reports_uic_result() {
++    let (e, m) = bring_up_err(|m| m.hw.link_result = 0x01);
++    assert_eq!(
++        e,
++        Error::Uic {
++            opcode: regs::DME_LINKSTARTUP,
++            result: 1
++        }
++    );
++    assert!(!m.link_up && m.rsr == 0, "list never started");
++}
++
++#[test]
++fn link_up_without_device_present() {
++    assert_eq!(bring_up_err(|m| m.hw.no_device = true).0, Error::NoDevice);
++}
++
++#[test]
++fn dead_phy_is_detected_before_link_startup() {
++    let (e, m) = bring_up_err(|m| m.hw.phy_dead = true);
++    assert_eq!(e, Error::PhyNotReady(0));
++    assert_eq!(
++        m.uic_log.len(),
++        config().polls.phy as usize,
++        "bounded HIBERN8 polling"
++    );
++    assert!(m.uic_log.iter().all(|u| u.0 == regs::DME_GET));
++}
++
++#[test]
++fn hce_enable_and_disable_timeouts() {
++    assert_eq!(
++        bring_up_err(|m| m.hw.hce_stuck_off = true).0,
++        Error::Timeout(Stage::HceEnable)
++    );
++    let (e, _) = bring_up_err(|m| {
++        m.hce = true;
++        m.hw.hce_stuck_on = true;
++    });
++    assert_eq!(e, Error::Timeout(Stage::HceDisable));
++}
++
++#[test]
++fn uic_command_that_never_completes() {
++    assert_eq!(
++        bring_up_err(|m| m.hw.uic_silent = true).0,
++        Error::Timeout(Stage::UicComplete)
++    );
++}
++
++#[test]
++fn list_not_ready_after_link_startup() {
++    assert_eq!(
++        bring_up_err(|m| m.hw.list_not_ready = true).0,
++        Error::ListNotReady
++    );
++}
++
++#[test]
++fn nop_failing_every_attempt_returns_last_ocs() {
++    let (e, m) = bring_up_err(|m| m.dev.faults.nop_ocs = vec![0x05; 10]);
++    assert_eq!(e, Error::Ocs(0x05));
++    assert_eq!(m.dev.seen.len(), config().nop_attempts as usize);
++}
++
++#[test]
++fn device_init_that_never_clears() {
++    let (e, _) = bring_up_err(|m| m.dev.faults.device_init_busy = u32::MAX);
++    assert_eq!(e, Error::Timeout(Stage::DeviceInit));
++}
++
++#[test]
++fn descriptor_with_wrong_idn_is_rejected() {
++    assert_eq!(
++        bring_up_err(|m| m.dev.faults.wrong_idn = Some(0x09)).0,
++        Error::Descriptor(0x00)
++    );
++}
++
++#[test]
++fn dma_layout_and_capability_checks() {
++    let r = || Replayer::strict(Trace::new());
++    let small = SharedDma::new(DMA_PHYS, 0x1000);
++    assert!(matches!(
++        Ufshc::new(r(), BASE, small, NoDelay, config()),
++        Err(Error::DmaLayout)
++    ));
++    let unaligned = SharedDma::new(DMA_PHYS + 0x80, 0x2000);
++    assert!(matches!(
++        Ufshc::new(r(), BASE, unaligned, NoDelay, config()),
++        Err(Error::DmaLayout)
++    ));
++
++    let high = SharedDma::new(0x1_8000_0000, 0x1000 + 0x10000);
++    let mut m = UfsModel::sdm845(high.clone(), phone_device());
++    m.cap &= !regs::CAP_64AS;
++    let e = Ufshc::new(&mut m, BASE, high, NoDelay, config())
++        .unwrap()
++        .bring_up();
++    assert_eq!(e, Err(Error::Unsupported("64-bit addressing")));
++
++    let (mut m, d) = rig(phone_device());
++    m.cap |= regs::CAP_LSDBS;
++    let e = Ufshc::new(&mut m, BASE, d, NoDelay, config())
++        .unwrap()
++        .bring_up();
++    assert_eq!(e, Err(Error::Unsupported("single doorbell")));
++}
++
++#[test]
++fn bring_up_on_a_32_lun_device_scans_all_32() {
++    let mut dev = phone_device();
++    dev.max_lu_code = 1;
++    let (mut m, d) = rig(dev);
++    let info = up(&mut m, d).enumerate().unwrap();
++    assert_eq!(info.max_lu, 32);
++    assert_eq!(info.units.len(), 3);
++}
+diff --git a/drivers/ufs-core/tests/negative_io.rs b/drivers/ufs-core/tests/negative_io.rs
+new file mode 100644
+index 00000000..725e678b
+--- /dev/null
++++ b/drivers/ufs-core/tests/negative_io.rs
+@@ -0,0 +1,224 @@
++//! Transfer, SCSI, refusal and GPT failure paths: typed errors, no slot left outstanding.
++
++mod common;
++
++use common::model::UfsModel;
++use common::{config, dma, phone_device, rig, SharedDma, BASE};
++use mmio_replay::{Replayer, Trace};
++use ufs_core::gpt::GptError;
++use ufs_core::regs;
++use ufs_core::scsi::{Cmd, Sense};
++use ufs_core::{Error, NoDelay, Stage, Ufshc};
++
++fn up(m: &mut UfsModel, d: SharedDma) -> Ufshc<&mut UfsModel, SharedDma, NoDelay> {
++    let mut hc = Ufshc::new(m, BASE, d, NoDelay, config()).unwrap();
++    hc.bring_up().unwrap();
++    hc
++}
++
++#[test]
++fn ocs_error_on_a_command() {
++    let (mut m, d) = rig(phone_device());
++    up(&mut m, d.clone());
++    m.dev.faults.command_ocs = Some(0x08);
++    let mut hc = Ufshc::new(&mut m, BASE, d, NoDelay, config()).unwrap();
++    assert_eq!(hc.read_capacity(0), Err(Error::Ocs(0x08)));
++}
++
++#[test]
++fn doorbell_timeout_clears_the_slot_and_recovers() {
++    let (mut m, d) = rig(phone_device());
++    up(&mut m, d.clone());
++    m.hw.hang_doorbell = true;
++    let mut hc = Ufshc::new(&mut m, BASE, d.clone(), NoDelay, config()).unwrap();
++    assert_eq!(hc.read_capacity(0), Err(Error::Timeout(Stage::Doorbell)));
++    drop(hc);
++    assert_eq!(m.dbr, 0, "UTRLCLR (0 bit) released slot 0");
++    m.hw.hang_doorbell = false;
++    let mut hc = Ufshc::new(&mut m, BASE, d, NoDelay, config()).unwrap();
++    assert_eq!(
++        hc.read_capacity(0).unwrap().last_lba,
++        63,
++        "next command succeeds"
++    );
++}
++
++#[test]
++fn slot_that_ignores_clear_times_out_in_clear() {
++    let (mut m, d) = rig(phone_device());
++    up(&mut m, d.clone());
++    m.hw.hang_doorbell = true;
++    m.hw.clear_ignored = true;
++    let mut hc = Ufshc::new(&mut m, BASE, d, NoDelay, config()).unwrap();
++    assert_eq!(hc.read_capacity(0), Err(Error::Timeout(Stage::Clear)));
++}
++
++#[test]
++fn fatal_interrupt_status_aborts_the_transfer() {
++    let (mut m, d) = rig(phone_device());
++    up(&mut m, d.clone());
++    m.hw.fatal_is = Some(regs::IS_HCFES);
++    let mut hc = Ufshc::new(&mut m, BASE, d, NoDelay, config()).unwrap();
++    assert_eq!(hc.read_capacity(0), Err(Error::Fatal(regs::IS_HCFES)));
++    drop(hc);
++    assert_eq!(m.dbr, 0);
++}
++
++#[test]
++fn scsi_check_conditions() {
++    let mut dev = phone_device();
++    dev.faults.read_error = Some((0x03, 0x11));
++    let (mut m, d) = rig(dev);
++    let mut hc = up(&mut m, d);
++    let mut b = vec![0u8; 4096];
++    let medium = Error::CheckCondition(Sense {
++        key: 3,
++        asc: 0x11,
++        ascq: 0,
++    });
++    assert_eq!(hc.read(0, 0, 4096, &mut b), Err(medium));
++    // Unsupported / disabled LU → ILLEGAL REQUEST, LOGICAL UNIT NOT SUPPORTED.
++    let lu = Error::CheckCondition(Sense {
++        key: 5,
++        asc: 0x25,
++        ascq: 0,
++    });
++    assert_eq!(hc.read_capacity(2), Err(lu));
++}
++
++#[test]
++fn read_past_the_end_of_a_lu() {
++    let (mut m, d) = rig(phone_device());
++    let mut hc = up(&mut m, d);
++    let mut b = vec![0u8; 2 * 4096];
++    let e = Error::CheckCondition(Sense {
++        key: 5,
++        asc: 0x21,
++        ascq: 0,
++    });
++    assert_eq!(hc.read(0, 63, 4096, &mut b), Err(e));
++}
++
++#[test]
++fn short_data_in_is_reported() {
++    let (mut m, d) = rig(phone_device());
++    up(&mut m, d.clone());
++    m.dev.faults.residual = Some(4);
++    let mut hc = Ufshc::new(&mut m, BASE, d, NoDelay, config()).unwrap();
++    assert_eq!(hc.read_capacity(0), Err(Error::ShortTransfer(4)));
++}
++
++#[test]
++fn mismatched_task_tag_is_rejected() {
++    let (mut m, d) = rig(phone_device());
++    up(&mut m, d.clone());
++    m.dev.faults.bad_tag = true;
++    let mut hc = Ufshc::new(&mut m, BASE, d, NoDelay, config()).unwrap();
++    assert_eq!(hc.read_capacity(0), Err(Error::BadUpiu));
++}
++
++#[test]
++fn query_errors_surface_the_response_code() {
++    let (mut m, d) = rig(phone_device());
++    let mut hc = up(&mut m, d);
++    assert_eq!(hc.read_descriptor(0x55, 0), Err(Error::Response(0xfd)));
++    assert_eq!(hc.read_descriptor(0x02, 8), Err(Error::Response(0xfc)));
++}
++
++/// A replayer with an empty trace fails on the first access: proves "nothing was sent".
++fn silent() -> Ufshc<Replayer, SharedDma, NoDelay> {
++    Ufshc::new(
++        Replayer::strict(Trace::new()),
++        BASE,
++        dma(),
++        NoDelay,
++        config(),
++    )
++    .unwrap()
++}
++
++#[test]
++fn write_class_opcodes_are_refused_without_any_access() {
++    let mut hc = silent();
++    let mut buf = [0u8; 4096];
++    // WRITE(6/10/16), WRITE SAME, SYNC CACHE, UNMAP, START STOP, MODE SELECT, FORMAT, WRITE BUFFER.
++    for op in [
++        0x0a, 0x2a, 0x8a, 0x41, 0x35, 0x42, 0x1b, 0x55, 0x04, 0x3b, 0xa0,
++    ] {
++        assert_eq!(
++            hc.scsi_raw(0, &[op, 0, 0, 0, 0, 0, 0, 0, 1, 0], 4096, &mut buf),
++            Err(Error::Refused(op))
++        );
++    }
++    assert!(hc.into_parts().0.finish().ok());
++}
++
++#[test]
++fn invalid_arguments_make_no_access() {
++    let mut hc = silent();
++    let mut buf = [0u8; 4096];
++    assert_eq!(
++        hc.scsi_raw(0x81, &[0x00], 0, &mut buf),
++        Err(Error::InvalidArgument),
++        "W-LUN"
++    );
++    assert_eq!(
++        hc.scsi_raw(0, &[], 0, &mut buf),
++        Err(Error::InvalidArgument)
++    );
++    assert_eq!(
++        hc.scsi_raw(0, &[0x28; 17], 0, &mut buf),
++        Err(Error::InvalidArgument)
++    );
++    assert_eq!(
++        hc.scsi(0, Cmd::Read10 { lba: 0, blocks: 2 }, 4096, &mut buf),
++        Err(Error::InvalidArgument)
++    );
++    assert_eq!(
++        hc.read(0, 0, 4096, &mut buf[..100]),
++        Err(Error::InvalidArgument)
++    );
++    assert_eq!(
++        hc.read(0, 0, 0, &mut buf),
++        Err(Error::InvalidArgument),
++        "zero block size"
++    );
++    let past = u32::MAX as u64 + 1;
++    assert_eq!(
++        hc.read(0, past, 4096, &mut buf),
++        Err(Error::InvalidArgument),
++        "beyond READ(10) LBA range"
++    );
++    let big = 0x2_0000 + 4096;
++    let mut huge = vec![0u8; big];
++    assert_eq!(
++        hc.scsi(
++            0,
++            Cmd::Read10 {
++                lba: 0,
++                blocks: (big / 4096) as u16
++            },
++            4096,
++            &mut huge
++        ),
++        Err(Error::InvalidArgument),
++        "beyond DMA buffer"
++    );
++    assert!(hc.into_parts().0.finish().ok());
++}
++
++#[test]
++fn lu_without_gpt_and_corrupt_gpts() {
++    let (mut m, d) = rig(phone_device());
++    up(&mut m, d.clone());
++    let mut hc = Ufshc::new(&mut m, BASE, d.clone(), NoDelay, config()).unwrap();
++    assert_eq!(hc.read_gpt(3, 4096), Err(Error::Gpt(GptError::Signature)));
++    drop(hc);
++    m.dev.luns[0].data[4096 + 40] ^= 1; // first_usable inside the CRC-covered header
++    let mut hc = Ufshc::new(&mut m, BASE, d.clone(), NoDelay, config()).unwrap();
++    assert_eq!(hc.read_gpt(0, 4096), Err(Error::Gpt(GptError::HeaderCrc)));
++    drop(hc);
++    m.dev.luns[1].data[2 * 4096 + 60] ^= 1; // a partition name byte
++    let mut hc = Ufshc::new(&mut m, BASE, d, NoDelay, config()).unwrap();
++    assert_eq!(hc.read_gpt(1, 4096), Err(Error::Gpt(GptError::EntriesCrc)));
++}
+diff --git a/drivers/ufs-core/tests/replay.rs b/drivers/ufs-core/tests/replay.rs
+new file mode 100644
+index 00000000..2a1408b3
+--- /dev/null
++++ b/drivers/ufs-core/tests/replay.rs
+@@ -0,0 +1,157 @@
++//! Golden MMIO trace: bring-up + GPT reads recorded against the model, frozen in
++//! `tests/fixtures/bringup_gpt.trace` (JSONL; `*.jsonl` is gitignored in this repo) and replayed
++//! strictly. Re-bless after an intended sequence change with `UFS_BLESS=1 cargo test`.
++//! This is also the reference a phone-recorded trace is diffed against (`specs/ufs.md` §7).
++
++mod common;
++
++use common::device::UfsDevice;
++use common::{config, phone_device, rig, SharedDma, BASE};
++use mmio_replay::{Compare, MismatchKind, Mmio, Op, Recorder, Replayer, Trace, Width};
++use ufs_core::gpt::Gpt;
++use ufs_core::regs::{self, qcom};
++use ufs_core::{Config, DeviceInfo, Error, NoDelay, Ufshc};
++
++const FIXTURE: &str = concat!(
++    env!("CARGO_MANIFEST_DIR"),
++    "/tests/fixtures/bringup_gpt.trace"
++);
++
++/// Replays register reads from a trace and runs the device model on each doorbell write,
++/// standing in for the DMA side effects a register trace cannot carry.
++struct Harness {
++    rep: Replayer,
++    dev: UfsDevice,
++    dma: SharedDma,
++    utrlba: u64,
++}
++
++impl Mmio for Harness {
++    fn read(&mut self, addr: u64, width: Width) -> u64 {
++        self.rep.read(addr, width)
++    }
++    fn write(&mut self, addr: u64, width: Width, value: u64) {
++        self.rep.write(addr, width, value);
++        match addr - BASE {
++            regs::UTRLBA => self.utrlba = (self.utrlba & !0xffff_ffff) | value,
++            regs::UTRLBAU => self.utrlba = (self.utrlba & 0xffff_ffff) | value << 32,
++            regs::UTRLDBR => {
++                for slot in (0..32).filter(|s| value & (1 << s) != 0) {
++                    self.dev.process(&self.dma, self.utrlba + 32 * slot);
++                }
++            }
++            _ => {}
++        }
++    }
++}
++
++type Session = Result<(DeviceInfo, Gpt, Gpt), Error>;
++
++fn session<M: Mmio>(io: M, dma: SharedDma, cfg: Config) -> (Session, M) {
++    let mut hc = Ufshc::new(io, BASE, dma, NoDelay, cfg).unwrap();
++    let mut run = || -> Session {
++        let info = hc.bring_up()?;
++        Ok((info, hc.read_gpt(0, 4096)?, hc.read_gpt(1, 4096)?))
++    };
++    let r = run();
++    (r, hc.into_parts().0)
++}
++
++fn record() -> (Trace, (DeviceInfo, Gpt, Gpt)) {
++    let (mut m, dma) = rig(phone_device());
++    let (r, rec) = session(Recorder::new(&mut m), dma, config());
++    (rec.into_trace(), r.unwrap())
++}
++
++fn golden() -> Trace {
++    let text = std::fs::read_to_string(FIXTURE).expect("fixture missing: run with UFS_BLESS=1");
++    Trace::from_jsonl(&text).unwrap()
++}
++
++fn replay(mode: Compare, cfg: Config) -> (Session, mmio_replay::ReplayReport) {
++    let dma = common::dma();
++    let h = Harness {
++        rep: Replayer::new(golden(), mode),
++        dev: phone_device(),
++        dma: dma.clone(),
++        utrlba: 0,
++    };
++    let (r, mut h) = session(h, dma, cfg);
++    (r, h.rep.finish())
++}
++
++#[test]
++fn recorded_trace_matches_the_frozen_fixture() {
++    let text = record().0.to_jsonl();
++    if std::env::var_os("UFS_BLESS").is_some() {
++        std::fs::create_dir_all(std::path::Path::new(FIXTURE).parent().unwrap()).unwrap();
++        std::fs::write(FIXTURE, &text).unwrap();
++    }
++    assert_eq!(
++        text,
++        std::fs::read_to_string(FIXTURE).unwrap(),
++        "MMIO sequence drifted; re-bless if intended"
++    );
++}
++
++#[test]
++fn strict_replay_of_the_fixture_reproduces_the_session() {
++    let (_, expected) = record();
++    let (got, report) = replay(Compare::Strict, config());
++    assert!(report.ok(), "{report:?}");
++    assert_eq!(report.warnings(), 0);
++    assert_eq!(got.unwrap(), expected);
++}
++
++#[test]
++fn strict_replay_catches_a_changed_register_value() {
++    let mut cfg = config();
++    cfg.qcom = Some(ufs_core::Qcom {
++        unipro_core_clk_mhz: 100,
++    });
++    let (_, report) = replay(Compare::Strict, cfg);
++    assert!(!report.ok());
++    assert!(report
++        .mismatches
++        .iter()
++        .any(|m| m.kind == MismatchKind::WriteValue));
++    // Lenient mode tolerates the different value as a warning.
++    let (got, report) = replay(Compare::Lenient, cfg);
++    assert!(
++        report.ok() && report.warnings() > 0 && got.is_ok(),
++        "{report:?}"
++    );
++}
++
++#[test]
++fn golden_trace_only_writes_allowlisted_registers() {
++    let allowed = [
++        regs::IE,
++        regs::HCE,
++        regs::IS,
++        regs::UCMDARG1,
++        regs::UCMDARG2,
++        regs::UCMDARG3,
++        regs::UICCMD,
++        regs::UTRLBA,
++        regs::UTRLBAU,
++        regs::UTRLRSR,
++        regs::UTRLDBR,
++        qcom::CFG1,
++    ];
++    let t = golden();
++    let writes: Vec<_> = t.events.iter().filter(|e| e.op == Op::Write).collect();
++    assert!(writes.iter().all(|e| allowed.contains(&(e.addr - BASE))));
++    assert!(t.events.iter().all(|e| e.width == Width::W32));
++    // One SET_FLAG; every doorbell rings slot 0 only.
++    let bells = writes
++        .iter()
++        .filter(|e| e.addr == BASE + regs::UTRLDBR)
++        .count();
++    assert!(writes
++        .iter()
++        .filter(|e| e.addr == BASE + regs::UTRLDBR)
++        .all(|e| e.value == 1));
++    // NOP, SET_FLAG, READ_FLAG, device, geometry, 8 units, then 2 × (header + entries).
++    assert_eq!(bells, 1 + 1 + 1 + 2 + 8 + 2 * 2);
++}
+diff --git a/drivers/ufsd/Cargo.toml b/drivers/ufsd/Cargo.toml
+new file mode 100644
+index 00000000..79e0a77e
+--- /dev/null
++++ b/drivers/ufsd/Cargo.toml
+@@ -0,0 +1,17 @@
++[package]
++name = "ufsd"
++version = "0.1.0"
++edition = "2021"
++license = "MIT"
++description = "Read-only UFS bring-up probe; starts only when the device tree declares a Qualcomm UFS host controller"
++
++[dependencies]
++mmio-replay = { path = "../mmio-replay" }
++ufs-core = { path = "../ufs-core" }
++fdt.workspace = true
++
++[features]
++host-compile = []
++
++[dependencies.common]
++path = "../common"
+diff --git a/drivers/ufsd/README.md b/drivers/ufsd/README.md
+new file mode 100644
+index 00000000..85bb70f5
+--- /dev/null
++++ b/drivers/ufsd/README.md
+@@ -0,0 +1,17 @@
++# ufsd — read-only UFS bring-up probe
++
++Opt-in daemon: it starts only when the kernel device tree declares a
++`qcom,sdm845-ufshc` node, and it exits after one probe session.
++
++It drives `drivers/ufs-core` (vendored from the `redox-oneplus6` repo,
++`crates/ufs`) through the read-only bring-up of `specs/ufs.md` §4–5:
++HCE cycle, DME link startup, NOP OUT/IN, `fDeviceInit`, LU enumeration,
++READ CAPACITY, one READ(10) of LBA 0..33, then CRC-checked GPT parsing
++with the ESP entry printed. The command builder is closed over the SCSI
++allowlist `{TEST_UNIT_READY, REQUEST_SENSE, INQUIRY, READ_CAPACITY(10),
++READ(10)}`; no WRITE-class opcode can reach the bus.
++
++On the qemu-oneplus6 emulator the QCOM vendor DME attributes are not
++modelled, so `DME_GET(MPHY_TX_FSM_STATE)` never reports HIBERN8; ufsd logs
++that gap and retries the bring-up without the Qualcomm vendor register
++path. On a phone with a real PHY the first attempt succeeds.
+diff --git a/drivers/ufsd/src/main.rs b/drivers/ufsd/src/main.rs
+new file mode 100644
+index 00000000..4730b5f6
+--- /dev/null
++++ b/drivers/ufsd/src/main.rs
+@@ -0,0 +1,200 @@
++//! Read-only UFS bring-up probe: HCE cycle, link startup, NOP, READ CAPACITY,
++//! LBA 0..33 read, GPT/ESP listing. Start only when the device tree declares
++//! a Qualcomm UFS host controller; every other opcode class is refused by
++//! ufs-core before any access (see drivers/ufs-core/src/scsi.rs).
++#[cfg(any(target_os = "redox", feature = "host-compile"))]
++mod redox {
++    use std::error::Error;
++    use std::time::Duration;
++    use std::{fs, thread};
++
++    use common::dma::Dma as DmaRegion;
++    use common::{MemoryType, PhysBorrowed, Prot};
++    use mmio_replay::{Mmio, Width};
++    use ufs_core::{gpt, Config, Delay, Dma, Error as UfsError, Ufshc};
++
++    /// `ufshc@1d84000` standard register window (DT `reg` first cell, 0x2500).
++    const HC_BASE: u64 = 0x1d84_0000;
++    const HC_LEN: usize = 0x2500;
++    /// UTRL + UCD + one data-in buffer; 34 x 512 B fits in a single PRDT.
++    const DMA_LEN: usize = 64 * 1024;
++    const BLOCK: usize = 512;
++
++    /// ESP partition type GUID {C12A7328-F81F-11D2-BA-7B-00-A0-C3-00-AD-3D}, on-disk order.
++    const ESP_TYPE: [u8; 16] = [
++        0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x7b, 0x00, 0xa0, 0xc3, 0x00, 0xad,
++        0x3d,
++    ];
++
++    struct HcWindow {
++        base: u64,
++        len: usize,
++        map: PhysBorrowed,
++    }
++    impl HcWindow {
++        fn new(base: u64, len: usize) -> Result<Self, Box<dyn Error>> {
++            let map = PhysBorrowed::map(
++                base as usize,
++                len,
++                Prot {
++                    read: true,
++                    write: true,
++                },
++                MemoryType::DeviceMemory,
++            )?;
++            Ok(Self { base, len, map })
++        }
++        fn contains(&self, addr: u64) -> bool {
++            addr >= self.base
++                && addr
++                    .checked_add(4)
++                    .is_some_and(|end| end <= self.base + self.len as u64)
++        }
++        fn ptr(&self, addr: u64) -> *mut u32 {
++            assert!(self.contains(addr) && addr % 4 == 0);
++            unsafe { (self.map.as_ptr() as *mut u8).add((addr - self.base) as usize) as *mut u32 }
++        }
++    }
++    impl Mmio for HcWindow {
++        fn read(&mut self, addr: u64, width: Width) -> u64 {
++            assert_eq!(width, Width::W32);
++            unsafe { self.ptr(addr).read_volatile() as u64 }
++        }
++        fn write(&mut self, addr: u64, width: Width, value: u64) {
++            assert_eq!(width, Width::W32);
++            unsafe { self.ptr(addr).write_volatile(value as u32) }
++        }
++    }
++
++    struct DmaWindow {
++        region: DmaRegion<[u8]>,
++    }
++    impl Dma for DmaWindow {
++        fn phys(&self) -> u64 {
++            self.region.physical() as u64
++        }
++        fn size(&self) -> usize {
++            self.region.len()
++        }
++        fn read(&mut self, off: usize, buf: &mut [u8]) {
++            buf.copy_from_slice(&self.region[off..off + buf.len()]);
++        }
++        fn write(&mut self, off: usize, data: &[u8]) {
++            self.region[off..off + data.len()].copy_from_slice(data);
++        }
++    }
++
++    struct Sleep;
++    impl Delay for Sleep {
++        fn delay_us(&mut self, us: u32) {
++            thread::sleep(Duration::from_micros(us as u64));
++        }
++    }
++
++    pub fn run() -> Result<(), Box<dyn Error>> {
++        common::init();
++        let dtb = fs::read("/scheme/kernel.dtb")?;
++        let dt = fdt::Fdt::new(&dtb).map_err(|e| format!("invalid device tree: {e:?}"))?;
++        if dt.find_compatible(&["qcom,sdm845-ufshc"]).is_none() {
++            eprintln!("ufsd: no Qualcomm UFS host controller in device tree; skipping");
++            return Ok(());
++        }
++        eprintln!("ufsd: qcom,sdm845-ufshc declared; starting read-only probe");
++
++        let window = HcWindow::new(HC_BASE, HC_LEN)?;
++        let region = unsafe { DmaRegion::<[u8]>::zeroed_slice(DMA_LEN)?.assume_init() };
++        let dma = DmaWindow { region };
++
++        let mut hc = Ufshc::new(window, HC_BASE, dma, Sleep, Config::sdm845())
++            .map_err(|e| format!("ufsd: DMA region rejected: {e:?}"))?;
++        if let Err(e) = hc.enable() {
++            match e {
++                UfsError::PhyNotReady(state) => {
++                    eprintln!(
++                        "ufsd: emulator gap: DME_GET(MPHY_TX_FSM_STATE)=0x{state:x} is not HIBERN8 (QCOM vendor DME attributes are not modelled); retrying without the vendor path"
++                    );
++                    let (window, dma) = hc.into_parts();
++                    let mut cfg = Config::sdm845();
++                    cfg.qcom = None;
++                    hc = Ufshc::new(window, HC_BASE, dma, Sleep, cfg)
++                        .map_err(|e| format!("ufsd: DMA region rejected: {e:?}"))?;
++                    hc.enable().map_err(|e| format!("ufsd: HCE enable: {e:?}"))?;
++                }
++                e => return Err(format!("ufsd: HCE enable: {e:?}").into()),
++            }
++        }
++        let info = hc.info();
++        eprintln!(
++            "ufsd: HCE enabled: CAP=0x{:08x} VER=0x{:x} HW_VERSION=0x{:08x}",
++            info.cap, info.ver, info.qcom_hw_version
++        );
++
++        hc.link_startup()
++            .map_err(|e| format!("ufsd: link startup: {e:?}"))?;
++        eprintln!("ufsd: link startup OK (HCS.DP set)");
++        hc.start_list()
++            .map_err(|e| format!("ufsd: UTRL start: {e:?}"))?;
++        eprintln!("ufsd: UTRL list running");
++        hc.nop().map_err(|e| format!("ufsd: NOP: {e:?}"))?;
++        eprintln!("ufsd: NOP OUT/IN OK");
++        hc.device_init()
++            .map_err(|e| format!("ufsd: fDeviceInit: {e:?}"))?;
++        eprintln!("ufsd: fDeviceInit done");
++
++        let device = hc.enumerate().map_err(|e| format!("ufsd: enumerate: {e:?}"))?;
++        eprintln!(
++            "ufsd: device: spec 0x{:04x} mfr 0x{:04x} number_of_lu {}",
++            device.spec_version, device.manufacturer_id, device.number_lu
++        );
++        for lu in &device.units {
++            eprintln!(
++                "ufsd: LU{}: {} x {} B write_protect={} boot_lun_id={}",
++                lu.lun, lu.block_count, lu.block_size, lu.write_protect, lu.boot_lun_id
++            );
++        }
++
++        let capacity = hc
++            .read_capacity(0)
++            .map_err(|e| format!("ufsd: READ CAPACITY: {e:?}"))?;
++        eprintln!(
++            "ufsd: READ CAPACITY LUN0: last_lba={} block_size={}",
++            capacity.last_lba, capacity.block_size
++        );
++
++        let mut buf = vec![0u8; 34 * BLOCK];
++        hc.read(0, 0, BLOCK as u32, &mut buf)
++            .map_err(|e| format!("ufsd: READ LBA 0..33: {e:?}"))?;
++        eprintln!("ufsd: READ LBA 0..33 OK (34 x 512 B)");
++
++        let header = gpt::parse_header(&buf[BLOCK..2 * BLOCK])
++            .map_err(|e| format!("ufsd: GPT header: {e:?}"))?;
++        eprintln!(
++            "ufsd: GPT header at LBA 1: \"EFI PART\" entries_lba={} entries={} entry_size={}",
++            header.entries_lba, header.num_entries, header.entry_size
++        );
++        let entries = gpt::parse_entries(&header, &buf[2 * BLOCK..])
++            .map_err(|e| format!("ufsd: GPT entries: {e:?}"))?;
++        for entry in &entries {
++            let kind = if entry.type_guid == ESP_TYPE {
++                "ESP entry"
++            } else {
++                "partition entry"
++            };
++            eprintln!(
++                "ufsd: {kind} {}: name=\"{}\" lba {}..{}",
++                entry.index, entry.name, entry.first_lba, entry.last_lba
++            );
++        }
++        eprintln!("ufsd: done: read-only session, no WRITE opcode was sent");
++        Ok(())
++    }
++}
++
++#[cfg(any(target_os = "redox", feature = "host-compile"))]
++fn main() -> Result<(), Box<dyn std::error::Error>> {
++    redox::run()
++}
++#[cfg(not(any(target_os = "redox", feature = "host-compile")))]
++fn main() {
++    eprintln!("ufsd requires Redox aarch64; use ufs-core tests on the host");
++}
+diff --git a/init.initfs.d/30_ufsd.service b/init.initfs.d/30_ufsd.service
+new file mode 100644
+index 00000000..b5dcd806
+--- /dev/null
++++ b/init.initfs.d/30_ufsd.service
+@@ -0,0 +1,6 @@
++[unit]
++description = "Read-only UFS bring-up probe when available"
++
++[service]
++cmd = "ufsd"
++type = "oneshot_async"
+diff --git a/init.initfs.d/90_ramboot.target b/init.initfs.d/90_ramboot.target
+index e3c8123d..f48d4fa8 100644
+--- a/init.initfs.d/90_ramboot.target
++++ b/init.initfs.d/90_ramboot.target
+@@ -1,3 +1,3 @@
+ [unit]
+ description = "RAM-only boot shell"
+-requires_weak = ["10_inputd.service", "20_vesad.service", "30_ramsh.service", "30_spmid.service", "40_timeline_demo.service"]
++requires_weak = ["10_inputd.service", "20_vesad.service", "30_ramsh.service", "30_spmid.service", "30_ufsd.service", "40_timeline_demo.service"]
+-- 
+2.43.0
+

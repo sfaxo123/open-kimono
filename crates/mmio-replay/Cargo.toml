@@ -1,0 +1,8 @@
+[package]
+name = "mmio-replay"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "MMIO access trait plus recorder/replayer of register traces (JSONL) so phone drivers are host-testable against replayed register models (Redox-on-OnePlus-6, task C1)."
+
+[dependencies]

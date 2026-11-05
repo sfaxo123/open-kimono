@@ -1,0 +1,340 @@
+From bccc70bfce97378fa35327858b527d4e14a30b0d Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:14:14 +0000
+Subject: [PATCH 06/21] dtb: select the GENI debug UART for
+ qcom,geni-debug-uart consoles
+
+init_early now attaches SerialKind::QcomGeni when the stdout-path node is
+compatible with qcom,geni-debug-uart and its MMIO range covers the SE
+registers. The divider is only reprogrammed when the node carries an
+explicit clock-frequency; the mainline binding's GCC clock has no fixed
+rate. A node whose SE firmware is not UART is not attached, and
+skip-init attaches without touching registers.
+
+Adds an SDM845 uart9-shaped DT fixture (alias stdout-path, QUP wrapper
+with identity ranges) and tests that run the discovery path against the
+GENI register model.
+
+Co-Authored-By: Cursor <noreply@cursor.com>
+---
+ src/devices/serial.rs               |   6 +-
+ src/dtb/mod.rs                      |   6 +-
+ src/dtb/serial.rs                   | 119 +++++++++++++++++++++++++++-
+ src/dtb/testdata/qcom-geni-uart.dtb | Bin 0 -> 1243 bytes
+ src/dtb/testdata/qcom-geni-uart.dts |  67 ++++++++++++++++
+ 5 files changed, 193 insertions(+), 5 deletions(-)
+ create mode 100644 src/dtb/testdata/qcom-geni-uart.dtb
+ create mode 100644 src/dtb/testdata/qcom-geni-uart.dts
+
+diff --git a/src/devices/serial.rs b/src/devices/serial.rs
+index 1b3435dc..a8f0b9dc 100644
+--- a/src/devices/serial.rs
++++ b/src/devices/serial.rs
+@@ -3,7 +3,7 @@ use syscall::MmioPtr;
+ use syscall::Pio;
+ 
+ use crate::{
+-    devices::{uart_16550, uart_meson, uart_pl011},
++    devices::{uart_16550, uart_meson, uart_pl011, uart_qcom_geni},
+     scheme::debug::{debug_input, debug_notify},
+     sync::CleanLockToken,
+ };
+@@ -17,6 +17,7 @@ pub enum SerialKind {
+     Ns16550u32(uart_16550::SerialPort<MmioPtr<u32>>),
+     Meson(uart_meson::SerialPort),
+     Pl011(uart_pl011::SerialPort),
++    QcomGeni(uart_qcom_geni::SerialPort),
+ }
+ 
+ impl SerialKind {
+@@ -40,6 +41,7 @@ impl SerialKind {
+             Self::Ns16550u32(_) => {}
+             Self::Meson(inner) => inner.enable_irq(),
+             Self::Pl011(inner) => inner.enable_irq(),
++            Self::QcomGeni(inner) => inner.enable_irq(),
+         }
+     }
+ 
+@@ -68,6 +70,7 @@ impl SerialKind {
+             }
+             Self::Meson(inner) => inner.receive(token),
+             Self::Pl011(inner) => inner.receive(token),
++            Self::QcomGeni(inner) => inner.receive(token),
+         }
+     }
+ 
+@@ -80,6 +83,7 @@ impl SerialKind {
+             Self::Ns16550u32(inner) => inner.write(buf),
+             Self::Meson(inner) => inner.write(buf),
+             Self::Pl011(inner) => inner.write(buf),
++            Self::QcomGeni(inner) => inner.write(buf),
+         }
+     }
+ }
+diff --git a/src/dtb/mod.rs b/src/dtb/mod.rs
+index 8c3e79f2..66721bfc 100644
+--- a/src/dtb/mod.rs
++++ b/src/dtb/mod.rs
+@@ -651,7 +651,7 @@ pub fn fill_env_data(dt: &Fdt, env_base: usize) -> usize {
+ }
+ 
+ #[cfg(test)]
+-mod tests {
++pub(super) mod tests {
+     use super::{
+         explicit_cell_sizes, translate_mmio_address, visit_fdt_memory_reservations,
+         visit_fixed_reserved_memory_ranges, Fdt,
+@@ -659,10 +659,10 @@ mod tests {
+ 
+     #[repr(C, align(4))]
+     #[derive(Copy, Clone)]
+-    struct AlignedDtb<const N: usize>([u8; N]);
++    pub(super) struct AlignedDtb<const N: usize>(pub(super) [u8; N]);
+ 
+     impl<const N: usize> AlignedDtb<N> {
+-        fn fdt(&self) -> Fdt<'_> {
++        pub(super) fn fdt(&self) -> Fdt<'_> {
+             unsafe {
+                 Fdt::new(std::slice::from_raw_parts(
+                     (&raw const self.0) as *const u32,
+diff --git a/src/dtb/serial.rs b/src/dtb/serial.rs
+index f006d885..2cafa658 100644
+--- a/src/dtb/serial.rs
++++ b/src/dtb/serial.rs
+@@ -3,7 +3,11 @@ use spin::Mutex;
+ use syscall::MmioPtr;
+ 
+ use crate::{
+-    devices::{serial::SerialKind, uart_16550, uart_meson, uart_pl011},
++    devices::{
++        serial::SerialKind,
++        uart_16550, uart_meson, uart_pl011,
++        uart_qcom_geni::{self, Mmio},
++    },
+     dtb::{diag_uart_params, diag_uart_range, Fdt, FdtNode},
+     memory::{RmmA, RmmArch},
+ };
+@@ -59,6 +63,35 @@ fn named_clock_rate(dtb: &Fdt<'_>, node: FdtNode<'_>, name: &str) -> Option<u32>
+     None
+ }
+ 
++/// The mainline binding names a GCC-controlled clock with no fixed rate, so
++/// only an explicit `clock-frequency` lets us reprogram the divider.
++fn qcom_geni_clock(dtb: &Fdt<'_>, node: FdtNode<'_>) -> Option<(u32, u32)> {
++    let se_clock_hz = node
++        .raw_property("clock-frequency")?
++        .as_value::<u32>()
++        .ok()?;
++    let baud = stdout_baud(dtb)
++        .filter(|&value| value != 0)
++        .unwrap_or(115_200);
++    Some((se_clock_hz, baud))
++}
++
++fn qcom_geni_port<M: Mmio>(
++    dtb: &Fdt<'_>,
++    node: FdtNode<'_>,
++    mmio: M,
++    skip_init: bool,
++) -> Option<uart_qcom_geni::SerialPort<M>> {
++    let mut serial_port = uart_qcom_geni::SerialPort::new(mmio);
++    if !skip_init {
++        if let Err(err) = serial_port.init(qcom_geni_clock(dtb, node)) {
++            warn!("GENI UART init failed: {:?}", err);
++            return None;
++        }
++    }
++    Some(serial_port)
++}
++
+ #[cfg_attr(not(dtb), expect(dead_code))]
+ pub unsafe fn init_early(dtb: &Fdt<'_>) {
+     unsafe {
+@@ -151,6 +184,24 @@ pub unsafe fn init_early(dtb: &Fdt<'_>) {
+                     serial_port.init_early();
+                 }
+                 Some(SerialKind::Meson(serial_port))
++            } else if compatible.compatible_with("qcom,geni-debug-uart") {
++                if size < uart_qcom_geni::MIN_REGISTER_SPAN
++                    || !virt.is_multiple_of(size_of::<u32>())
++                {
++                    warn!(
++                        "invalid GENI UART MMIO range at {:#X}, size {:#X}",
++                        virt, size
++                    );
++                    return;
++                }
++                let Some(node) = crate::dtb::diag_uart_node(dtb) else {
++                    warn!("diagnostic UART disappeared while parsing DTB");
++                    return;
++                };
++                // SAFETY: diag_uart_range translated the DT MMIO range and the
++                // size check above covers every register the driver touches.
++                let mmio = uart_qcom_geni::DirectMmio::new(virt);
++                qcom_geni_port(dtb, node, mmio, skip_init).map(SerialKind::QcomGeni)
+             } else {
+                 None
+             };
+@@ -169,3 +220,69 @@ pub unsafe fn init_early(dtb: &Fdt<'_>) {
+         }
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::{qcom_geni_clock, qcom_geni_port, stdout_baud};
++    use crate::{
++        devices::uart_qcom_geni::{model::GeniModel, reg, PROTOCOL_UART},
++        dtb::{diag_uart_node, diag_uart_range, tests::AlignedDtb},
++    };
++
++    static GENI_DTB: &AlignedDtb<1243> =
++        &AlignedDtb(*include_bytes!("testdata/qcom-geni-uart.dtb"));
++
++    #[test]
++    fn finds_sdm845_uart9_through_stdout_alias() {
++        let fdt = GENI_DTB.fdt();
++        let (phys, size, skip_init, cts, compatible) = diag_uart_range(&fdt).unwrap();
++        assert_eq!(phys.data(), 0xa8_4000);
++        assert_eq!(size, 0x4000);
++        assert!(!skip_init);
++        assert!(!cts);
++        assert!(compatible.compatible_with("qcom,geni-debug-uart"));
++        assert_eq!(stdout_baud(&fdt), Some(115_200));
++    }
++
++    #[test]
++    fn mainline_node_keeps_the_firmware_clock() {
++        let fdt = GENI_DTB.fdt();
++        assert_eq!(qcom_geni_clock(&fdt, diag_uart_node(&fdt).unwrap()), None);
++    }
++
++    #[test]
++    fn clock_frequency_property_selects_a_divider() {
++        let fdt = GENI_DTB.fdt();
++        let node = fdt
++            .find_node("/soc@0/geniqup@ac0000/serial@a88000")
++            .unwrap();
++        assert_eq!(qcom_geni_clock(&fdt, node), Some((7_372_800, 115_200)));
++
++        let port = qcom_geni_port(&fdt, node, GeniModel::new(PROTOCOL_UART), false).unwrap();
++        assert_eq!(port.mmio().reg(reg::M_CLK_CFG), 0x21);
++    }
++
++    #[test]
++    fn console_node_yields_a_working_port() {
++        let fdt = GENI_DTB.fdt();
++        let node = diag_uart_node(&fdt).unwrap();
++        let mut port = qcom_geni_port(&fdt, node, GeniModel::new(PROTOCOL_UART), false).unwrap();
++        port.write(b"Redox\n");
++        assert_eq!(port.mmio().tx(), b"Redox\r\n");
++    }
++
++    #[test]
++    fn non_uart_firmware_is_not_attached() {
++        let fdt = GENI_DTB.fdt();
++        let node = diag_uart_node(&fdt).unwrap();
++        assert!(qcom_geni_port(&fdt, node, GeniModel::new(3), false).is_none());
++    }
++
++    #[test]
++    fn skip_init_attaches_without_register_writes() {
++        let fdt = GENI_DTB.fdt();
++        let node = diag_uart_node(&fdt).unwrap();
++        let port = qcom_geni_port(&fdt, node, GeniModel::new(3), true).unwrap();
++        assert!(port.mmio().writes().is_empty());
++    }
++}
+diff --git a/src/dtb/testdata/qcom-geni-uart.dtb b/src/dtb/testdata/qcom-geni-uart.dtb
+new file mode 100644
+index 0000000000000000000000000000000000000000..dcdff378ca39b76a38b896cb218398f991c120fa
+GIT binary patch
+literal 1243
+zcmb7Dv5wR*5OugKK!AV(9TG?&Ed|9{n}t2GqDoIkL5<fj+32!K)=ofBplkUAx~onI
+z@elk0JuNN2fOyYwve`Q!#7L8w=NZpDPwem4fBzC<|A!D_0ecVj5%d=HCY16`h`pbk
+zyYr0#+JoH>{w3HR-+({HcY(PlQbn$uad3U^L)gQqt8@}iGgIc9woa6eAya2;u8Kr0
+z=0MD6y-2SrXG%i9pIql%X8de6J9-?)CC=i-=ljwfCbz55#O3R{Fml;?8Utr$jX96c
+za0jvHOgJa~oFZLR`dI3!Y;08&#wIf!!t-Wd<|P|ltq(J;rAya~`4LO?u@?lx)bD%L
+z&+;V@XV+s5pFI8fc87-5?OZ}XOjSA~F<Boy-}7r&6|d;@J?Q^!7L0Kg(S<+M?Z1uK
+zsCR0XZ6;e~8*YTK2j|h9`Evr7lJLVA_1GCg?_Y*}3-#v>Yu8{uKq1i*AKpP9A2=<-
+z^t&4W$>{{;C<#CR;>5npA%~BmK7sLg%u!>l=jeInWn-*u>t^T9JXOQ3>1z1<sw}Qe
+zuH~C2EbVJQfc5h`IE6<EFY@55gW)dqygp&IKL-=O1WZok#@*!A>y?R0Q)`@)+7yKo
+z6PLd?!QWD^l{IA}!uu1hNvpPzwQ5!ZR~<HA7DiZAW_a<|WMUGYiLY6&RGA{)t(9tx
+cB=0*hv<NHmwKbd8l=_{R46zGzwy#h80g-UI0RR91
+
+literal 0
+HcmV?d00001
+
+diff --git a/src/dtb/testdata/qcom-geni-uart.dts b/src/dtb/testdata/qcom-geni-uart.dts
+new file mode 100644
+index 00000000..13b64e45
+--- /dev/null
++++ b/src/dtb/testdata/qcom-geni-uart.dts
+@@ -0,0 +1,67 @@
++/dts-v1/;
++
++/*
++ * SDM845 (OnePlus 6) debug console layout: uart9 under the QUP v3 wrapper
++ * with identity ranges, selected through an alias in stdout-path.
++ * Build: dtc -I dts -O dtb -o qcom-geni-uart.dtb qcom-geni-uart.dts
++ */
++
++/ {
++	#address-cells = <2>;
++	#size-cells = <2>;
++	interrupt-parent = <&intc>;
++
++	aliases {
++		serial0 = &uart9;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++
++	soc@0 {
++		compatible = "simple-bus";
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges = <0 0 0 0 0x10 0>;
++
++		gcc: clock-controller@100000 {
++			compatible = "qcom,gcc-sdm845";
++			reg = <0 0x00100000 0 0x1f0000>;
++			#clock-cells = <1>;
++		};
++
++		geniqup@ac0000 {
++			compatible = "qcom,geni-se-qup";
++			reg = <0 0x00ac0000 0 0x6000>;
++			#address-cells = <2>;
++			#size-cells = <2>;
++			ranges;
++
++			uart9: serial@a84000 {
++				compatible = "qcom,geni-debug-uart";
++				reg = <0 0x00a84000 0 0x4000>;
++				clock-names = "se";
++				clocks = <&gcc 1>;
++				interrupts = <0 354 4>;
++			};
++
++			serial@a88000 {
++				compatible = "qcom,geni-debug-uart";
++				reg = <0 0x00a88000 0 0x4000>;
++				clock-names = "se";
++				clocks = <&gcc 2>;
++				clock-frequency = <7372800>;
++				interrupts = <0 355 4>;
++			};
++		};
++
++		intc: interrupt-controller@17a00000 {
++			compatible = "arm,gic-v3";
++			reg = <0 0x17a00000 0 0x10000>,
++			      <0 0x17a60000 0 0x100000>;
++			#interrupt-cells = <3>;
++			interrupt-controller;
++		};
++	};
++};

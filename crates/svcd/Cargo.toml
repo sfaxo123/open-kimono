@@ -1,0 +1,30 @@
+[package]
+name = "svcd"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Deterministic Service IR executor for Redox-on-OnePlus-6 (task B4): validates a ServiceIR, runs its trigger->action DAG with no LLM per trigger, virtual-time simulator, transaction ledger with idempotency keys, trace-events output."
+
+[dependencies]
+trace-events = { path = "../trace-events" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Turns a serde error into the JSON path of the offending field (precise IR errors).
+serde_path_to_error = "0.1"
+# Idempotency keys and execution ids (SERVICE-IR.md §4.2 names BLAKE3).
+blake3 = { version = "1.8", default-features = false }
+# `logic` actions on real Wasm (crates/sandbox, wasmi). Off by default.
+sandbox = { path = "../sandbox", optional = true }
+
+[features]
+sandbox = ["dep:sandbox"]
+
+[[test]]
+name = "sandbox_logic"
+required-features = ["sandbox"]
+
+[dev-dependencies]
+wat = "1.228"
+# Test-only: cross-checks our validator against the D1 JSON Schema embedded in
+# docs/design/SERVICE-IR.md. Too heavy (ICU, regex engines) for the daemon itself.
+jsonschema = { version = "0.50", default-features = false }

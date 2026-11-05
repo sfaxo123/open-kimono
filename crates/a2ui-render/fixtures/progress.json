@@ -1,0 +1,57 @@
+{
+  "name": "progress",
+  "description": "Progress reporting: a determinate bar driven by the model, an indeterminate bar, a paragraph long enough to wrap, a templated file list and an image placeholder.",
+  "messages": [
+    {
+      "version": "v0.9",
+      "createSurface": { "surfaceId": "progress", "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json" }
+    },
+    {
+      "version": "v0.9",
+      "updateDataModel": {
+        "surfaceId": "progress",
+        "value": {
+          "done": 12,
+          "total": 48,
+          "pct": 25,
+          "files": [
+            { "name": "boot.img", "size": 96 },
+            { "name": "dtbo.img", "size": 8 },
+            { "name": "vendor.img", "size": 512 }
+          ]
+        }
+      }
+    },
+    {
+      "version": "v0.9",
+      "updateComponents": {
+        "surfaceId": "progress",
+        "components": [
+          { "id": "root", "component": "Column", "children": ["head", "count", "bar", "wait", "waitbar", "para", "files", "pic"] },
+          { "id": "head", "component": "Text", "variant": "h3", "text": "Sync" },
+          {
+            "id": "count",
+            "component": "Text",
+            "text": { "call": "formatString", "args": { "value": "${/done} of ${/total} files - ${/pct}%" }, "returnType": "string" }
+          },
+          { "id": "bar", "component": "Progress", "value": { "path": "/pct" }, "min": 0, "max": 100, "label": "sync" },
+          { "id": "wait", "component": "Text", "variant": "caption", "text": "Fetching the rest, no estimate yet" },
+          { "id": "waitbar", "component": "Progress", "mode": "indeterminate", "label": "download" },
+          {
+            "id": "para",
+            "component": "Text",
+            "text": "The image is being pulled over the homelab link, so the count moves in bursts: a chunk lands, the bar jumps, and the phone stays responsive while it waits."
+          },
+          { "id": "files", "component": "List", "direction": "vertical", "children": { "componentId": "file", "path": "/files" } },
+          {
+            "id": "file",
+            "component": "Text",
+            "variant": "caption",
+            "text": { "call": "formatString", "args": { "value": "${name} - ${size} KB" }, "returnType": "string" }
+          },
+          { "id": "pic", "component": "Image", "description": "Preview not available", "variant": "largeFeature" }
+        ]
+      }
+    }
+  ]
+}

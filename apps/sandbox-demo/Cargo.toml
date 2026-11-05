@@ -1,0 +1,13 @@
+[package]
+name = "sandbox-demo"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "E1 QEMU gate (device-free): run the real user-built Wasm service (crates/sandbox/guests/hello-rs) inside Redox on aarch64 and print two deterministic serial markers — the granted hello path and the TraceEmit-withheld refusal with its stop reason. Host wasm tests and the aarch64 rlib build are not execution proof; this binary is."
+
+[[bin]]
+name = "sandbox-demo"
+path = "src/main.rs"
+
+[dependencies]
+sandbox = { path = "../../crates/sandbox" }

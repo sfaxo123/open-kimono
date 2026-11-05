@@ -1,0 +1,14 @@
+[package]
+name = "user-sim"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Executable user-simulation harness for the agentic phone: scripted human voice/text scenarios, scored against a mock or a live agent endpoint"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[[bin]]
+name = "user-sim"
+path = "src/main.rs"

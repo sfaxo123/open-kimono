@@ -1,0 +1,917 @@
+From: Remy <remy@localhost>
+Subject: [PATCH] aarch64: opt-in Qualcomm PON reboot-reason write before the PSCI reset
+
+P4 of the agent-control plan: let a reset land directly in
+fastboot (or recovery) instead of booting the installed system
+first. Before the PSCI SYSTEM_RESET, kreset writes the
+reboot-mode field of the pm8998 PON peripheral's SOFT_RB_SPARE
+register (SPMI USID 0, register 0x088f): a read-modify-write
+(new = (old & 0x01) | field) where field is 0x04 for bootloader
+and 0x02 for recovery - the GEN2-shifted magics the phone's own
+device tree declares (pon@800 mode-bootloader=<0x02>,
+mode-recovery=<0x01>; Linux drivers/power/reset/qcom-pon.c,
+qcom_pon_reboot_mode_write).
+
+The register sits behind the SPMI PMIC arbiter, so the patch
+adds a minimal arbiter-v5 client (device/qcom_pon.rs): a
+VERSION gate (refuse pre-v5), runtime APID discovery for PPID
+0x008 with Linux's duplicate-PPID ee-ownership rule, an
+observer-channel read, the RMW on the RW channel, a status
+poll (1000 us timeout plus a poll-count backstop), and a
+read-back verify. Region bases and the PON base come from the
+FDT, never literals. The transaction runs against an abstract
+bus; the pure layer is host-tested (14 tests: encodings, APID
+selection, RMW math, status classification, env parsing).
+
+Opt-in twice over: Cargo feature qcom-pon-reboot-reason
+(default OFF, mirroring qcom-dload-mode-clear), and the
+request itself arrives in the kernel environment
+(REDOX_PON_REBOOT_REASON=bootloader|recovery, forwarded by a
+sibling bootloader patch mirroring 0004). Absent or unknown
+values still write REASON_NONE, so the field is deterministic
+after every feature-enabled reset whether or not the
+bootloader clears it after consuming it. Any failure is a
+warning; the reset proceeds unchanged. emergency_reset is
+untouched. The emulator has no arbiter model, so the gate
+proves non-regression only; the write itself is proven by the
+attended first device run.
+
+Agent: Remy (root of record)
+Model: Muse Wonder (muse-wonder-1.0)
+Provider: Meta
+
+---
+diff --git a/Cargo.toml b/Cargo.toml
+index ca8efd9b..1b260d7b 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -103,6 +103,7 @@ serial_debug = []
+ system76_ec_debug = []
+ x86_kvm_pv = []
+ qcom-dload-mode-clear = []
++qcom-pon-reboot-reason = []
+ 
+ debugger = ["syscall_debug"]
+ syscall_debug = []
+diff --git a/src/arch/aarch64/device/mod.rs b/src/arch/aarch64/device/mod.rs
+index 7e1cc430..2cacaab7 100644
+--- a/src/arch/aarch64/device/mod.rs
++++ b/src/arch/aarch64/device/mod.rs
+@@ -4,6 +4,7 @@ pub mod cpu;
+ pub mod generic_timer;
+ pub mod irqchip;
+ pub mod psci;
++pub mod qcom_pon;
+ pub mod qcom_scm;
+ pub mod rtc;
+ pub mod serial;
+@@ -49,6 +50,7 @@ pub unsafe fn init_devicetree(fdt: &Fdt) {
+         info!("PSCI INIT");
+         psci::init(fdt);
+         qcom_scm::init(fdt);
++        qcom_pon::init(fdt);
+         info!("CPU TOPOLOGY INIT");
+         cpu::init_topology(fdt);
+         info!("IRQCHIP INIT");
+diff --git a/src/arch/aarch64/device/qcom_pon.rs b/src/arch/aarch64/device/qcom_pon.rs
+new file mode 100644
+index 00000000..11e80d61
+--- /dev/null
++++ b/src/arch/aarch64/device/qcom_pon.rs
+@@ -0,0 +1,820 @@
++//! Narrow Qualcomm PMIC PON reboot-reason support (SDM845 / pm8998).
++//!
++//! Before a PSCI SYSTEM_RESET, Redox can ask the next boot to land in
++//! fastboot (or recovery) by writing the reboot-mode field of the pm8998
++//! PON peripheral's SOFT_RB_SPARE register over the SPMI PMIC arbiter —
++//! the same write Linux's qcom-pon driver performs for
++//! `reboot bootloader` (drivers/power/reset/qcom-pon.c,
++//! qcom_pon_reboot_mode_write()). The register lives behind the arbiter,
++//! so this module implements the minimal arbiter-v5 transaction from
++//! drivers/spmi/spmi-pmic-arb.c: a version gate, runtime APID discovery
++//! for the PON peripheral's PPID (applying Linux's ee-ownership
++//! preference rule on duplicate PPIDs), an observer-channel read, a
++//! read-modify-write on the RW channel, a status poll, and a read-back
++//! verify (Linux does not verify; we do, because this write gates a
++//! reset).
++//!
++//! Everything here is opt-in (Cargo feature `qcom-pon-reboot-reason`,
++//! default OFF, mirroring `qcom-dload-mode-clear`) and fail-safe: every
++//! error is reported to the caller, which logs it and continues with the
++//! normal PSCI reset. Register values and the transaction sequence are
++//! cited to Linux sources and the phone's pinned DTB in the P4 research
++//! notes (p4-pon-research.md, Q1–Q5).
++//!
++//! The pure layer (constants, encodings, the transaction against the
++//! abstract ArbBus surface, and the boot-env parser) has no kernel
++//! dependencies and is host-tested at the bottom of this file; the
++//! kernel glue (FDT discovery, MMIO) is `#[cfg(not(test))]` so this
++//! file also compiles standalone under `rustc --test`.
++
++#[cfg(not(test))]
++use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
++
++// ---------------------------------------------------------------------------
++// Pure layer: constants and encodings.
++// ---------------------------------------------------------------------------
++
++/// Value stored in the PON reason field for a normal boot.
++pub const REASON_NONE: u8 = 0x00;
++/// Value stored in the PON reason field to enter recovery (magic 0x1).
++pub const REASON_RECOVERY: u8 = 0x02;
++/// Value stored in the PON reason field to enter the bootloader /
++/// fastboot (magic 0x2).
++pub const REASON_BOOTLOADER: u8 = 0x04;
++
++/// pm8998 PON is a GEN2 device in qcom-pon terms: the reason field is
++/// GENMASK(7, 1), i.e. the mode magic is shifted left by 1.
++pub const REASON_SHIFT: u32 = 1;
++/// Mask of the reason field inside PON_SOFT_RB_SPARE.
++pub const REASON_MASK: u8 = 0xFE;
++/// Bit 0 of PON_SOFT_RB_SPARE is outside the reason field and is
++/// preserved across the read-modify-write.
++const PRESERVE_MASK: u8 = 0x01;
++
++/// Offset of PON_SOFT_RB_SPARE within the PON peripheral (qcom-pon.c).
++pub const PON_SPARE_OFFSET: u32 = 0x8F;
++
++/// Field value stored for a reboot-mode magic (Linux:
++/// `magic << pon->reason_shift`, then masked by regmap_update_bits).
++pub const fn reason_field(magic: u8) -> u8 {
++    (magic << REASON_SHIFT) & REASON_MASK
++}
++
++/// Read-modify-write math for the reason field: the field is replaced,
++/// bit 0 is preserved. Identical to
++/// `(old & 0x01) | (magic << REASON_SHIFT)` for a raw magic.
++pub const fn rmw_reason(old: u8, field: u8) -> u8 {
++    (old & PRESERVE_MASK) | (field & REASON_MASK)
++}
++
++/// SPMI peripheral ID as the arbiter's APID mapping table encodes it:
++/// PPID = (sid << 8) | (addr >> 8). For the pm8998 PON reason register
++/// (sid 0, addr 0x088f) this is 0x008.
++pub const fn ppid(sid: u32, addr: u32) -> u32 {
++    ((sid << 8) | (addr >> 8)) & 0x0FFF
++}
++
++/// Peripheral ID decoded from an APID mapping-table entry
++/// (spmi-pmic-arb.c: ppid = (entry >> 8) & GENMASK(11, 0); BIT(24) is
++/// the irq-owner flag and is not part of the PPID).
++pub const fn map_entry_ppid(entry: u32) -> u32 {
++    (entry >> 8) & 0x0FFF
++}
++
++/// PMIC arbiter command word for an extended register access. `read`
++/// selects arbiter op EXT_READL (1); writes use EXT_WRITEL (0):
++/// cmd = (opc << 27) | ((addr & 0xFF) << 4) | ((len - 1) & 0x7).
++/// Only the low address byte is carried in the command; the high byte
++/// is already encoded by the choice of APID/PPID. For the PON reason
++/// register (0x088f, 1 byte): write = 0x0000_08F0, read = 0x0800_08F0.
++pub const fn ext_cmd(read: bool, addr: u32, len: u32) -> u32 {
++    ((read as u32) << 27) | ((addr & 0xFF) << 4) | (len.saturating_sub(1) & 0x7)
++}
++
++/// Classification of an arbiter channel STATUS word
++/// (pmic_arb_wait_for_done in spmi-pmic-arb.c).
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum StatusClass {
++    /// BIT(0): the transaction completed.
++    Done,
++    /// No completion or error bit set yet.
++    Pending,
++    /// BIT(1): transaction failed (EIO).
++    Failed,
++    /// BIT(2): transaction denied (EPERM).
++    Denied,
++    /// BIT(3): transaction dropped (EIO).
++    Dropped,
++}
++
++/// Classify a STATUS word. Error bits win over the done bit: a faulted
++/// transaction must not be reported as success even if hardware also
++/// sets BIT(0).
++pub const fn classify_status(status: u32) -> StatusClass {
++    if status & (1 << 1) != 0 {
++        StatusClass::Failed
++    } else if status & (1 << 2) != 0 {
++        StatusClass::Denied
++    } else if status & (1 << 3) != 0 {
++        StatusClass::Dropped
++    } else if status & (1 << 0) != 0 {
++        StatusClass::Done
++    } else {
++        StatusClass::Pending
++    }
++}
++
++/// Boot-environment key that requests a PON reboot reason. It reaches
++/// the kernel exactly the way REDOX_RAMBOOT_TTL does: a build-time
++/// option of the Redox bootloader (bootloader patch 0004's mechanism,
++/// `option_env!`) is written as a `KEY=value` line into the kernel
++/// environment, which the kernel keeps in its bootstrap block and
++/// exposes to kernel code via `crate::startup::init_env`. A sibling
++/// bootloader patch mirroring 0004 supplies this key; without it the
++/// request is simply always "none".
++pub const REASON_ENV_KEY: &[u8] = b"REDOX_PON_REBOOT_REASON";
++
++/// Parse the requested PON reason field out of the bootloader
++/// environment (`KEY=value` lines). Only the exact mode strings the DT
++/// declares for pm8998-pon are honoured (`bootloader`, `recovery`);
++/// an absent key or an unknown value yields REASON_NONE, so the field
++/// written on a feature-enabled reset is always deterministic.
++pub fn parse_reason_field(env: &[u8]) -> u8 {
++    for line in env.split(|byte| *byte == b'\n') {
++        let line = if line.last() == Some(&b'\r') {
++            &line[..line.len() - 1]
++        } else {
++            line
++        };
++        if line.len() > REASON_ENV_KEY.len()
++            && &line[..REASON_ENV_KEY.len()] == REASON_ENV_KEY
++            && line[REASON_ENV_KEY.len()] == b'='
++        {
++            let value = &line[REASON_ENV_KEY.len() + 1..];
++            if value == b"bootloader" {
++                return REASON_BOOTLOADER;
++            }
++            if value == b"recovery" {
++                return REASON_RECOVERY;
++            }
++            return REASON_NONE;
++        }
++    }
++    REASON_NONE
++}
++
++// ---------------------------------------------------------------------------
++// Pure layer: the arbiter transaction against an abstract bus.
++// ---------------------------------------------------------------------------
++
++// Arbiter register layout (spmi-pmic-arb.c, v5 ops).
++const ARB_VERSION: usize = 0x0000;
++const ARB_FEATURES: usize = 0x0004;
++const ARB_APID_MAP_BASE: usize = 0x0900;
++/// Offset of the per-APID ownership table within the cnfg region
++/// (SPMI_OWNERSHIP_PERIPH2OWNER).
++const ARB_OWNER_TABLE: usize = 0x0700;
++/// PMIC_ARB_V5_MIN: refuse to transact with an older arbiter.
++const ARB_V5_MIN: u32 = 0x5000_0000;
++/// APID count is PMIC_ARB_FEATURES & GENMASK(10, 0).
++const APID_COUNT_MASK: u32 = 0x7FF;
++
++// Per-channel register offsets (spmi-pmic-arb.c).
++const CHAN_CMD: usize = 0x00;
++const CHAN_STATUS: usize = 0x08;
++const CHAN_WDATA0: usize = 0x10;
++const CHAN_RDATA0: usize = 0x18;
++/// RW channel base = chnls + 0x10000 * apid (one channel per APID on v5).
++const RW_CHAN_STRIDE: usize = 0x1_0000;
++/// Observer channel base = obsrvr + 0x80 * apid (our ee is 0).
++const OBS_CHAN_STRIDE: usize = 0x80;
++
++/// PMIC_ARB_TIMEOUT_US in Linux.
++const STATUS_TIMEOUT_US: u64 = 1000;
++/// Belt-and-braces poll bound in case the microsecond clock is broken
++/// (e.g. a zero counter frequency): the poll must still terminate.
++const STATUS_MAX_POLLS: u32 = 1_000_000;
++
++/// One of the four SPMI arbiter regions this client touches.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
++pub enum Region {
++    Core,
++    Chnls,
++    Obsrvr,
++    Cnfg,
++}
++
++/// The register/clock surface the arbiter transaction needs. The kernel
++/// implementation performs volatile MMIO; host tests substitute a fake
++/// register file with a scripted clock.
++pub trait ArbBus {
++    fn read32(&mut self, region: Region, offset: usize) -> u32;
++    fn write32(&mut self, region: Region, offset: usize, value: u32);
++    /// Monotonic microseconds (any epoch; only differences are used).
++    fn now_us(&mut self) -> u64;
++}
++
++fn check_arbiter_v5<B: ArbBus>(bus: &mut B) -> Result<(), &'static str> {
++    if bus.read32(Region::Core, ARB_VERSION) < ARB_V5_MIN {
++        return Err("SPMI arbiter is not v5 (VERSION gate)");
++    }
++    Ok(())
++}
++
++/// One APID is a usable write channel for a PPID when its mapping entry
++/// decodes to that PPID and its write execution environment is ours
++/// (ee 0). On duplicate PPIDs Linux prefers exactly that APID
++/// (spmi-pmic-arb.c, _pmic_arb_read_apid_map).
++pub const fn apid_is_candidate(entry: u32, write_ee: u32, want_ppid: u32) -> bool {
++    map_entry_ppid(entry) == want_ppid && write_ee == 0
++}
++
++fn discover_apid<B: ArbBus>(bus: &mut B, want_ppid: u32) -> Result<u32, &'static str> {
++    let count = bus.read32(Region::Core, ARB_FEATURES) & APID_COUNT_MASK;
++    for apid in 0..count {
++        let entry = bus.read32(Region::Core, ARB_APID_MAP_BASE + 4 * apid as usize);
++        if map_entry_ppid(entry) != want_ppid {
++            continue;
++        }
++        let write_ee = bus.read32(Region::Cnfg, ARB_OWNER_TABLE + 4 * apid as usize) & 0x7;
++        if apid_is_candidate(entry, write_ee, want_ppid) {
++            return Ok(apid);
++        }
++    }
++    Err("no write-owned SPMI APID for the PON peripheral")
++}
++
++fn wait_done<B: ArbBus>(bus: &mut B, region: Region, chan: usize) -> Result<(), &'static str> {
++    let start = bus.now_us();
++    let mut polls = 0u32;
++    loop {
++        match classify_status(bus.read32(region, chan + CHAN_STATUS)) {
++            StatusClass::Done => return Ok(()),
++            StatusClass::Failed => return Err("SPMI arbiter transaction failed"),
++            StatusClass::Denied => return Err("SPMI arbiter transaction denied"),
++            StatusClass::Dropped => return Err("SPMI arbiter transaction dropped"),
++            StatusClass::Pending => {}
++        }
++        polls += 1;
++        if polls >= STATUS_MAX_POLLS || bus.now_us().wrapping_sub(start) >= STATUS_TIMEOUT_US {
++            return Err("SPMI arbiter transaction timed out");
++        }
++    }
++}
++
++fn observer_read_byte<B: ArbBus>(bus: &mut B, apid: u32, reg: u32) -> Result<u8, &'static str> {
++    let chan = OBS_CHAN_STRIDE * apid as usize;
++    bus.write32(Region::Obsrvr, chan + CHAN_CMD, ext_cmd(true, reg, 1));
++    wait_done(bus, Region::Obsrvr, chan)?;
++    Ok((bus.read32(Region::Obsrvr, chan + CHAN_RDATA0) & 0xFF) as u8)
++}
++
++fn rw_write_byte<B: ArbBus>(bus: &mut B, apid: u32, reg: u32, value: u8) -> Result<(), &'static str> {
++    let chan = RW_CHAN_STRIDE * apid as usize;
++    bus.write32(Region::Chnls, chan + CHAN_WDATA0, u32::from(value));
++    bus.write32(Region::Chnls, chan + CHAN_CMD, ext_cmd(false, reg, 1));
++    wait_done(bus, Region::Chnls, chan)
++}
++
++/// Full PON reboot-reason transaction against an abstracted arbiter:
++/// version gate, APID discovery, observer read, read-modify-write,
++/// status polls, and a read-back verify of the reason field. Returns
++/// the byte written. `sid` is the PMIC's SPMI slave ID and `reg` the
++/// absolute SPMI register address (PON base + PON_SPARE_OFFSET).
++pub fn set_reason_with_bus<B: ArbBus>(
++    bus: &mut B,
++    sid: u32,
++    reg: u32,
++    field: u8,
++) -> Result<u8, &'static str> {
++    check_arbiter_v5(bus)?;
++    let apid = discover_apid(bus, ppid(sid, reg))?;
++    let old = observer_read_byte(bus, apid, reg)?;
++    let new = rmw_reason(old, field);
++    rw_write_byte(bus, apid, reg, new)?;
++    let verify = observer_read_byte(bus, apid, reg)?;
++    if verify & REASON_MASK != new & REASON_MASK {
++        return Err("PON reboot-reason read-back mismatch");
++    }
++    Ok(new)
++}
++
++// ---------------------------------------------------------------------------
++// Kernel glue (excluded from the standalone host-test build).
++// ---------------------------------------------------------------------------
++
++#[cfg(not(test))]
++static PON_AVAILABLE: AtomicBool = AtomicBool::new(false);
++/// Virtual (phys_to_virt) bases of the arbiter regions, from the FDT.
++#[cfg(not(test))]
++static ARB_CORE_VIRT: AtomicUsize = AtomicUsize::new(0);
++#[cfg(not(test))]
++static ARB_CHNLS_VIRT: AtomicUsize = AtomicUsize::new(0);
++#[cfg(not(test))]
++static ARB_OBSRVR_VIRT: AtomicUsize = AtomicUsize::new(0);
++#[cfg(not(test))]
++static ARB_CNFG_VIRT: AtomicUsize = AtomicUsize::new(0);
++#[cfg(not(test))]
++static PON_SID: AtomicUsize = AtomicUsize::new(0);
++#[cfg(not(test))]
++static PON_REG: AtomicUsize = AtomicUsize::new(0);
++
++/// Discover the SPMI arbiter regions and the pm8998 PON peripheral from
++/// the FDT (mirroring qcom_scm::init). Bases come from the device tree,
++/// never from hard-coded literals in the transaction path, so a DT
++/// change fails safe (feature reports unavailable) instead of writing
++/// to a wrong address. The region addresses are translated through the
++/// DT `ranges` chain and converted with the kernel's physical map,
++/// which already registers every /soc child's ranges as device memory
++/// (crate::dtb), so they remain mapped at reset time.
++#[cfg(not(test))]
++pub fn init(fdt: &crate::dtb::Fdt<'_>) {
++    use crate::memory::{RmmA, RmmArch};
++    use rmm::PhysicalAddress;
++
++    let found = probe(fdt);
++    if let Some((regions, sid, pon_base)) = found {
++        ARB_CORE_VIRT.store(
++            RmmA::phys_to_virt(PhysicalAddress::new(regions[0])).data(),
++            Ordering::Release,
++        );
++        ARB_CHNLS_VIRT.store(
++            RmmA::phys_to_virt(PhysicalAddress::new(regions[1])).data(),
++            Ordering::Release,
++        );
++        ARB_OBSRVR_VIRT.store(
++            RmmA::phys_to_virt(PhysicalAddress::new(regions[2])).data(),
++            Ordering::Release,
++        );
++        ARB_CNFG_VIRT.store(
++            RmmA::phys_to_virt(PhysicalAddress::new(regions[3])).data(),
++            Ordering::Release,
++        );
++        PON_SID.store(sid as usize, Ordering::Release);
++        PON_REG.store((pon_base + PON_SPARE_OFFSET) as usize, Ordering::Release);
++    }
++    PON_AVAILABLE.store(found.is_some(), Ordering::Release);
++    if found.is_some() {
++        info!("Qualcomm PMIC PON node found; reboot-reason writes remain opt-in");
++    }
++}
++
++/// FDT probe behind init(): returns (translated CPU-physical bases
++/// [core, chnls, obsrvr, cnfg], PMIC slave ID, PON peripheral base).
++#[cfg(not(test))]
++fn probe(fdt: &crate::dtb::Fdt<'_>) -> Option<([usize; 4], u32, u32)> {
++    use fdt::properties::{values::StringList, Status};
++
++    let arb = fdt
++        .all_compatible(&["qcom,spmi-pmic-arb"])
++        .find(|node| matches!(node.property::<Status>(), None | Some(Status::OKAY)))?;
++
++    // Region bases by reg-names, falling back to the sdm845 binding's
++    // documented order (core, chnls, obsrvr, intr, cnfg).
++    let names: alloc::vec::Vec<alloc::string::String> = arb
++        .raw_property("reg-names")
++        .and_then(|prop| prop.as_value::<StringList>().ok())
++        .map(|list| list.iter().map(alloc::string::ToString::to_string).collect())
++        .unwrap_or_default();
++    let mut translated: alloc::vec::Vec<usize> = alloc::vec::Vec::new();
++    for region in arb.reg()?.iter::<usize, usize>() {
++        translated.push(crate::dtb::translate_mmio_address(fdt, &arb, &region.ok()?)?);
++    }
++    let pick = |name: &str, fallback: usize| -> Option<usize> {
++        if let Some(index) = names.iter().position(|n| n == name) {
++            translated.get(index).copied()
++        } else {
++            translated.get(fallback).copied()
++        }
++    };
++    let regions = [
++        pick("core", 0)?,
++        pick("chnls", 1)?,
++        pick("obsrvr", 2)?,
++        pick("cnfg", 4)?,
++    ];
++
++    // The PON peripheral is a grandchild: arbiter -> pmic (slave) ->
++    // pon@800. The pmic's first reg cell is its SPMI slave ID and the
++    // pon node's reg is the peripheral base (qcom-pon.c reads both with
++    // of_property_read_u32).
++    for pmic in arb.children() {
++        let Some(sid) = pmic
++            .raw_property("reg")
++            .and_then(|prop| prop.as_value::<u32>().ok())
++        else {
++            continue;
++        };
++        for child in pmic.children() {
++            let Some(compatible) = child.property::<fdt::properties::Compatible>() else {
++                continue;
++            };
++            if !compatible.compatible_with("qcom,pm8998-pon") {
++                continue;
++            }
++            if !matches!(child.property::<Status>(), None | Some(Status::OKAY)) {
++                continue;
++            }
++            let base = child
++                .raw_property("reg")
++                .and_then(|prop| prop.as_value::<u32>().ok())?;
++            return Some((regions, sid, base));
++        }
++    }
++    None
++}
++
++/// Volatile-MMIO ArbBus over the kernel's physical map.
++#[cfg(not(test))]
++struct MmioBus {
++    core: usize,
++    chnls: usize,
++    obsrvr: usize,
++    cnfg: usize,
++}
++
++#[cfg(not(test))]
++impl MmioBus {
++    fn base(&self, region: Region) -> usize {
++        match region {
++            Region::Core => self.core,
++            Region::Chnls => self.chnls,
++            Region::Obsrvr => self.obsrvr,
++            Region::Cnfg => self.cnfg,
++        }
++    }
++}
++
++#[cfg(not(test))]
++impl ArbBus for MmioBus {
++    fn read32(&mut self, region: Region, offset: usize) -> u32 {
++        unsafe { core::ptr::read_volatile((self.base(region) + offset) as *const u32) }
++    }
++
++    fn write32(&mut self, region: Region, offset: usize, value: u32) {
++        unsafe { core::ptr::write_volatile((self.base(region) + offset) as *mut u32, value) }
++    }
++
++    fn now_us(&mut self) -> u64 {
++        use crate::arch::device::cpu::registers::control_regs;
++        let freq = u64::from(unsafe { control_regs::cntfrq_el0() });
++        if freq == 0 {
++            // Degenerate clock: report 0 forever; wait_done's poll-count
++            // bound still guarantees termination.
++            return 0;
++        }
++        unsafe { control_regs::cntvct_el0() }.saturating_mul(1_000_000) / freq
++    }
++}
++
++/// Write the PON reboot-reason field requested by the bootloader
++/// environment (REASON_BOOTLOADER / REASON_RECOVERY, else REASON_NONE)
++/// and verify it by reading it back. Called from kreset() only, after
++/// the SCM download-mode clear; the caller logs the result and
++/// continues with the PSCI reset either way, so a PON failure never
++/// blocks or alters the reset itself. Writing the field
++/// unconditionally (including REASON_NONE) keeps it deterministic
++/// after every feature-enabled reset, regardless of whether ABL clears
++/// the field after consuming it.
++#[cfg(all(not(test), feature = "qcom-pon-reboot-reason"))]
++pub fn apply_requested_reason() -> Result<u8, &'static str> {
++    if !PON_AVAILABLE.load(Ordering::Acquire) {
++        return Err("no enabled qcom,pm8998-pon device-tree node");
++    }
++    let field = parse_reason_field(crate::startup::init_env());
++    let mut bus = MmioBus {
++        core: ARB_CORE_VIRT.load(Ordering::Acquire),
++        chnls: ARB_CHNLS_VIRT.load(Ordering::Acquire),
++        obsrvr: ARB_OBSRVR_VIRT.load(Ordering::Acquire),
++        cnfg: ARB_CNFG_VIRT.load(Ordering::Acquire),
++    };
++    set_reason_with_bus(
++        &mut bus,
++        PON_SID.load(Ordering::Acquire) as u32,
++        PON_REG.load(Ordering::Acquire) as u32,
++        field,
++    )
++}
++
++// ---------------------------------------------------------------------------
++// Host tests (standalone: rustc --test on this file).
++// ---------------------------------------------------------------------------
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::collections::{HashMap, VecDeque};
++
++    /// Fake arbiter register file. Plain registers live in `regs`;
++    /// channel STATUS is scripted: a CMD write arms the channel, whose
++    /// STATUS then reports Pending `done_after` times before Done,
++    /// unless a fault class or `stuck` overrides it. Observer reads pop
++    /// bytes from `read_bytes` into RDATA0 when the read CMD is written.
++    struct FakeBus {
++        regs: HashMap<(Region, usize), u32>,
++        writes: std::vec::Vec<(Region, usize, u32)>,
++        read_bytes: VecDeque<u8>,
++        pending: HashMap<(Region, usize), u32>,
++        done_after: u32,
++        fault: Option<StatusClass>,
++        stuck: bool,
++        clock: u64,
++        tick: u64,
++    }
++
++    impl FakeBus {
++        fn new() -> Self {
++            Self {
++                regs: HashMap::new(),
++                writes: std::vec::Vec::new(),
++                read_bytes: VecDeque::new(),
++                pending: HashMap::new(),
++                done_after: 0,
++                fault: None,
++                stuck: false,
++                clock: 0,
++                tick: 10,
++            }
++        }
++
++        /// A v5 arbiter whose APID map is `entries` = (ppid, write_ee)
++        /// per APID index.
++        fn with_apids(entries: &[(u32, u32)]) -> Self {
++            let mut bus = Self::new();
++            bus.regs.insert((Region::Core, ARB_VERSION), 0x5000_0000);
++            bus.regs
++                .insert((Region::Core, ARB_FEATURES), entries.len() as u32);
++            for (apid, (ppid, ee)) in entries.iter().enumerate() {
++                bus.regs.insert(
++                    (Region::Core, ARB_APID_MAP_BASE + 4 * apid),
++                    (ppid & 0xFFF) << 8,
++                );
++                bus.regs
++                    .insert((Region::Cnfg, ARB_OWNER_TABLE + 4 * apid), *ee);
++            }
++            bus
++        }
++    }
++
++    impl ArbBus for FakeBus {
++        fn read32(&mut self, region: Region, offset: usize) -> u32 {
++            // STATUS offsets sit at chan + 0x08 in both channel spaces.
++            if matches!(region, Region::Chnls | Region::Obsrvr) && offset % 0x80 == CHAN_STATUS {
++                let chan = offset - CHAN_STATUS;
++                if let Some(fault) = self.fault {
++                    return match fault {
++                        StatusClass::Failed => 1 << 1,
++                        StatusClass::Denied => 1 << 2,
++                        StatusClass::Dropped => 1 << 3,
++                        _ => 0,
++                    };
++                }
++                if self.stuck {
++                    return 0;
++                }
++                return match self.pending.get_mut(&(region, chan)) {
++                    Some(left) if *left > 0 => {
++                        *left -= 1;
++                        0
++                    }
++                    _ => 1, // BIT(0) = done
++                };
++            }
++            *self.regs.get(&(region, offset)).unwrap_or(&0)
++        }
++
++        fn write32(&mut self, region: Region, offset: usize, value: u32) {
++            self.writes.push((region, offset, value));
++            self.regs.insert((region, offset), value);
++            // A CMD write arms the channel's STATUS script.
++            if matches!(region, Region::Chnls | Region::Obsrvr) && offset % 0x80 == CHAN_CMD {
++                self.pending.insert((region, offset), self.done_after);
++                if region == Region::Obsrvr && value == ext_cmd(true, PON_REG_TEST, 1) {
++                    let byte = self.read_bytes.pop_front().unwrap_or(0);
++                    self.regs
++                        .insert((Region::Obsrvr, offset + CHAN_RDATA0), u32::from(byte));
++                }
++            }
++        }
++
++        fn now_us(&mut self) -> u64 {
++            self.clock += self.tick;
++            self.clock
++        }
++    }
++
++    const PON_REG_TEST: u32 = 0x088F;
++
++    #[test]
++    fn ppid_encoding() {
++        assert_eq!(ppid(0, 0x088F), 0x008);
++        assert_eq!(ppid(0, 0x0800), 0x008);
++        assert_eq!(ppid(0, 0x08FF), 0x008);
++        assert_eq!(ppid(0, 0x0900), 0x009);
++        assert_eq!(ppid(1, 0x088F), 0x108);
++    }
++
++    #[test]
++    fn cmd_word_encoding() {
++        assert_eq!(ext_cmd(false, 0x088F, 1), 0x0000_08F0);
++        assert_eq!(ext_cmd(true, 0x088F, 1), 0x0800_08F0);
++        // Multi-byte: bc field is len - 1.
++        assert_eq!(ext_cmd(false, 0x088F, 4), 0x0000_08F3);
++        assert_eq!(ext_cmd(true, 0x0800, 1), 0x0800_0000);
++    }
++
++    #[test]
++    fn map_entry_decode() {
++        assert_eq!(map_entry_ppid(0x008 << 8), 0x008);
++        // BIT(24) irq-owner flag is not part of the PPID.
++        assert_eq!(map_entry_ppid((1 << 24) | (0x123 << 8)), 0x123);
++        assert_eq!(map_entry_ppid(0), 0);
++    }
++
++    #[test]
++    fn reason_field_and_rmw_math() {
++        assert_eq!(reason_field(0), REASON_NONE);
++        assert_eq!(reason_field(1), REASON_RECOVERY);
++        assert_eq!(reason_field(2), REASON_BOOTLOADER);
++        assert_eq!(REASON_BOOTLOADER, 0x04);
++        assert_eq!(REASON_RECOVERY, 0x02);
++        // (old & 0x01) | field: bit 0 always preserved.
++        assert_eq!(rmw_reason(0x00, REASON_BOOTLOADER), 0x04);
++        assert_eq!(rmw_reason(0xFF, REASON_BOOTLOADER), 0x05);
++        assert_eq!(rmw_reason(0x01, REASON_NONE), 0x01);
++        assert_eq!(rmw_reason(0x55, REASON_RECOVERY), 0x03);
++        assert_eq!(rmw_reason(0xFE, REASON_NONE), 0x00);
++        assert_eq!(rmw_reason(0x04, REASON_NONE), 0x00);
++        // The raw-magic form of the same math.
++        for old in [0x00u8, 0xFF, 0x01, 0x55] {
++            for magic in [0u8, 1, 2] {
++                assert_eq!(
++                    rmw_reason(old, reason_field(magic)),
++                    (old & 0x01) | (magic << 1)
++                );
++            }
++        }
++    }
++
++    #[test]
++    fn status_classification() {
++        assert_eq!(classify_status(0), StatusClass::Pending);
++        assert_eq!(classify_status(1), StatusClass::Done);
++        assert_eq!(classify_status(1 << 1), StatusClass::Failed);
++        assert_eq!(classify_status(1 << 2), StatusClass::Denied);
++        assert_eq!(classify_status(1 << 3), StatusClass::Dropped);
++        // Errors win over done.
++        assert_eq!(classify_status(0b0011), StatusClass::Failed);
++        assert_eq!(classify_status(0b0101), StatusClass::Denied);
++        assert_eq!(classify_status(0b1001), StatusClass::Dropped);
++    }
++
++    #[test]
++    fn apid_selection_duplicate_ppid_ownership_rule() {
++        // APID 0 maps PPID 0x008 but is owned by ee 3; APID 1 maps an
++        // unrelated PPID; APID 2 maps PPID 0x008 with write_ee == 0.
++        let mut bus = FakeBus::with_apids(&[(0x008, 3), (0x009, 0), (0x008, 0)]);
++        assert_eq!(discover_apid(&mut bus, 0x008), Ok(2));
++        // No write-owned candidate -> error.
++        let mut bus = FakeBus::with_apids(&[(0x008, 3), (0x008, 1)]);
++        assert_eq!(
++            discover_apid(&mut bus, 0x008),
++            Err("no write-owned SPMI APID for the PON peripheral")
++        );
++        // PPID absent entirely -> error.
++        let mut bus = FakeBus::with_apids(&[(0x009, 0)]);
++        assert!(discover_apid(&mut bus, 0x008).is_err());
++        // The candidate predicate itself.
++        assert!(apid_is_candidate(0x008 << 8, 0, 0x008));
++        assert!(!apid_is_candidate(0x008 << 8, 2, 0x008));
++        assert!(!apid_is_candidate(0x009 << 8, 0, 0x008));
++    }
++
++    #[test]
++    fn version_gate_refuses_pre_v5() {
++        let mut bus = FakeBus::with_apids(&[(0x008, 0)]);
++        bus.regs.insert((Region::Core, ARB_VERSION), 0x4000_0000);
++        assert_eq!(
++            set_reason_with_bus(&mut bus, 0, PON_REG_TEST, REASON_BOOTLOADER),
++            Err("SPMI arbiter is not v5 (VERSION gate)")
++        );
++        // The refusal happens before any channel write.
++        assert!(bus
++            .writes
++            .iter()
++            .all(|(region, _, _)| *region != Region::Chnls));
++    }
++
++    #[test]
++    fn full_transaction_writes_and_verifies() {
++        let mut bus = FakeBus::with_apids(&[(0x008, 3), (0x008, 0)]);
++        bus.read_bytes = [0x55, 0x05].into();
++        let written = set_reason_with_bus(&mut bus, 0, PON_REG_TEST, REASON_BOOTLOADER);
++        // old 0x55 -> (0x55 & 1) | 0x04 = 0x05, APID 1 selected.
++        assert_eq!(written, Ok(0x05));
++        let wdata = bus
++            .writes
++            .iter()
++            .find(|(r, o, _)| *r == Region::Chnls && *o == RW_CHAN_STRIDE + CHAN_WDATA0)
++            .map(|(_, _, v)| *v);
++        assert_eq!(wdata, Some(0x05));
++        let wcmd = bus
++            .writes
++            .iter()
++            .find(|(r, o, _)| *r == Region::Chnls && *o == RW_CHAN_STRIDE + CHAN_CMD)
++            .map(|(_, _, v)| *v);
++        assert_eq!(wcmd, Some(0x0000_08F0));
++        let rcmd = bus
++            .writes
++            .iter()
++            .find(|(r, o, _)| *r == Region::Obsrvr && *o == OBS_CHAN_STRIDE + CHAN_CMD)
++            .map(|(_, _, v)| *v);
++        assert_eq!(rcmd, Some(0x0800_08F0));
++    }
++
++    #[test]
++    fn full_transaction_none_reason_is_deterministic() {
++        let mut bus = FakeBus::with_apids(&[(0x008, 0)]);
++        bus.read_bytes = [0xFF, 0x01].into();
++        // A stale bootloader field (in 0xFF) is cleared; bit 0 survives.
++        assert_eq!(
++            set_reason_with_bus(&mut bus, 0, PON_REG_TEST, REASON_NONE),
++            Ok(0x01)
++        );
++    }
++
++    #[test]
++    fn read_back_mismatch_is_an_error() {
++        let mut bus = FakeBus::with_apids(&[(0x008, 0)]);
++        bus.read_bytes = [0x55, 0x55].into();
++        assert_eq!(
++            set_reason_with_bus(&mut bus, 0, PON_REG_TEST, REASON_BOOTLOADER),
++            Err("PON reboot-reason read-back mismatch")
++        );
++    }
++
++    #[test]
++    fn status_faults_are_distinct_errors() {
++        for (fault, msg) in [
++            (StatusClass::Failed, "SPMI arbiter transaction failed"),
++            (StatusClass::Denied, "SPMI arbiter transaction denied"),
++            (StatusClass::Dropped, "SPMI arbiter transaction dropped"),
++        ] {
++            let mut bus = FakeBus::with_apids(&[(0x008, 0)]);
++            bus.fault = Some(fault);
++            assert_eq!(
++                set_reason_with_bus(&mut bus, 0, PON_REG_TEST, REASON_BOOTLOADER),
++                Err(msg)
++            );
++        }
++    }
++
++    #[test]
++    fn status_timeout_with_fake_clock() {
++        let mut bus = FakeBus::with_apids(&[(0x008, 0)]);
++        bus.stuck = true;
++        assert_eq!(
++            set_reason_with_bus(&mut bus, 0, PON_REG_TEST, REASON_BOOTLOADER),
++            Err("SPMI arbiter transaction timed out")
++        );
++    }
++
++    #[test]
++    fn pending_then_done_completes() {
++        let mut bus = FakeBus::with_apids(&[(0x008, 0)]);
++        bus.done_after = 3;
++        bus.read_bytes = [0x00, 0x04].into();
++        assert_eq!(
++            set_reason_with_bus(&mut bus, 0, PON_REG_TEST, REASON_BOOTLOADER),
++            Ok(0x04)
++        );
++    }
++
++    #[test]
++    fn env_parse() {
++        assert_eq!(
++            parse_reason_field(b"REDOX_RAMBOOT=1\nREDOX_PON_REBOOT_REASON=bootloader\n"),
++            REASON_BOOTLOADER
++        );
++        assert_eq!(
++            parse_reason_field(b"REDOX_PON_REBOOT_REASON=recovery\n"),
++            REASON_RECOVERY
++        );
++        assert_eq!(parse_reason_field(b"REDOX_RAMBOOT=1\n"), REASON_NONE);
++        assert_eq!(
++            parse_reason_field(b"REDOX_PON_REBOOT_REASON=banana\n"),
++            REASON_NONE
++        );
++        // The key must start the line.
++        assert_eq!(
++            parse_reason_field(b"XREDOX_PON_REBOOT_REASON=bootloader\n"),
++            REASON_NONE
++        );
++        // CRLF endings are tolerated.
++        assert_eq!(
++            parse_reason_field(b"REDOX_PON_REBOOT_REASON=bootloader\r\n"),
++            REASON_BOOTLOADER
++        );
++        assert_eq!(parse_reason_field(b""), REASON_NONE);
++    }
++}
+diff --git a/src/arch/aarch64/stop.rs b/src/arch/aarch64/stop.rs
+index 16fb4018..0df2b4ca 100644
+--- a/src/arch/aarch64/stop.rs
++++ b/src/arch/aarch64/stop.rs
+@@ -32,6 +32,11 @@ pub unsafe fn kreset() -> ! {
+         Ok(()) => { info!("qcom SCM: download-mode cleared"); }
+         Err(reason) => { warn!("Qualcomm SCM download-mode clear failed: {}", reason); }
+     }
++    #[cfg(feature = "qcom-pon-reboot-reason")]
++    match crate::arch::device::qcom_pon::apply_requested_reason() {
++        Ok(byte) => { info!("qcom PON: reboot-reason byte {:#04x} written and verified", byte); }
++        Err(reason) => { warn!("qcom PON reboot-reason write failed: {}", reason); }
++    }
+     #[cfg(feature = "qcom-dload-mode-clear")]
+     panel_capture_hold();
+     println!("kreset: PSCI SYSTEM_RESET (0x84000009)");

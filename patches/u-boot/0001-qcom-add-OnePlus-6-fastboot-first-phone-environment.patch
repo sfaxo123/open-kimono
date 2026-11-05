@@ -1,0 +1,78 @@
+From 48bbc23611420e3b4c9040fe9f9f4909c2c46095 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Mon, 26 Oct 2026 03:49:16 +0000
+Subject: [PATCH 1/2] qcom: add OnePlus 6 fastboot-first phone environment
+
+Agent: Codex
+Model: GPT-6
+Provider: OpenAI
+Refs: OnePlus 6 headless USB
+---
+ board/qualcomm/qcom-phone-headless.config |  2 +
+ board/qualcomm/qcom-phone-headless.env    | 45 +++++++++++++++++++++++
+ 2 files changed, 47 insertions(+)
+ create mode 100644 board/qualcomm/qcom-phone-headless.config
+ create mode 100644 board/qualcomm/qcom-phone-headless.env
+
+diff --git a/board/qualcomm/qcom-phone-headless.config b/board/qualcomm/qcom-phone-headless.config
+new file mode 100644
+index 00000000..21233413
+--- /dev/null
++++ b/board/qualcomm/qcom-phone-headless.config
+@@ -0,0 +1,2 @@
++# OnePlus 6 unattended USB control, layered on qcom_defconfig + qcom-phone.config.
++CONFIG_ENV_DEFAULT_ENV_TEXT_FILE="board/qualcomm/qcom-phone-headless.env"
+diff --git a/board/qualcomm/qcom-phone-headless.env b/board/qualcomm/qcom-phone-headless.env
+new file mode 100644
+index 00000000..b604edd4
+--- /dev/null
++++ b/board/qualcomm/qcom-phone-headless.env
+@@ -0,0 +1,45 @@
++bootdelay=1
++bootretry=-1
++stdin=serial,button-kbd
++stdout=serial,vidconsole
++stderr=serial,vidconsole
++
++# Keep downloads in the RAM staging window used by the Mac-side agent.
++fastboot=fastboot -l 0xa0000000 -s 0x6000000 usb 0
++
++# Always probe for UFS storage, though it should be done by board code.
++preboot=scsi scan
++
++# Shortcut to enable USB serial gadget and disable bootretry
++serial_gadget=setenv stdin serial,button-kbd,usbacm; \
++	setenv stdout serial,vidconsole,usbacm; \
++	setenv stderr serial,vidconsole,usbacm; \
++	setenv bootretry -1; \
++	echo Enabled U-Boot console serial gadget
++
++# A timed menu gives the screen a three-second override before fastboot.
++# A missing UDC returns to the console instead of retrying forever.
++bootcmd=bootmenu 3
++bootmenu_default=0
++
++# The volume-down override keeps the menu open until a person chooses.
++menucmd=setenv bootcmd run menucmd; bootmenu -1
++
++# Pause is used so the output can be read on the display
++bootmenu_0=Enable fastboot mode=run fastboot
++bootmenu_1=Enable serial console gadget=run serial_gadget
++bootmenu_2=Enable USB mass storage=echo "Press any key to exit UMS mode"; ums 0 scsi 0
++bootmenu_3=Boot=bootefi bootmgr; pause
++# Disabling bootretry means we'll just drop the shell
++bootmenu_4=Drop to shell=setenv bootretry -1
++bootmenu_5=Reset device=reset
++bootmenu_6=Dump clocks=clk dump; pause
++bootmenu_7=Dump environment=printenv; pause
++bootmenu_8=Board info=bdinfo; pause
++bootmenu_9=Dump bootargs=fdt addr $fdt_addr_r; fdt print /chosen bootargs; pause
++bootmenu_10=Power off=poweroff
++
++# Allow holding the volume down button while U-Boot loads to enter
++# the boot menu
++button_cmd_0_name=Volume Down
++button_cmd_0=run menucmd
+-- 
+2.43.0
+

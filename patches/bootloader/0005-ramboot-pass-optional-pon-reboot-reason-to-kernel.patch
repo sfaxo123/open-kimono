@@ -1,0 +1,32 @@
+From: Remy <remy@localhost>
+Subject: [PATCH] ramboot: pass optional PON reboot reason into the kernel environment
+
+Forward a build-time REDOX_PON_REBOOT_REASON of exactly
+"bootloader" or "recovery" into the kernel environment so the
+kernel's PON reboot-reason write (kernel patch 0040) can select
+its reason; any other value forwards nothing, which the kernel
+parses as no reason requested. Mirrors 0006's
+REDOX_WDT_MODE forwarding.
+
+Agent: Remy (root of record)
+Host: 3090
+Model: Muse Wonder (muse-wonder-1.0)
+Provider: Meta
+---
+diff --git a/src/main.rs b/src/main.rs
+index b5aa4ec..5a0f205 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -631,6 +631,12 @@ fn main(os: &impl Os) -> (usize, u64, KernelArgs) {
+         #[cfg(feature = "ramboot")]
+         writeln!(w, "REDOX_RAMBOOT=1").unwrap();
+         #[cfg(feature = "ramboot")]
++        if let Some(reason) = option_env!("REDOX_PON_REBOOT_REASON") {
++            if reason == "bootloader" || reason == "recovery" {
++                writeln!(w, "REDOX_PON_REBOOT_REASON={reason}").unwrap();
++            }
++        }
++        #[cfg(feature = "ramboot")]
+         if let Some(ttl) = option_env!("REDOX_RAMBOOT_TTL") {
+             if !ttl.is_empty() && ttl.bytes().all(|byte| byte.is_ascii_digit()) {
+                 writeln!(w, "REDOX_RAMBOOT_TTL={ttl}").unwrap();

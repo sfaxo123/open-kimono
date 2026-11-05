@@ -1,0 +1,24 @@
+[package]
+name = "a2ui-render"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "C6 (docs/TASKS-WAVE1.md): render a subset of A2UI v0.9 declarative JSON (text, heading, button, list, progress, image placeholder, text input) in the black+orange OrbClient style of apps/timeline — one column, large touch targets; button/input events come out as trace-events (AG-UI Custom). Unknown component types render a visible 'unsupported: X' chip, never silence."
+
+[lib]
+name = "a2ui_render"
+path = "src/lib.rs"
+
+# The `a2ui-render` binary lives in src/main.rs and is auto-discovered
+# (package name == bin name), so it does not need an explicit [[bin]] block.
+
+[dependencies]
+trace-events = { path = "../trace-events" }
+orbclient = "0.4.6"
+serde_json = "1"
+flate2 = "1"
+
+# The decoder tests hand-build PNGs with every filter type, which needs zlib
+# on the test side too.
+[dev-dependencies]
+flate2 = "1"

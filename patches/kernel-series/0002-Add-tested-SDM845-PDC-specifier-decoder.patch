@@ -1,0 +1,118 @@
+From 8970622a89c3649637f4b0c1f38d45de05a0a84f Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:04:32 +0000
+Subject: [PATCH 02/21] Add tested SDM845 PDC specifier decoder
+
+Co-Authored-By: Codex <noreply@openai.com>
+---
+ docs/workbench/k1-host-tests.log            |  6 ++
+ src/arch/aarch64/device/irqchip/qcom_irq.rs | 87 +++++++++++++++++++++
+ 2 files changed, 93 insertions(+)
+ create mode 100644 docs/workbench/k1-host-tests.log
+ create mode 100644 src/arch/aarch64/device/irqchip/qcom_irq.rs
+
+diff --git a/docs/workbench/k1-host-tests.log b/docs/workbench/k1-host-tests.log
+new file mode 100644
+index 00000000..4dd67288
+--- /dev/null
++++ b/docs/workbench/k1-host-tests.log
+@@ -0,0 +1,6 @@
++
++running 2 tests
++test tests::decodes_sdm845_ranges_and_gic_intids ... ok
++test tests::rejects_unusable_trigger_types_and_splits_bank_bit ... ok
++
++test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+diff --git a/src/arch/aarch64/device/irqchip/qcom_irq.rs b/src/arch/aarch64/device/irqchip/qcom_irq.rs
+new file mode 100644
+index 00000000..56afd582
+--- /dev/null
++++ b/src/arch/aarch64/device/irqchip/qcom_irq.rs
+@@ -0,0 +1,87 @@
++// SPDX-License-Identifier: MIT
++//! SDM845 interrupt specifier decoding. This module has no kernel dependencies
++//! so the routing rules can be tested on the host.
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub struct PdcRange {
++    pub first_pin: u32,
++    pub first_spi: u32,
++    pub count: u32,
++}
++
++pub fn parse_pdc_ranges(data: &[u8]) -> Option<impl Iterator<Item = PdcRange> + '_> {
++    if data.is_empty() || data.len() % 12 != 0 {
++        return None;
++    }
++    Some(data.chunks_exact(12).map(|triple| PdcRange {
++        first_pin: u32::from_be_bytes(triple[0..4].try_into().unwrap()),
++        first_spi: u32::from_be_bytes(triple[4..8].try_into().unwrap()),
++        count: u32::from_be_bytes(triple[8..12].try_into().unwrap()),
++    }))
++}
++
++pub fn pdc_spi(ranges: &[PdcRange], pin: u32) -> Option<u32> {
++    if pin >= 256 {
++        return None;
++    }
++    ranges.iter().find_map(|range| {
++        (range.count != 0 && pin >= range.first_pin && pin - range.first_pin < range.count)
++            .then(|| range.first_spi.checked_add(pin - range.first_pin))
++            .flatten()
++    })
++}
++
++/// Returns (PDC type bits, GIC trigger type). Unsupported or ambiguous types
++/// fail closed; both edges needs a hardware-specific rearm workaround.
++pub fn pdc_type(flags: u32) -> Option<(u32, u32)> {
++    match flags {
++        1 => Some((0b110, 1)), // rising
++        2 => Some((0b010, 1)), // falling, inverted by PDC
++        4 => Some((0b100, 4)), // high
++        8 => Some((0b000, 4)), // low, inverted by PDC
++        _ => None,
++    }
++}
++
++pub fn pdc_bank_bit(pin: u32) -> Option<(usize, u32)> {
++    (pin < 256).then_some(((pin / 32) as usize, 1 << (pin % 32)))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    const SDM845: [PdcRange; 3] = [
++        PdcRange { first_pin: 0, first_spi: 480, count: 94 },
++        PdcRange { first_pin: 94, first_spi: 609, count: 15 },
++        PdcRange { first_pin: 115, first_spi: 630, count: 7 },
++    ];
++
++    #[test]
++    fn decodes_sdm845_ranges_and_gic_intids() {
++        let raw: [u8; 36] = [
++            0,0,0,0, 0,0,1,224, 0,0,0,94,
++            0,0,0,94, 0,0,2,97, 0,0,0,15,
++            0,0,0,115, 0,0,2,118, 0,0,0,7,
++        ];
++        assert_eq!(parse_pdc_ranges(&raw).unwrap().collect::<Vec<_>>(), SDM845);
++        for (pin, intid) in [(0,512), (93,605), (94,641), (108,655), (115,662), (121,668), (100,647)] {
++            assert_eq!(pdc_spi(&SDM845, pin).unwrap() + 32, intid);
++        }
++        for pin in 109..=114 {
++            assert_eq!(pdc_spi(&SDM845, pin), None);
++        }
++        assert_eq!(pdc_spi(&SDM845, u32::MAX), None);
++        assert!(parse_pdc_ranges(&raw[..35]).is_none());
++    }
++
++    #[test]
++    fn rejects_unusable_trigger_types_and_splits_bank_bit() {
++        assert_eq!(pdc_type(2), Some((0b010, 1)));
++        assert_eq!(pdc_type(8), Some((0b000, 4)));
++        assert_eq!(pdc_type(3), None);
++        assert_eq!(pdc_type(0), None);
++        assert_eq!(pdc_bank_bit(100), Some((3, 1 << 4)));
++        assert_eq!(pdc_bank_bit(256), None);
++    }
++}

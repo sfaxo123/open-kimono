@@ -1,0 +1,46 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH 13/13] spmid: read PM8998 PON power key from RT_STS bit zero
+
+diff --git a/drivers/spmid-core/src/lib.rs b/drivers/spmid-core/src/lib.rs
+--- a/drivers/spmid-core/src/lib.rs
++++ b/drivers/spmid-core/src/lib.rs
+@@ -90,7 +90,7 @@
+     }
+     pub fn sample(&mut self) -> Result<Levels, Error> {
+         Ok(Levels {
+-            power: self.read_byte(0, 0x810)? & 0x80 != 0,
++            power: self.read_byte(0, 0x810)? & 1 != 0,
+             volume_down: self.read_byte(0, 0xc410)? & 1 == 0,
+             volume_up: self.read_byte(0, 0xc510)? & 1 == 0,
+         })
+diff --git a/drivers/spmid-core/tests/arbiter.rs b/drivers/spmid-core/tests/arbiter.rs
+--- a/drivers/spmid-core/tests/arbiter.rs
++++ b/drivers/spmid-core/tests/arbiter.rs
+@@ -43,8 +43,11 @@
+ fn replay_revision_and_three_buttons() {
+     let mut t = setup(&[(0, 1), (0, 8), (0, 0xc4), (0, 0xc5)]);
+     read(&mut t, 0, 4, 0x51);
++    read(&mut t, 1, 0x10, 1);
++    read(&mut t, 2, 0x10, 0);
++    read(&mut t, 3, 0x10, 1);
+     read(&mut t, 1, 0x10, 0x80);
+-    read(&mut t, 2, 0x10, 0);
++    read(&mut t, 2, 0x10, 1);
+     read(&mut t, 3, 0x10, 1);
+     let mut arb = Arbiter::new(Replayer::strict(t), win()).unwrap();
+     assert_eq!(arb.pmic_type(), Ok(0x51));
+@@ -53,6 +56,14 @@
+         Ok(Levels {
+             power: true,
+             volume_down: true,
++            volume_up: false
++        })
++    );
++    assert_eq!(
++        arb.sample(),
++        Ok(Levels {
++            power: false,
++            volume_down: false,
+             volume_up: false
+         })
+     );

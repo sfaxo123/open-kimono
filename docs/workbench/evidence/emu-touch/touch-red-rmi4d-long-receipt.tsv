@@ -1,0 +1,7 @@
+artifact	sha256	path
+emulator	588ac3f028c74a73322c3f1cbac31228650bd7a6d85f76bbe79f38e80519188c	~/Developer/forks/qemu-oneplus6/build/qemu-system-aarch64
+payload	9bd1d32cf37c021b432c914df0a7b5650b397365a77f3d6ffe5bd0f5d297c487	out/phone-boot/redox-ramboot-emu-touch.efi
+image	493f8d898f59862edd5d8b13dbba47b417b5476ab2e7feff01998bbb6740fd06	out/emu-op6/touch-red-rmi4d-long/esp.img
+uboot_image	6b8febbd3d691947e8bcce8fe6c8e546f3db41f3cbea79bd27022495c293eb1e	out/emu-op6/touch-red-rmi4d-long/oneplus6-u-boot-with-ram.bin
+uboot_source	c50fec59e1c6bedaa5077b324615bf3eb001315144501da850d007b0a7619662	~/artifacts/handoff/oneplus-redox-20261024/phone-boot/u-boot-nodtb.bin.gz-dtb
+serial_log	ee9a1cb14287f5de57207dcaa41eda7f8a39530dbf65802b264320539ae22191	out/emu-op6/touch-red-rmi4d-long/serial.log

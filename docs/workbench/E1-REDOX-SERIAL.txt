@@ -1,0 +1,662 @@
+UEFI firmware (version 2024.02-2ubuntu0.10 built at 15:40:28 on Sep 23 2026)
+
+>>Start PXE over IPv4.
+  Station IP address is 10.0.2.15
+
+  Server IP address is 10.0.2.2
+  NBP filename is bootaa64.efi
+  NBP filesize is 158720 Bytes
+ Downloading NBP file...
+
+  NBP file downloaded successfully.
+BdsDxe: loading Boot0002 "UEFI PXEv4 (MAC:525400123456)" from PciRoot(0x0)/Pci(0x2,0x0)/MAC(525400123456,0x1)/IPv4(0.0.0.0,0x0,DHCP,0.0.0.0,0.0.0.0,0.0.0.0)
+BdsDxe: starting Boot0002 "UEFI PXEv4 (MAC:525400123456)" from PciRoot(0x0)/Pci(0x2,0x0)/MAC(525400123456,0x1)/IPv4(0.0.0.0,0x0,DHCP,0.0.0.0,0.0.0.0,0.0.0.0)
+WARN - Failed to get EFI EDID from handle Handle(3199848344): Status(0x8000000000000003) "unsupported"
+
+INFO - Currently in EL1
+
+Redox OS Bootloader 1.0.0 on aarch64/UEFI
+
+Hardware descriptor: DeviceTree(bfdc0000, 9000)
+
+Looking for RedoxFS:
+
+WARN - Failed to find SimpleFileSystem protocol: Status(0x8000000000000003) "unsupported"
+
+RedoxFS 035daea7-7729-4683-8eb9-6a7a51b59738: 253 MiB
+
+
+Output 0, best resolution: 800x600
+
+Auto-selecting boot resolution
+
+live: 0/253 MiB
+live: 0/253 MiB
+live: 1/253 MiB
+live: 2/253 MiB
+live: 3/253 MiB
+live: 4/253 MiB
+live: 5/253 MiB
+live: 6/253 MiB
+live: 7/253 MiB
+live: 8/253 MiB
+live: 9/253 MiB
+live: 10/253 MiB
+live: 11/253 MiB
+live: 12/253 MiB
+live: 13/253 MiB
+live: 14/253 MiB
+live: 15/253 MiB
+live: 16/253 MiB
+live: 17/253 MiB
+live: 18/253 MiB
+live: 19/253 MiB
+live: 20/253 MiB
+live: 21/253 MiB
+live: 22/253 MiB
+live: 23/253 MiB
+live: 24/253 MiB
+live: 25/253 MiB
+live: 26/253 MiB
+live: 27/253 MiB
+live: 28/253 MiB
+live: 29/253 MiB
+live: 30/253 MiB
+live: 31/253 MiB
+live: 32/253 MiB
+live: 33/253 MiB
+live: 34/253 MiB
+live: 35/253 MiB
+live: 36/253 MiB
+live: 37/253 MiB
+live: 38/253 MiB
+live: 39/253 MiB
+live: 40/253 MiB
+live: 41/253 MiB
+live: 42/253 MiB
+live: 43/253 MiB
+live: 44/253 MiB
+live: 45/253 MiB
+live: 46/253 MiB
+live: 47/253 MiB
+live: 48/253 MiB
+live: 49/253 MiB
+live: 50/253 MiB
+live: 51/253 MiB
+live: 52/253 MiB
+live: 53/253 MiB
+live: 54/253 MiB
+live: 55/253 MiB
+live: 56/253 MiB
+live: 57/253 MiB
+live: 58/253 MiB
+live: 59/253 MiB
+live: 60/253 MiB
+live: 61/253 MiB
+live: 62/253 MiB
+live: 63/253 MiB
+live: 64/253 MiB
+live: 65/253 MiB
+live: 66/253 MiB
+live: 67/253 MiB
+live: 68/253 MiB
+live: 69/253 MiB
+live: 70/253 MiB
+live: 71/253 MiB
+live: 72/253 MiB
+live: 73/253 MiB
+live: 74/253 MiB
+live: 75/253 MiB
+live: 76/253 MiB
+live: 77/253 MiB
+live: 78/253 MiB
+live: 79/253 MiB
+live: 80/253 MiB
+live: 81/253 MiB
+live: 82/253 MiB
+live: 83/253 MiB
+live: 84/253 MiB
+live: 85/253 MiB
+live: 86/253 MiB
+live: 87/253 MiB
+live: 88/253 MiB
+live: 89/253 MiB
+live: 90/253 MiB
+live: 91/253 MiB
+live: 92/253 MiB
+live: 93/253 MiB
+live: 94/253 MiB
+live: 95/253 MiB
+live: 96/253 MiB
+live: 97/253 MiB
+live: 98/253 MiB
+live: 99/253 MiB
+live: 100/253 MiB
+live: 101/253 MiB
+live: 102/253 MiB
+live: 103/253 MiB
+live: 104/253 MiB
+live: 105/253 MiB
+live: 106/253 MiB
+live: 107/253 MiB
+live: 108/253 MiB
+live: 109/253 MiB
+live: 110/253 MiB
+live: 111/253 MiB
+live: 112/253 MiB
+live: 113/253 MiB
+live: 114/253 MiB
+live: 115/253 MiB
+live: 116/253 MiB
+live: 117/253 MiB
+live: 118/253 MiB
+live: 119/253 MiB
+live: 120/253 MiB
+live: 121/253 MiB
+live: 122/253 MiB
+live: 123/253 MiB
+live: 124/253 MiB
+live: 125/253 MiB
+live: 126/253 MiB
+live: 127/253 MiB
+live: 128/253 MiB
+live: 129/253 MiB
+live: 130/253 MiB
+live: 131/253 MiB
+live: 132/253 MiB
+live: 133/253 MiB
+live: 134/253 MiB
+live: 135/253 MiB
+live: 136/253 MiB
+live: 137/253 MiB
+live: 138/253 MiB
+live: 139/253 MiB
+live: 140/253 MiB
+live: 141/253 MiB
+live: 142/253 MiB
+live: 143/253 MiB
+live: 144/253 MiB
+live: 145/253 MiB
+live: 146/253 MiB
+live: 147/253 MiB
+live: 148/253 MiB
+live: 149/253 MiB
+live: 150/253 MiB
+live: 151/253 MiB
+live: 152/253 MiB
+live: 153/253 MiB
+live: 154/253 MiB
+live: 155/253 MiB
+live: 156/253 MiB
+live: 157/253 MiB
+live: 158/253 MiB
+live: 159/253 MiB
+live: 160/253 MiB
+live: 161/253 MiB
+live: 162/253 MiB
+live: 163/253 MiB
+live: 164/253 MiB
+live: 165/253 MiB
+live: 166/253 MiB
+live: 167/253 MiB
+live: 168/253 MiB
+live: 169/253 MiB
+live: 170/253 MiB
+live: 171/253 MiB
+live: 172/253 MiB
+live: 173/253 MiB
+live: 174/253 MiB
+live: 175/253 MiB
+live: 176/253 MiB
+live: 177/253 MiB
+live: 178/253 MiB
+live: 179/253 MiB
+live: 180/253 MiB
+live: 181/253 MiB
+live: 182/253 MiB
+live: 183/253 MiB
+live: 184/253 MiB
+live: 185/253 MiB
+live: 186/253 MiB
+live: 187/253 MiB
+live: 188/253 MiB
+live: 189/253 MiB
+live: 190/253 MiB
+live: 191/253 MiB
+live: 192/253 MiB
+live: 193/253 MiB
+live: 194/253 MiB
+live: 195/253 MiB
+live: 196/253 MiB
+live: 197/253 MiB
+live: 198/253 MiB
+live: 199/253 MiB
+live: 200/253 MiB
+live: 201/253 MiB
+live: 202/253 MiB
+live: 203/253 MiB
+live: 204/253 MiB
+live: 205/253 MiB
+live: 206/253 MiB
+live: 207/253 MiB
+live: 208/253 MiB
+live: 209/253 MiB
+live: 210/253 MiB
+live: 211/253 MiB
+live: 212/253 MiB
+live: 213/253 MiB
+live: 214/253 MiB
+live: 215/253 MiB
+live: 216/253 MiB
+live: 217/253 MiB
+live: 218/253 MiB
+live: 219/253 MiB
+live: 220/253 MiB
+live: 221/253 MiB
+live: 222/253 MiB
+live: 223/253 MiB
+live: 224/253 MiB
+live: 225/253 MiB
+live: 226/253 MiB
+live: 227/253 MiB
+live: 228/253 MiB
+live: 229/253 MiB
+live: 230/253 MiB
+live: 231/253 MiB
+live: 232/253 MiB
+live: 233/253 MiB
+live: 234/253 MiB
+live: 235/253 MiB
+live: 236/253 MiB
+live: 237/253 MiB
+live: 238/253 MiB
+live: 239/253 MiB
+live: 240/253 MiB
+live: 241/253 MiB
+live: 242/253 MiB
+live: 243/253 MiB
+live: 244/253 MiB
+live: 245/253 MiB
+live: 246/253 MiB
+live: 247/253 MiB
+live: 248/253 MiB
+live: 249/253 MiB
+live: 250/253 MiB
+live: 251/253 MiB
+live: 252/253 MiB
+live: 253/253 MiB
+
+Switching to live disk
+
+usr/lib/boot/kernel: 0/1 MiB
+usr/lib/boot/kernel: 0/1 MiB
+usr/lib/boot/kernel: 1/1 MiB
+usr/lib/boot/kernel: 1/1 MiB
+
+usr/lib/boot/initfs: 0/21 MiB
+usr/lib/boot/initfs: 0/21 MiB
+usr/lib/boot/initfs: 1/21 MiB
+usr/lib/boot/initfs: 2/21 MiB
+usr/lib/boot/initfs: 3/21 MiB
+usr/lib/boot/initfs: 4/21 MiB
+usr/lib/boot/initfs: 5/21 MiB
+usr/lib/boot/initfs: 6/21 MiB
+usr/lib/boot/initfs: 7/21 MiB
+usr/lib/boot/initfs: 8/21 MiB
+usr/lib/boot/initfs: 9/21 MiB
+usr/lib/boot/initfs: 10/21 MiB
+usr/lib/boot/initfs: 11/21 MiB
+usr/lib/boot/initfs: 12/21 MiB
+usr/lib/boot/initfs: 13/21 MiB
+usr/lib/boot/initfs: 14/21 MiB
+usr/lib/boot/initfs: 15/21 MiB
+usr/lib/boot/initfs: 16/21 MiB
+usr/lib/boot/initfs: 17/21 MiB
+usr/lib/boot/initfs: 18/21 MiB
+usr/lib/boot/initfs: 19/21 MiB
+usr/lib/boot/initfs: 20/21 MiB
+usr/lib/boot/initfs: 21/21 MiB
+usr/lib/boot/initfs: 21/21 MiB
+
+kernel_entry(0xa9550000, 0xffff8000bc020000, 0xffffff00000a9a00, 0x47701930)
+
+KernelArgs {
+
+    kernel_base: 0xac160000,
+
+    kernel_size: 0x1992d0,
+
+    stack_base: 0xbc000000,
+
+    stack_size: 0x20000,
+
+    env_base: 0xbfd90000,
+
+    env_size: 0x174,
+
+    acpi_rsdp_base: 0xbfdc0000,
+
+    acpi_rsdp_size: 0x9000,
+
+    areas_base: 0xbc0e8030,
+
+    areas_size: 0x6000,
+
+    bootstrap_base: 0xa9560000,
+
+    bootstrap_size: 0x15f7000,
+
+}
+
+kernel::dtb::serial:INFO -- UART Compatible { string: "arm,pl011\0arm,primecell" } at 0xFFFF800009000000 size 0x1000
+kernel::arch::aarch64::start:INFO -- Redox OS starting...
+kernel::startup:DEBUG -- Kernel: AC160000:AC2F92D0
+kernel::startup:DEBUG -- Env: BFD90000:BFD90174
+kernel::startup:DEBUG -- HWDESC: BFDC0000:BFDC9000
+kernel::startup:DEBUG -- Areas: BC0E8030:BC0EE030
+kernel::startup:DEBUG -- Bootstrap: A9560000:AAB57000
+kernel::startup::memory:DEBUG -- Registering Reserved memory AC300000 size FD00000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory A9550000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory A9540000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory A9530000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory A9520000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory A9510000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory A9500000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory A94F0000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory A94E0000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory A94D0000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory A94C0000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory A94B0000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory A94A0000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory A9490000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory A9480000 size 1000
+kernel::startup::memory:DEBUG -- Registering Free memory 40000000 size 69480000
+kernel::startup::memory:DEBUG -- Registering Reserved memory A9480000 size 12BA0000
+kernel::startup::memory:DEBUG -- Registering Free memory BC020000 size 30000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BC050000 size 60000
+kernel::startup::memory:DEBUG -- Registering Free memory BC0B0000 size 40000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BC0F0000 size 640000
+kernel::startup::memory:DEBUG -- Registering Free memory BC730000 size 34D0000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BFC00000 size 3E0000
+kernel::startup::memory:DEBUG -- Registering Free memory BFFE0000 size 20000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 4000000 size 4000000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 9010000 size 1000
+kernel::startup::memory:DEBUG -- Registering Device memory 8000000 size 8000000
+kernel::startup::memory:DEBUG -- Registering Device memory 10000000 size 30000000
+kernel::startup::memory:DEBUG -- Registering Kernel memory AC160000 size 1992D0
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory BFD90000 size 174
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory BFDC0000 size 9000
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory A9560000 size 15F7000
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory BC000000 size 20000
+kernel::startup::memory:DEBUG -- 40000000:A9480000
+kernel::startup::memory:DEBUG -- BC020000:BC050000
+kernel::startup::memory:DEBUG -- BC0B0000:BC0F0000
+kernel::startup::memory:DEBUG -- BC730000:BFC00000
+kernel::startup::memory:DEBUG -- BFFE0000:C0000000
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x40000000], size: 69480000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbc020000], size: 30000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbc0b0000], size: 40000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbc730000], size: 34D0000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbffe0000], size: 20000 }
+kernel::startup::memory:INFO -- Memory: 1738 MB
+kernel::startup::memory:INFO -- Highest huge page level: 0
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x40000000 => 0xffff800040000000, 431232 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x40000000 remaining 431232
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbc020000 => 0xffff8000bc020000, 48 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbc020000 remaining 48
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbc0b0000 => 0xffff8000bc0b0000, 64 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbc0b0000 remaining 64
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbc730000 => 0xffff8000bc730000, 13520 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbc730000 remaining 13520
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbffe0000 => 0xffff8000bffe0000, 32 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbffe0000 remaining 32
+kernel::startup::memory:DEBUG -- MAPPING STACK, BASE bc000000 SIZE 20000
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbc000000 => 0xffff8000bc000000, 32 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbc000000 remaining 32
+kernel::startup::memory:DEBUG -- Table: 40000000
+kernel::startup::memory:DEBUG -- 256: 40001403
+kernel::startup::memory:DEBUG -- 510: 4036C403
+kernel::startup::memory:INFO -- Permanently used: 5364 KB
+kernel::acpi:ERROR -- NO RSDP FOUND
+kernel::memory:DEBUG -- Initial freelist consistent
+kernel::arch::aarch64::device:INFO -- PSCI INIT
+kernel::arch::aarch64::device::psci:INFO -- PSCI 1.1 using hvc conduit from device tree
+kernel::arch::aarch64::device:INFO -- CPU TOPOLOGY INIT
+kernel::arch::aarch64::device::cpu::topology:INFO -- DT CPU topology: 1 enabled, 0 disabled, BSP MPIDR=0x0, 0 PSCI secondaries
+kernel::arch::aarch64::device::cpu::topology:DEBUG -- CPU topology logical #0: MPIDR=0x0 boot=true enable-method=none
+kernel::arch::aarch64::device::cpu::boot:INFO -- CPU boot resources: no secondary CPUs
+kernel::arch::aarch64::device:INFO -- IRQCHIP INIT
+kernel::dtb:DEBUG -- root parent = 0x00008002
+kernel::dtb:DEBUG -- intc@8000000, compatible = arm,gic-v3, #interrupt-cells = 0x00000003, phandle = 0x00008002
+kernel::dtb::irqchip:DEBUG -- intc@8000000, compatible = arm,gic-v3, #interrupt-cells = 0x00000003, phandle = 0x00008002
+kernel::arch::aarch64::device::irqchip::gic:INFO -- gic: Distributor supports 1 CPUs and 288 IRQs
+kernel::arch::aarch64::device::irqchip::gicv3:INFO -- GicV3 { gic_dist_if: GicDistIf { address: FFFF800008000000, ncpus: 1, nirqs: 120 }, gic_cpu_if: GicV3CpuIf, gicrs: [(8000000, 10000)], irq_range: (0, 0) }
+kernel::arch::aarch64::device::irqchip::gicv3:INFO -- gic irq_range = (0, 288)
+kernel::arch::aarch64::device:INFO -- select 0 as root ic
+kernel::arch::aarch64::device:INFO -- GIT INIT
+kernel::arch::aarch64::device::generic_timer:DEBUG -- generic_timer use_virtual_timer = false
+kernel::arch::aarch64::device::generic_timer:DEBUG -- architected timer irq = L3(1, 14, 4)
+kernel::arch::aarch64::device::generic_timer:INFO -- architected timer virq = 30 (non-secure physical)
+kernel::arch::aarch64::device:INFO -- SERIAL INIT
+kernel::arch::aarch64::device::serial:INFO -- serial_port virq = 33
+kernel::arch::aarch64::device:INFO -- RTC INIT
+kernel::arch::aarch64::device::rtc:INFO -- PL031 RTC at 0x9010000
+kernel::startup:INFO -- SECONDARY CPU INIT
+kernel::scheme::acpi:WARN -- expected RXSDT_ENUM to be initialized before AcpiScheme, is ACPI available?
+kernel::startup:DEBUG -- BSP: 1 CPUs
+kernel::startup:DEBUG -- Env: Ok("DTB_ADDR=00000000bfdc0000\nDTB_SIZE=0000000000009000\nDISK_LIVE_ADDR=00000000ac300000\nDISK_LIVE_SIZE=000000000fd00000\nREDOXFS_BLOCK=0000000000000000\nREDOXFS_UUID=035daea7-7729-4683-8eb9-6a7a51b59738\nFRAMEBUFFER_ADDR=00000000bc430000\nFRAMEBUFFER_VIRT=ffff8000bc430000\nFRAMEBUFFER_WIDTH=0000000000000320\nFRAMEBUFFER_HEIGHT=0000000000000258\nFRAMEBUFFER_STRIDE=0000000000000320\n")
+kernel::syscall::process:DEBUG -- Bootstrap entry point: 3000
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+init: switchroot to /scheme/initfs /scheme/initfs/etc
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+vesad: 800x600 stride 800 at 0xBC430000
+vesad: simplefb 800x600 stride 800 A8R8G8B8 at 0xBC430000 from device tree
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+Finished graphical debug
+fbbootlogd: mapped display
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+2026-10-25T00-35-31.970Z [@hwd:18 INFO] using devicetree backend
+2026-10-25T00-35-32.038Z [@pcid:250 INFO] PCI SG-BS:DV.F VEND:DEVI CL.SC.IN.RV
+2026-10-25T00-35-32.049Z [@pcid:347 INFO] PCI 0000:00:00.0 1B36:0008 06.00.00.00 HostBridge
+2026-10-25T00-35-32.056Z [@pcid:347 INFO] PCI 0000:00:01.0 1AF4:1001 01.00.00.00 ScsiBusController
+2026-10-25T00-35-32.063Z [@pcid:347 INFO] PCI 0000:00:02.0 1AF4:1000 02.00.00.00 EthernetController
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+2026-10-25T00-35-32.185Z [@pcid_spawner:87 INFO] pcid-spawner: spawn "/scheme/initfs/lib/drivers/virtio-blkd"
+2026-10-25T00-35-32.249Z [@virtio_blkd:123 INFO] virtio-blk: initiating startup sequence :^)
+
+thread 'main' (1) panicked at drivers/pcid/src/driver_interface/irq_helpers.rs:313:9:
+not implemented: virtio: MSI-X is not implemented on this architecture
+[ERROR virtio-blkd@src/header/stdlib/mod.rs:121] Abort
+kernel::arch::aarch64::interrupt::exception:ERROR -- FATAL: Not an SVC induced synchronous exception (ty=111100)
+FAR_EL1: 0x6578
+ELR_EL1: 000000000044F4D4
+SPSR_EL1: 0000000080000000
+ESR_EL1: 00000000F2000001
+SP_EL0: 00007FFFFFFFEF00
+X0:    0000000000000000
+X1:    0000000000471535
+X2:    0000000000471536
+X3:    0000000000449508
+X4:    0000000000000000
+X5:    0000000000000003
+X6:    0000000000000003
+X7:    0000000000000003
+X8:    0000000000000001
+X9:    0000000000000000
+X10:   0000000000000001
+X11:   0000000000000001
+X12:   000000000047C2BF
+X13:   0000000000000018
+X14:   0000000000000000
+X15:   0000000000000007
+X16:   0000000000476EBC
+X17:   0000000000423910
+X18:   0000000000000092
+X19:   0000000000000001
+X20:   0000000000000000
+X21:   000000000049BD80
+X22:   00007FFFFFFFF010
+X23:   00000000004A2060
+X24:   00007FFFFFFFF208
+X25:   0000000000000016
+X26:   0000000000006898
+X27:   0000000000000001
+X28:   0000000000006880
+X29:   00007FFFFFFFEF00
+X30:   00000000004029CC
+  FP 00007fffffffef00: PC 00000000004027d4
+  FP 00007fffffffef10: PC 0000000000401c30
+  FP 00007fffffffef20: PC 000000000040f334
+  FP 00007fffffffef30: PC 0000000000401bec
+  FP 00007fffffffef70: PC 0000000000434520
+  FP 00007fffffffefd0: PC 000000000042fba8
+  FP 00007ffffffff030: PC 00000000004304ec
+  FP 00007ffffffff070: PC 00000000004042b8
+  FP 00007ffffffff0b0: PC 0000000000400b54
+  FP 00007ffffffff0e0: PC 000000000041535c
+  FP 00007ffffffff250: PC 000000000040e9b0
+  FP 00007ffffffff7c0: PC 000000000040d94c
+  FP 00007ffffffff980: PC 000000000040cfe8
+  FP 00007ffffffffc90: PC 000000000040cbd0
+  FP 00007ffffffffcc0: PC 000000000040cf84
+  FP 00007ffffffffcd0: PC 000000000040eecc
+  FP 00007ffffffffce0: PC 000000000040cf94
+  FP 00007ffffffffcf0: PC 0000000000433ba8
+  FP 00007ffffffffd10: PC 000000000040f2cc
+  FP 00007ffffffffd70: PC 0000000000452510
+  FP 00007ffffffffe50: PC 0000000000404820
+  FP 00007ffffffffeb0: PC 000000000040480c
+  <Invalid next frame pointer 0x00007fffffffafb0; stack walk ended>
+  FP ffff80004378fd40: PC ffffff0000019058
+    FFFFFF00000171F8+1E60
+    <kernel::arch::aarch64::interrupt::handler::InterruptStack>::trace
+  FP ffff80004378fde0: PC ffffff000002fae0
+    FFFFFF000002F6B8+0428
+    kernel::arch::aarch64::interrupt::exception::synchronous_exception_at_el0::inner
+  FP ffff80004378fe80: PC ffffff0000024d7c
+    FFFFFF0000024D18+0064
+    synchronous_exception_at_el0
+  FP ffff80004378fee0: PC 00000000f2000001
+  00007fffffffef00: GUARD PAGE
+kernel::context::signal:INFO -- UNHANDLED EXCEPTION, CPU #0, PID 17, NAME /scheme/initfs/lib/drivers/virti, CONTEXT 0xfffffe8000131cf0
+daemon: INIT_NOTIFY="9" PCID_CLIENT_CHANNEL="7" "/scheme/initfs/lib/drivers/virtio-blkd" exited without notifying readiness
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+removing handle: id: 2, Some(List([48, 10]))
+init: switchroot to /usr /etc
+2026-10-25T00-35-32.777Z [@pcid_spawner:87 INFO] pcid-spawner: spawn "/usr/lib/drivers/virtio-netd"
+2026-10-25T00-35-32.863Z [@virtio_netd:55 INFO] virtio-net: initiating startup sequence :^)
+
+thread 'main' (1) panicked at drivers/pcid/src/driver_interface/irq_helpers.rs:313:9:
+not implemented: virtio: MSI-X is not implemented on this architecture
+[ERROR virtio-netd@src/header/stdlib/mod.rs:121] Abort
+kernel::arch::aarch64::interrupt::exception:ERROR -- FATAL: Not an SVC induced synchronous exception (ty=111100)
+FAR_EL1: 0x6018
+ELR_EL1: 0000000000442D04
+SPSR_EL1: 0000000080000000
+ESR_EL1: 00000000F2000001
+SP_EL0: 00007FFFFFFFF1B0
+X0:    0000000000000000
+X1:    0000000000463DE4
+X2:    0000000000463DE5
+X3:    000000000043CD38
+X4:    0000000000000000
+X5:    0000000000000003
+X6:    0000000000000003
+X7:    0000000000000003
+X8:    0000000000000001
+X9:    0000000000000000
+X10:   0000000000000001
+X11:   0000000000000001
+X12:   000000000046D2BF
+X13:   0000000000000018
+X14:   0000000000000000
+X15:   0000000000000007
+X16:   0000000000467F16
+X17:   0000000000418EE0
+X18:   0000000000000092
+X19:   0000000000000001
+X20:   0000000000000000
+X21:   000000000048BFB8
+X22:   00007FFFFFFFF2C0
+X23:   0000000000492060
+X24:   00007FFFFFFFF4B8
+X25:   0000000000000016
+X26:   0000000000006888
+X27:   0000000000000001
+X28:   0000000000006870
+X29:   00007FFFFFFFF1B0
+X30:   0000000000402918
+  FP 00007ffffffff1b0: PC 0000000000402720
+  FP 00007ffffffff1c0: PC 0000000000401d14
+  FP 00007ffffffff1d0: PC 00000000004096f8
+  FP 00007ffffffff1e0: PC 0000000000401cd0
+  FP 00007ffffffff220: PC 00000000004291c4
+  FP 00007ffffffff280: PC 0000000000424d50
+  FP 00007ffffffff2e0: PC 0000000000425524
+  FP 00007ffffffff320: PC 0000000000404204
+  FP 00007ffffffff360: PC 0000000000400e84
+  FP 00007ffffffff390: PC 000000000040e988
+  FP 00007ffffffff500: PC 0000000000407320
+  FP 00007ffffffff7c0: PC 000000000040969c
+  FP 00007ffffffff980: PC 0000000000408904
+  FP 00007ffffffffc90: PC 0000000000407b08
+  FP 00007ffffffffcc0: PC 000000000040871c
+  FP 00007ffffffffcd0: PC 0000000000407778
+  FP 00007ffffffffce0: PC 0000000000408914
+  FP 00007ffffffffcf0: PC 000000000042884c
+  FP 00007ffffffffd10: PC 0000000000407adc
+  FP 00007ffffffffd70: PC 0000000000445d40
+  FP 00007ffffffffe50: PC 0000000000404730
+  FP 00007ffffffffeb0: PC 000000000040471c
+  <Invalid next frame pointer 0x00007fffffffafc0; stack walk ended>
+  FP ffff800043cdfd40: PC ffffff0000019058
+    FFFFFF00000171F8+1E60
+    <kernel::arch::aarch64::interrupt::handler::InterruptStack>::trace
+  FP ffff800043cdfde0: PC ffffff000002fae0
+    FFFFFF000002F6B8+0428
+    kernel::arch::aarch64::interrupt::exception::synchronous_exception_at_el0::inner
+  FP ffff800043cdfe80: PC ffffff0000024d7c
+    FFFFFF0000024D18+0064
+    synchronous_exception_at_el0
+  FP ffff800043cdfee0: PC 00000000f2000001
+  00007ffffffff1b0: GUARD PAGE
+kernel::context::signal:INFO -- UNHANDLED EXCEPTION, CPU #0, PID 21, NAME /usr/lib/drivers/virtio-netd, CONTEXT 0xfffffe8000118990
+daemon: INIT_NOTIFY="9" PCID_CLIENT_CHANNEL="7" "/usr/lib/drivers/virtio-netd" exited without notifying readiness
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+2026-10-25T00-35-33.819Z [smolnetd@netstack:194 ERROR] smoltcpd: no network adapter found
+init: env -i INIT_NOTIFY="4" LD_LIBRARY_PATH="/usr/lib" PATH="/usr/bin" RUST_BACKTRACE="1" "netstack" exited without notifying readiness
+2026-10-25T00-35-33.931Z [@fbcond::text:40 INFO] fbcond: Performing handoff
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+audiod: No such device
+init: env -i INIT_NOTIFY="4" LD_LIBRARY_PATH="/usr/lib" PATH="/usr/bin" RUST_BACKTRACE="1" "audiod" exited without notifying readiness
+dhcpd: Can't open /scheme/netcfg/ifaces/eth0/mac
+timeline-demo-publish: sent 28 events to trace:publish
+########## Redox OS ##########
+
+# Login with the following:  #
+
+# `user`                     #
+
+# `root`:`password`          #
+
+##############################
+
+
+
+⏎
+
+redox login:
+redox login: kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2

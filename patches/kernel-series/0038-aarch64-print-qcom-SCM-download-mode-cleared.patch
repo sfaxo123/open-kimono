@@ -1,0 +1,49 @@
+From: Remy <remy@localhost>
+Subject: [PATCH] aarch64: print qcom SCM download-mode cleared on success
+
+P2 observability: the reset entrypoints only logged the opt-in
+download-mode clear on failure, so a successful clear was
+indistinguishable from the feature being absent or not attempted.
+Print an explicit line on success at both entrypoints so panel
+and serial evidence (and the R-3 webcam OCR) can confirm the
+clear ran before the PSCI SYSTEM_RESET.
+
+The match arms are brace-wrapped on purpose: this kernel's log
+macros expand with a trailing semicolon, and the pinned
+toolchain denies semicolon_in_expressions_from_macros, so the
+macro calls must stay in statement position (as in the original
+if-let form), not expression position.
+
+---
+ src/arch/aarch64/stop.rs | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/src/arch/aarch64/stop.rs b/src/arch/aarch64/stop.rs
+--- a/src/arch/aarch64/stop.rs
++++ b/src/arch/aarch64/stop.rs
+@@ -14,7 +14,8 @@
+ pub unsafe fn kreset() -> ! {
+     #[cfg(feature = "qcom-dload-mode-clear")]
+-    if let Err(reason) = crate::arch::device::qcom_scm::clear_download_mode() {
+-        warn!("Qualcomm SCM download-mode clear failed: {}", reason);
+-    }
++    match crate::arch::device::qcom_scm::clear_download_mode() {
++        Ok(()) => { info!("qcom SCM: download-mode cleared"); }
++        Err(reason) => { warn!("Qualcomm SCM download-mode clear failed: {}", reason); }
++    }
+     println!("kreset: PSCI SYSTEM_RESET (0x84000009)");
+     match psci::system_reset() {
+@@ -25,7 +28,8 @@
+ pub unsafe fn emergency_reset() -> ! {
+     #[cfg(feature = "qcom-dload-mode-clear")]
+-    if let Err(reason) = crate::arch::device::qcom_scm::clear_download_mode() {
+-        warn!("Qualcomm SCM download-mode clear failed: {}", reason);
+-    }
++    match crate::arch::device::qcom_scm::clear_download_mode() {
++        Ok(()) => { info!("qcom SCM: download-mode cleared"); }
++        Err(reason) => { warn!("Qualcomm SCM download-mode clear failed: {}", reason); }
++    }
+     println!("emergency_reset: PSCI SYSTEM_RESET (0x84000009)");
+     match psci::system_reset() {
+--
+2.43.0

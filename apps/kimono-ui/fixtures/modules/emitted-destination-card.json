@@ -1,0 +1,89 @@
+{
+  "inputs": {
+    "app": "maps",
+    "destination": "San Francisco",
+    "run_id": "run-1793783038129582-0",
+    "uri": "geo:0,0?q=San%20Francisco"
+  },
+  "manifest": {
+    "actions": [
+      {
+        "args": {
+          "app": "maps",
+          "destination": "destination"
+        },
+        "id": "open_maps",
+        "tool": "app_launch"
+      }
+    ],
+    "id": "destination-card",
+    "inputs": [
+      {
+        "name": "destination",
+        "required": true,
+        "source": "context",
+        "type": "string"
+      },
+      {
+        "name": "app",
+        "required": true,
+        "source": "agent",
+        "type": "string"
+      },
+      {
+        "name": "uri",
+        "required": true,
+        "source": "tool",
+        "type": "string"
+      },
+      {
+        "name": "run_id",
+        "required": true,
+        "source": "agent",
+        "type": "string"
+      }
+    ],
+    "layout": [
+      {
+        "block": "title",
+        "text": "destination"
+      },
+      {
+        "block": "rows",
+        "items": [
+          {
+            "label": "App",
+            "value": "app"
+          },
+          {
+            "label": "Link",
+            "value": "uri"
+          },
+          {
+            "label": "Run",
+            "value": "run_id"
+          }
+        ]
+      },
+      {
+        "action": "open_maps",
+        "block": "action_button",
+        "label": "Open in Maps"
+      }
+    ],
+    "lifetime": {
+      "appears_when": "a destination is opened in Maps",
+      "expires_when": "the destination is opened again, changed, or the conversation moves on",
+      "max_ttl_minutes": 30
+    },
+    "protocol": "1",
+    "trigger": {
+      "context": [
+        "last_destination",
+        "run"
+      ],
+      "when": "app_launch_succeeded"
+    },
+    "user_purpose": "Show the user the destination just opened so they can confirm it and reopen it in one tap."
+  }
+}

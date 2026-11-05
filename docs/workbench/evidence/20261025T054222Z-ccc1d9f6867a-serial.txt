@@ -1,0 +1,143 @@
+UEFI firmware (version 2024.02-2ubuntu0.10 built at 15:40:28 on Sep 23 2026)
+BdsDxe: loading Boot0001 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
+BdsDxe: starting Boot0001 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
+WARN - Failed to get EFI EDID from handle Handle(3199848344): Status(0x8000000000000003) "unsupported"
+INFO - Currently in EL1
+Redox OS Bootloader 1.0.0 on aarch64/UEFI
+Hardware descriptor: DeviceTree(bfdc0000, 9000)
+Output 0, best resolution: 800x600
+Auto-selecting boot resolution
+kernel_entry(0xb8f50000, 0xffff8000bfdc0000, 0xffffff000008d8a8, 0x47701930)
+KernelArgs {
+    kernel_base: 0xbae20000,
+    kernel_size: 0x1a1878,
+    stack_base: 0xbfda0000,
+    stack_size: 0x20000,
+    env_base: 0xbfd90000,
+    env_size: 0xf3,
+    acpi_rsdp_base: 0xbfdc0000,
+    acpi_rsdp_size: 0x9000,
+    areas_base: 0xbc0e8030,
+    areas_size: 0x6000,
+    bootstrap_base: 0xb8f60000,
+    bootstrap_size: 0xf5d000,
+}
+kernel::dtb::serial:INFO -- UART Compatible { string: "arm,pl011\0arm,primecell" } at 0xFFFF800009000000 size 0x1000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BC430000 size 1D4C00
+kernel::devices::graphical_debug:INFO -- device tree simple-framebuffer 800x600 stride 800 at BC430000
+kernel::arch::aarch64::start:INFO -- Redox OS starting...
+kernel::startup:DEBUG -- Kernel: BAE20000:BAFC1878
+kernel::startup:DEBUG -- Env: BFD90000:BFD900F3
+kernel::startup:DEBUG -- HWDESC: BFDC0000:BFDC9000
+kernel::startup:DEBUG -- Areas: BC0E8030:BC0EE030
+kernel::startup:DEBUG -- Bootstrap: B8F60000:B9EBD000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory B8F50000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory B8F40000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory B8F30000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory B8F20000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory B8F10000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory B8F00000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory B8EF0000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory B8EE0000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory B8ED0000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory B8EC0000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory B8EB0000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory B8EA0000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory B8E90000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory B8E80000 size 1000
+kernel::startup::memory:DEBUG -- Registering Free memory 40000000 size 78E80000
+kernel::startup::memory:DEBUG -- Registering Reserved memory B8E80000 size 2150000
+kernel::startup::memory:DEBUG -- Registering Free memory BAFD0000 size 1120000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BC0F0000 size 640000
+kernel::startup::memory:DEBUG -- Registering Free memory BC730000 size 34D0000
+kernel::startup::memory:DEBUG -- Registering Reserved memory BFC00000 size 3E0000
+kernel::startup::memory:DEBUG -- Registering Free memory BFFE0000 size 20000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 4000000 size 4000000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 9010000 size 1000
+kernel::startup::memory:DEBUG -- Registering Device memory 8000000 size 8000000
+kernel::startup::memory:DEBUG -- Registering Device memory 10000000 size 30000000
+kernel::startup::memory:DEBUG -- Registering Kernel memory BAE20000 size 1A1878
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory BFD90000 size F3
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory BFDC0000 size 9000
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory B8F60000 size F5D000
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory BFDA0000 size 20000
+kernel::startup::memory:DEBUG -- BAFD0000:BC0F0000
+kernel::startup::memory:DEBUG -- 40000000:B8E80000
+kernel::startup::memory:DEBUG -- BC730000:BFC00000
+kernel::startup::memory:DEBUG -- BFFE0000:C0000000
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x40000000], size: 78E80000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbafd0000], size: 1120000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbc730000], size: 34D0000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xbffe0000], size: 20000 }
+kernel::startup::memory:INFO -- Memory: 2005 MB
+kernel::startup::memory:INFO -- Highest huge page level: 0
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x40000000 => 0xffff800040000000, 495232 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x40000000 remaining 495232
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbafd0000 => 0xffff8000bafd0000, 4384 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbafd0000 remaining 4384
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbc730000 => 0xffff8000bc730000, 13520 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbc730000 remaining 13520
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbffe0000 => 0xffff8000bffe0000, 32 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbffe0000 remaining 32
+kernel::startup::memory:DEBUG -- MAPPING STACK, BASE bfda0000 SIZE 20000
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xbfda0000 => 0xffff8000bfda0000, 32 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xbfda0000 remaining 32
+kernel::startup::memory:DEBUG -- Table: 40000000
+kernel::startup::memory:DEBUG -- 256: 40001403
+kernel::startup::memory:DEBUG -- 510: 403F3403
+kernel::startup::memory:INFO -- Permanently used: 5888 KB
+kernel::acpi:ERROR -- NO RSDP FOUND
+kernel::memory:DEBUG -- Initial freelist consistent
+kernel::arch::aarch64::device:INFO -- PSCI INIT
+kernel::arch::aarch64::device::psci:INFO -- PSCI 1.1 using hvc conduit from device tree
+kernel::arch::aarch64::device:INFO -- CPU TOPOLOGY INIT
+kernel::arch::aarch64::device::cpu::topology:INFO -- DT CPU topology: 1 enabled, 0 disabled, BSP MPIDR=0x0, 0 PSCI secondaries
+kernel::arch::aarch64::device::cpu::topology:DEBUG -- CPU topology logical #0: MPIDR=0x0 boot=true enable-method=none
+kernel::arch::aarch64::device::cpu::boot:INFO -- CPU boot resources: no secondary CPUs
+kernel::arch::aarch64::device:INFO -- IRQCHIP INIT
+kernel::dtb:DEBUG -- root parent = 0x00008002
+kernel::dtb:DEBUG -- intc@8000000, compatible = arm,gic-v3, #interrupt-cells = 0x00000003, phandle = 0x00008002
+kernel::dtb::irqchip:DEBUG -- intc@8000000, compatible = arm,gic-v3, #interrupt-cells = 0x00000003, phandle = 0x00008002
+kernel::arch::aarch64::device::irqchip::gic:INFO -- gic: Distributor supports 1 CPUs and 288 IRQs
+kernel::arch::aarch64::device::irqchip::gicv3:INFO -- GicV3 { gic_dist_if: GicDistIf { address: FFFF800008000000, ncpus: 1, nirqs: 120 }, gic_cpu_if: GicV3CpuIf, gicrs: [(8000000, 10000)], irq_range: (0, 0) }
+kernel::arch::aarch64::device::irqchip::gicv3:INFO -- gic irq_range = (0, 288)
+kernel::arch::aarch64::device:INFO -- select 0 as root ic
+kernel::arch::aarch64::device:INFO -- GIT INIT
+kernel::arch::aarch64::device::generic_timer:DEBUG -- generic_timer use_virtual_timer = false
+kernel::arch::aarch64::device::generic_timer:DEBUG -- architected timer irq = L3(1, 14, 4)
+kernel::arch::aarch64::device::generic_timer:INFO -- architected timer virq = 30 (non-secure physical)
+kernel::arch::aarch64::device:INFO -- SERIAL INIT
+kernel::arch::aarch64::device::serial:INFO -- serial_port virq = 33
+kernel::arch::aarch64::device:INFO -- RTC INIT
+kernel::arch::aarch64::device::rtc:INFO -- PL031 RTC at 0x9010000
+kernel::startup:INFO -- SECONDARY CPU INIT
+kernel::scheme::acpi:WARN -- expected RXSDT_ENUM to be initialized before AcpiScheme, is ACPI available?
+kernel::startup:DEBUG -- BSP: 1 CPUs
+kernel::startup:DEBUG -- Env: Ok("DTB_ADDR=00000000bfdc0000\nDTB_SIZE=0000000000009000\nREDOX_RAMBOOT=1\nFRAMEBUFFER_ADDR=00000000bc430000\nFRAMEBUFFER_VIRT=ffff8000bc430000\nFRAMEBUFFER_WIDTH=0000000000000320\nFRAMEBUFFER_HEIGHT=0000000000000258\nFRAMEBUFFER_STRIDE=0000000000000320\n")
+kernel::syscall::process:DEBUG -- Bootstrap entry point: 3000
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+init: switchroot to /scheme/initfs /scheme/initfs/etc
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+sandbox-demo: begin guest=hello_rs.wasm bytes=1433 sha256=ade98b90d6f85193673516d8765b47840454d5eecd4af612d5012ea29f37a012
+sandbox-demo: granted event Loaded { requested: [Log, TraceEmit, TimerAfter, KvGet, KvSet] }
+sandbox-demo: granted event Log { level: Info, message: "hello from rust" }
+sandbox-demo: granted event KvSet { key: "count", value_bytes: 4 }
+sandbox-demo: granted event Trace { name: "service.hello", payload: "{\"count\":1}" }
+sandbox-demo: SANDBOX_HELLO_OK trace=service.hello payload={"count":1} fuel_used=727 memory_bytes=65536
+sandbox-demo: withheld event Loaded { requested: [Log, TraceEmit, TimerAfter, KvGet, KvSet] }
+sandbox-demo: withheld event Log { level: Info, message: "hello from rust" }
+sandbox-demo: withheld event KvSet { key: "count", value_bytes: 4 }
+sandbox-demo: withheld event Denied { capability: TraceEmit, reason: NotGranted }
+sandbox-demo: withheld event Stopped(Denied { capability: TraceEmit, reason: NotGranted })
+sandbox-demo: SANDBOX_REFUSED_TRACEEMIT capability=trace.emit reason=NotGranted stop=Denied { capability: TraceEmit, reason: NotGranted }
+sandbox-demo: stopped service is never re-entered
+sandbox-demo: done

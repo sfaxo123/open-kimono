@@ -1,0 +1,187 @@
+{
+  "name": "broken",
+  "description": "Deliberately hostile: an unknown component type, a child id that has not arrived yet, a parent/child cycle, a data path that does not exist, a button with no action, and enough rows to overflow the screen.",
+  "messages": [
+    {
+      "version": "v0.9",
+      "createSurface": {
+        "surfaceId": "broken",
+        "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+      }
+    },
+    {
+      "version": "v0.9",
+      "updateDataModel": {
+        "surfaceId": "broken",
+        "value": {
+          "notes": [
+            {
+              "text": "01. kernel panic on core 2"
+            },
+            {
+              "text": "02. battery at 4 percent"
+            },
+            {
+              "text": "03. thermal throttle engaged"
+            },
+            {
+              "text": "04. wifi handshake retried"
+            },
+            {
+              "text": "05. gpu clock lowered to 300 mhz"
+            },
+            {
+              "text": "06. usb device detached"
+            },
+            {
+              "text": "07. journal flushed to disk"
+            },
+            {
+              "text": "08. modem signal weak"
+            },
+            {
+              "text": "09. camera service restarted"
+            },
+            {
+              "text": "10. disk write cache disabled"
+            },
+            {
+              "text": "11. fan curve recalibrated"
+            },
+            {
+              "text": "12. backlight ramp stalled"
+            },
+            {
+              "text": "13. usb device detached while the device was charging on the desk and the screen stayed awake"
+            },
+            {
+              "text": "14. journal flushed to disk while the device was charging on the desk and the screen stayed awake"
+            },
+            {
+              "text": "15. modem signal weak while the device was charging on the desk and the screen stayed awake"
+            },
+            {
+              "text": "16. camera service restarted while the device was charging on the desk and the screen stayed awake"
+            },
+            {
+              "text": "17. disk write cache disabled while the device was charging on the desk and the screen stayed awake"
+            },
+            {
+              "text": "18. fan curve recalibrated while the device was charging on the desk and the screen stayed awake"
+            },
+            {
+              "text": "19. backlight ramp stalled while the device was charging on the desk and the screen stayed awake"
+            },
+            {
+              "text": "20. radio stack re-registered while the device was charging on the desk and the screen stayed awake"
+            },
+            {
+              "text": "21. kernel panic on core 2 while the device was charging on the desk and the screen stayed awake"
+            },
+            {
+              "text": "22. battery at 4 percent while the device was charging on the desk and the screen stayed awake"
+            },
+            {
+              "text": "23. thermal throttle engaged while the device was charging on the desk and the screen stayed awake"
+            },
+            {
+              "text": "24. wifi handshake retried while the device was charging on the desk and the screen stayed awake"
+            },
+            {
+              "text": "25. gpu clock lowered to 300 mhz while the device was charging on the desk and the screen stayed awake"
+            },
+            {
+              "text": "26. usb device detached while the device was charging on the desk and the screen stayed awake"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "version": "v0.9",
+      "updateComponents": {
+        "surfaceId": "broken",
+        "components": [
+          {
+            "id": "root",
+            "component": "Column",
+            "children": [
+              "head",
+              "cal",
+              "later",
+              "cyc",
+              "gone",
+              "inert",
+              "notes"
+            ]
+          },
+          {
+            "id": "head",
+            "component": "Text",
+            "variant": "h2",
+            "text": "Half-built surface"
+          },
+          {
+            "id": "cal",
+            "component": "Calendar",
+            "date": "2026-10-24"
+          },
+          {
+            "id": "later",
+            "component": "Column",
+            "children": [
+              "not_yet"
+            ]
+          },
+          {
+            "id": "cyc",
+            "component": "Column",
+            "children": [
+              "cyc_b"
+            ]
+          },
+          {
+            "id": "cyc_b",
+            "component": "Column",
+            "children": [
+              "cyc"
+            ]
+          },
+          {
+            "id": "gone",
+            "component": "Text",
+            "text": {
+              "path": "/nope/deeper"
+            }
+          },
+          {
+            "id": "inert",
+            "component": "Button",
+            "child": "inert_label"
+          },
+          {
+            "id": "inert_label",
+            "component": "Text",
+            "text": "Not wired yet"
+          },
+          {
+            "id": "notes",
+            "component": "List",
+            "direction": "vertical",
+            "children": {
+              "componentId": "note",
+              "path": "/notes"
+            }
+          },
+          {
+            "id": "note",
+            "component": "Text",
+            "text": {
+              "path": "text"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

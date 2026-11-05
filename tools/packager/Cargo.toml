@@ -1,0 +1,17 @@
+[package]
+name = "packager"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Rust port of scripts/phone/build-embedded-efi-v4-wdt.py: build a RAM-bootable Android image with an EFI app embedded in U-Boot (pinned commit, pinned DTB, payload-receipt freshness guard). Byte-identical output is the bar."
+
+# Zero crate dependencies (house style, cf. tools/op6-cycle): SHA-256 and
+# CRC32 are implemented in-crate; DEFLATE goes through the system zlib via
+# FFI so the gzip stream is byte-identical to the Python packager's
+# (python3 links the same libz). Pinned host tools (mkbootimg,
+# unpack_bootimg, dtc, make, git) stay external: the packager
+# orchestrates tools it runs, it does not author them.
+
+[[bin]]
+name = "packager"
+path = "src/main.rs"

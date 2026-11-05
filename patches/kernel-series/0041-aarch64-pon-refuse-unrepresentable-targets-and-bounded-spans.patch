@@ -1,0 +1,653 @@
+From: Remy <remy@localhost>
+Subject: [PATCH] aarch64: PON: refuse unrepresentable targets and prove arbiter offsets against FDT spans
+
+Correction to 0040 answering the monitor review (044647e).
+(1) Malformed-address aliasing: ppid() masks to 12 bits and
+ext_cmd() masks the address, so sid=16 and reg=0x10088f both
+silently aliased sid 0 / reg 0x088f and returned Ok. New
+validate_target() (SID_MAX=0xF, SPMI_REG_MAX=0xFFFF) is the
+first statement of both transaction entry points; the probe
+range-checks the FDT slave ID and computes the reason
+register with checked_add + the same bound.
+(2) Unproved MMIO bounds: the probe now preserves every FDT
+region span, refuses misaligned or wrapping bases, and the
+kernel calls the new set_reason_with_bus_bounded(): target
+validation, core-span header check, version gate, APID
+discovery capped by the core/cnfg spans, and the chosen
+APID's channel windows proven against the obsrvr/chnls spans
+- all before the first channel access. Host tests 26/26:
+the 14 originals, the reviewer's two controls verbatim
+(RED on 0040, GREEN here), and the span-refusal cases, each
+asserting an empty write trace on refusal.
+
+Agent: Remy (root of record)
+Model: Muse Wonder (muse-wonder-1.0)
+Provider: Meta
+
+---
+diff --git a/src/arch/aarch64/device/qcom_pon.rs b/src/arch/aarch64/device/qcom_pon.rs
+index 11e80d61..770aec99 100644
+--- a/src/arch/aarch64/device/qcom_pon.rs
++++ b/src/arch/aarch64/device/qcom_pon.rs
+@@ -21,6 +21,16 @@
+ //! cited to Linux sources and the phone's pinned DTB in the P4 research
+ //! notes (p4-pon-research.md, Q1–Q5).
+ //!
++//! Hardening (answering the monitor review of the original patch):
++//! the transaction refuses a (sid, register) pair the arbiter
++//! encodings cannot represent losslessly — `ppid()` masks to 12 bits
++//! and `ext_cmd()` masks the address to its low byte, so an
++//! out-of-range pair would silently alias another target and the
++//! verifying read-back could not detect it — and the kernel glue
++//! preserves the FDT region spans and proves every offset the
++//! transaction can touch fits inside them before the first volatile
++//! access (see `ArbBounds`).
++//!
+ //! The pure layer (constants, encodings, the transaction against the
+ //! abstract ArbBus surface, and the boot-env parser) has no kernel
+ //! dependencies and is host-tested at the bottom of this file; the
+@@ -54,6 +64,16 @@ const PRESERVE_MASK: u8 = 0x01;
+ /// Offset of PON_SOFT_RB_SPARE within the PON peripheral (qcom-pon.c).
+ pub const PON_SPARE_OFFSET: u32 = 0x8F;
+ 
++/// Largest SPMI slave ID the PPID encoding represents losslessly:
++/// `ppid()` packs the SID into the top bits of the 12-bit PPID
++/// (`sid << 8`), so a SID above 0xF would silently alias a lower SID.
++pub const SID_MAX: u32 = 0xF;
++/// Largest register address the extended-access encoding represents
++/// losslessly: the PPID carries address bits [15:8] and the command
++/// word carries bits [7:0], so an address above 0xFFFF would silently
++/// alias a lower register.
++pub const SPMI_REG_MAX: u32 = 0xFFFF;
++
+ /// Field value stored for a reboot-mode magic (Linux:
+ /// `magic << pon->reason_shift`, then masked by regmap_update_bits).
+ pub const fn reason_field(magic: u8) -> u8 {
+@@ -91,6 +111,22 @@ pub const fn ext_cmd(read: bool, addr: u32, len: u32) -> u32 {
+     ((read as u32) << 27) | ((addr & 0xFF) << 4) | (len.saturating_sub(1) & 0x7)
+ }
+ 
++/// Refuse a (sid, register) pair the arbiter encodings cannot
++/// represent losslessly. `ppid()` masks to 12 bits and `ext_cmd()`
++/// masks the address to its low byte, so an out-of-range input would
++/// silently alias another peripheral or register — and a read-back of
++/// the aliased address cannot establish the intended address was
++/// used. Callers run this before any bus I/O.
++pub fn validate_target(sid: u32, reg: u32) -> Result<(), &'static str> {
++    if sid > SID_MAX {
++        return Err("SPMI slave ID exceeds the PPID encoding range");
++    }
++    if reg > SPMI_REG_MAX {
++        return Err("SPMI register address exceeds the extended-access encoding range");
++    }
++    Ok(())
++}
++
+ /// Classification of an arbiter channel STATUS word
+ /// (pmic_arb_wait_for_done in spmi-pmic-arb.c).
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -214,6 +250,87 @@ pub trait ArbBus {
+     fn now_us(&mut self) -> u64;
+ }
+ 
++/// Byte spans of the four arbiter regions, as granted by the FDT and
++/// preserved by the kernel glue. The ArbBus surface is infallible —
++/// a volatile access outside the granted mapping faults instead of
++/// returning an error — so the bounded transaction
++/// (`set_reason_with_bus_bounded`) proves up front, before the first
++/// channel access, that every offset it can issue fits the span of
++/// the region it addresses.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct ArbBounds {
++    /// Span of the core region (VERSION, FEATURES, APID map).
++    pub core: usize,
++    /// Span of the RW-channel region.
++    pub chnls: usize,
++    /// Span of the observer-channel region.
++    pub obsrvr: usize,
++    /// Span of the config region (APID ownership table).
++    pub cnfg: usize,
++}
++
++impl ArbBounds {
++    /// Span of one region.
++    pub fn span(&self, region: Region) -> usize {
++        match region {
++            Region::Core => self.core,
++            Region::Chnls => self.chnls,
++            Region::Obsrvr => self.obsrvr,
++            Region::Cnfg => self.cnfg,
++        }
++    }
++}
++
++/// True when the `len`-byte access at `offset` lies entirely inside a
++/// region of `span` bytes. Checked arithmetic: an end that overflows
++/// is not inside.
++pub const fn access_fits(offset: usize, len: usize, span: usize) -> bool {
++    match offset.checked_add(len) {
++        Some(end) => end <= span,
++        None => false,
++    }
++}
++
++/// How many APID entries the discovery scan may touch under `bounds`:
++/// the scan reads one map entry per APID in the core region and one
++/// ownership word per APID in the cnfg region, so it is capped by
++/// whichever table runs out of span first.
++pub fn apid_scan_cap(bounds: &ArbBounds) -> u32 {
++    fn table_cap(table_base: usize, span: usize) -> u32 {
++        if !access_fits(table_base, 4, span) {
++            return 0;
++        }
++        // Entries sit at table_base + 4*i; entry i fits iff
++        // table_base + 4*(i+1) <= span.
++        u32::try_from((span - table_base) / 4).unwrap_or(u32::MAX)
++    }
++    table_cap(ARB_APID_MAP_BASE, bounds.core).min(table_cap(ARB_OWNER_TABLE, bounds.cnfg))
++}
++
++/// True when the channel window for `apid` — [`stride` * apid,
++/// `stride` * apid + `max_offset` + 4) — lies inside `span`.
++fn channel_fits(stride: usize, apid: u32, max_offset: usize, span: usize) -> bool {
++    match stride.checked_mul(apid as usize) {
++        Some(base) => access_fits(base, max_offset + 4, span),
++        None => false,
++    }
++}
++
++/// Prove the chosen APID's channel windows fit the chnls and obsrvr
++/// spans before any channel access. Channel bases are APID-derived,
++/// so a large APID from a corrupt map could otherwise address far
++/// outside the granted regions. Observer accesses reach CHAN_RDATA0;
++/// RW accesses reach CHAN_WDATA0.
++fn check_channel_extents(apid: u32, bounds: &ArbBounds) -> Result<(), &'static str> {
++    if !channel_fits(OBS_CHAN_STRIDE, apid, CHAN_RDATA0, bounds.obsrvr) {
++        return Err("SPMI observer channel exceeds the FDT obsrvr span");
++    }
++    if !channel_fits(RW_CHAN_STRIDE, apid, CHAN_WDATA0, bounds.chnls) {
++        return Err("SPMI RW channel exceeds the FDT chnls span");
++    }
++    Ok(())
++}
++
+ fn check_arbiter_v5<B: ArbBus>(bus: &mut B) -> Result<(), &'static str> {
+     if bus.read32(Region::Core, ARB_VERSION) < ARB_V5_MIN {
+         return Err("SPMI arbiter is not v5 (VERSION gate)");
+@@ -230,7 +347,18 @@ pub const fn apid_is_candidate(entry: u32, write_ee: u32, want_ppid: u32) -> boo
+ }
+ 
+ fn discover_apid<B: ArbBus>(bus: &mut B, want_ppid: u32) -> Result<u32, &'static str> {
+-    let count = bus.read32(Region::Core, ARB_FEATURES) & APID_COUNT_MASK;
++    discover_apid_capped(bus, want_ppid, u32::MAX)
++}
++
++/// APID discovery with the scan bounded to `cap` entries (the bounded
++/// transaction passes `apid_scan_cap` so the scan never reads past
++/// the core/cnfg spans; the unbounded entry point passes u32::MAX).
++fn discover_apid_capped<B: ArbBus>(
++    bus: &mut B,
++    want_ppid: u32,
++    cap: u32,
++) -> Result<u32, &'static str> {
++    let count = (bus.read32(Region::Core, ARB_FEATURES) & APID_COUNT_MASK).min(cap);
+     for apid in 0..count {
+         let entry = bus.read32(Region::Core, ARB_APID_MAP_BASE + 4 * apid as usize);
+         if map_entry_ppid(entry) != want_ppid {
+@@ -277,18 +405,57 @@ fn rw_write_byte<B: ArbBus>(bus: &mut B, apid: u32, reg: u32, value: u8) -> Resu
+ }
+ 
+ /// Full PON reboot-reason transaction against an abstracted arbiter:
+-/// version gate, APID discovery, observer read, read-modify-write,
+-/// status polls, and a read-back verify of the reason field. Returns
+-/// the byte written. `sid` is the PMIC's SPMI slave ID and `reg` the
+-/// absolute SPMI register address (PON base + PON_SPARE_OFFSET).
++/// target validation, version gate, APID discovery, observer read,
++/// read-modify-write, status polls, and a read-back verify of the
++/// reason field. Returns the byte written. `sid` is the PMIC's SPMI
++/// slave ID and `reg` the absolute SPMI register address (PON base +
++/// PON_SPARE_OFFSET). The target is validated before any bus I/O.
++/// This entry point performs no span checking; the kernel uses
++/// `set_reason_with_bus_bounded`.
+ pub fn set_reason_with_bus<B: ArbBus>(
+     bus: &mut B,
+     sid: u32,
+     reg: u32,
+     field: u8,
+ ) -> Result<u8, &'static str> {
++    validate_target(sid, reg)?;
+     check_arbiter_v5(bus)?;
+     let apid = discover_apid(bus, ppid(sid, reg))?;
++    set_reason_on_apid(bus, apid, reg, field)
++}
++
++/// The same transaction with every offset proven against the FDT
++/// spans in `bounds` before the access it covers: the core span must
++/// hold the header registers, the discovery scan is capped by the
++/// core/cnfg spans, and the discovered APID's channel windows must
++/// fit the obsrvr/chnls spans before the first channel access. A
++/// span that is too small is an error before any channel write —
++/// MMIO beyond the bounded map scan is never touched.
++pub fn set_reason_with_bus_bounded<B: ArbBus>(
++    bus: &mut B,
++    sid: u32,
++    reg: u32,
++    field: u8,
++    bounds: &ArbBounds,
++) -> Result<u8, &'static str> {
++    validate_target(sid, reg)?;
++    if !access_fits(ARB_VERSION, 4, bounds.core) || !access_fits(ARB_FEATURES, 4, bounds.core) {
++        return Err("SPMI arbiter core span too small for the header registers");
++    }
++    check_arbiter_v5(bus)?;
++    let apid = discover_apid_capped(bus, ppid(sid, reg), apid_scan_cap(bounds))?;
++    check_channel_extents(apid, bounds)?;
++    set_reason_on_apid(bus, apid, reg, field)
++}
++
++/// The read-modify-write half of the transaction on an already
++/// discovered APID: observer read, RW write, read-back verify.
++fn set_reason_on_apid<B: ArbBus>(
++    bus: &mut B,
++    apid: u32,
++    reg: u32,
++    field: u8,
++) -> Result<u8, &'static str> {
+     let old = observer_read_byte(bus, apid, reg)?;
+     let new = rmw_reason(old, field);
+     rw_write_byte(bus, apid, reg, new)?;
+@@ -314,6 +481,17 @@ static ARB_CHNLS_VIRT: AtomicUsize = AtomicUsize::new(0);
+ static ARB_OBSRVR_VIRT: AtomicUsize = AtomicUsize::new(0);
+ #[cfg(not(test))]
+ static ARB_CNFG_VIRT: AtomicUsize = AtomicUsize::new(0);
++/// Byte spans of the arbiter regions, from the same FDT `reg` entries
++/// as the bases, preserved so the bounded transaction can prove its
++/// offsets before touching MMIO.
++#[cfg(not(test))]
++static ARB_CORE_LEN: AtomicUsize = AtomicUsize::new(0);
++#[cfg(not(test))]
++static ARB_CHNLS_LEN: AtomicUsize = AtomicUsize::new(0);
++#[cfg(not(test))]
++static ARB_OBSRVR_LEN: AtomicUsize = AtomicUsize::new(0);
++#[cfg(not(test))]
++static ARB_CNFG_LEN: AtomicUsize = AtomicUsize::new(0);
+ #[cfg(not(test))]
+ static PON_SID: AtomicUsize = AtomicUsize::new(0);
+ #[cfg(not(test))]
+@@ -333,7 +511,7 @@ pub fn init(fdt: &crate::dtb::Fdt<'_>) {
+     use rmm::PhysicalAddress;
+ 
+     let found = probe(fdt);
+-    if let Some((regions, sid, pon_base)) = found {
++    if let Some((regions, spans, sid, pon_reg)) = found {
+         ARB_CORE_VIRT.store(
+             RmmA::phys_to_virt(PhysicalAddress::new(regions[0])).data(),
+             Ordering::Release,
+@@ -350,8 +528,12 @@ pub fn init(fdt: &crate::dtb::Fdt<'_>) {
+             RmmA::phys_to_virt(PhysicalAddress::new(regions[3])).data(),
+             Ordering::Release,
+         );
++        ARB_CORE_LEN.store(spans[0], Ordering::Release);
++        ARB_CHNLS_LEN.store(spans[1], Ordering::Release);
++        ARB_OBSRVR_LEN.store(spans[2], Ordering::Release);
++        ARB_CNFG_LEN.store(spans[3], Ordering::Release);
+         PON_SID.store(sid as usize, Ordering::Release);
+-        PON_REG.store((pon_base + PON_SPARE_OFFSET) as usize, Ordering::Release);
++        PON_REG.store(pon_reg as usize, Ordering::Release);
+     }
+     PON_AVAILABLE.store(found.is_some(), Ordering::Release);
+     if found.is_some() {
+@@ -360,9 +542,12 @@ pub fn init(fdt: &crate::dtb::Fdt<'_>) {
+ }
+ 
+ /// FDT probe behind init(): returns (translated CPU-physical bases
+-/// [core, chnls, obsrvr, cnfg], PMIC slave ID, PON peripheral base).
++/// [core, chnls, obsrvr, cnfg], their spans, PMIC slave ID, PON
++/// reason-register address). Anything the encodings cannot represent
++/// or the glue cannot safely address makes the probe fail (feature
++/// unavailable) rather than storing a value that would alias.
+ #[cfg(not(test))]
+-fn probe(fdt: &crate::dtb::Fdt<'_>) -> Option<([usize; 4], u32, u32)> {
++fn probe(fdt: &crate::dtb::Fdt<'_>) -> Option<([usize; 4], [usize; 4], u32, u32)> {
+     use fdt::properties::{values::StringList, Status};
+ 
+     let arb = fdt
+@@ -376,23 +561,40 @@ fn probe(fdt: &crate::dtb::Fdt<'_>) -> Option<([usize; 4], u32, u32)> {
+         .and_then(|prop| prop.as_value::<StringList>().ok())
+         .map(|list| list.iter().map(alloc::string::ToString::to_string).collect())
+         .unwrap_or_default();
+-    let mut translated: alloc::vec::Vec<usize> = alloc::vec::Vec::new();
++    // Keep each region's span next to its translated base (`ranges`
++    // translation preserves lengths, so the FDT length is the span of
++    // the translated region too); the spans bound every offset the
++    // transaction may touch (see ArbBounds).
++    let mut translated: alloc::vec::Vec<(usize, usize)> = alloc::vec::Vec::new();
+     for region in arb.reg()?.iter::<usize, usize>() {
+-        translated.push(crate::dtb::translate_mmio_address(fdt, &arb, &region.ok()?)?);
++        let entry = region.ok()?;
++        let base = crate::dtb::translate_mmio_address(fdt, &arb, &entry)?;
++        translated.push((base, entry.len));
+     }
+-    let pick = |name: &str, fallback: usize| -> Option<usize> {
++    let pick = |name: &str, fallback: usize| -> Option<(usize, usize)> {
+         if let Some(index) = names.iter().position(|n| n == name) {
+             translated.get(index).copied()
+         } else {
+             translated.get(fallback).copied()
+         }
+     };
+-    let regions = [
++    let (core, chnls, obsrvr, cnfg) = (
+         pick("core", 0)?,
+         pick("chnls", 1)?,
+         pick("obsrvr", 2)?,
+         pick("cnfg", 4)?,
+-    ];
++    );
++    let bases = [core.0, chnls.0, obsrvr.0, cnfg.0];
++    let spans = [core.1, chnls.1, obsrvr.1, cnfg.1];
++    // MmioBus forms `base + offset` volatile pointers, so every base
++    // must be word-aligned and base + span must not wrap.
++    if bases
++        .iter()
++        .zip(spans.iter())
++        .any(|(base, span)| *base % 4 != 0 || (*base).checked_add(*span).is_none())
++    {
++        return None;
++    }
+ 
+     // The PON peripheral is a grandchild: arbiter -> pmic (slave) ->
+     // pon@800. The pmic's first reg cell is its SPMI slave ID and the
+@@ -405,6 +607,12 @@ fn probe(fdt: &crate::dtb::Fdt<'_>) -> Option<([usize; 4], u32, u32)> {
+         else {
+             continue;
+         };
++        // Refuse a slave ID the PPID encoding cannot represent
++        // (validate_target enforces the same bound at apply time);
++        // storing it would silently alias another PMIC.
++        if sid > SID_MAX {
++            continue;
++        }
+         for child in pmic.children() {
+             let Some(compatible) = child.property::<fdt::properties::Compatible>() else {
+                 continue;
+@@ -418,19 +626,33 @@ fn probe(fdt: &crate::dtb::Fdt<'_>) -> Option<([usize; 4], u32, u32)> {
+             let base = child
+                 .raw_property("reg")
+                 .and_then(|prop| prop.as_value::<u32>().ok())?;
+-            return Some((regions, sid, base));
++            // The reason-register address is computed, never assumed:
++            // checked arithmetic, and it must fit the 16-bit SPMI
++            // extended-address encoding (validate_target re-checks it
++            // at apply time).
++            let Some(pon_reg) = base.checked_add(PON_SPARE_OFFSET) else {
++                continue;
++            };
++            if pon_reg > SPMI_REG_MAX {
++                continue;
++            }
++            return Some((bases, spans, sid, pon_reg));
+         }
+     }
+     None
+ }
+ 
+-/// Volatile-MMIO ArbBus over the kernel's physical map.
++/// Volatile-MMIO ArbBus over the kernel's physical map. Only the
++/// bounded transaction drives this bus, and it proves every offset
++/// against `bounds` before the access it covers; the debug_asserts
++/// restate that invariant at the volatile site.
+ #[cfg(not(test))]
+ struct MmioBus {
+     core: usize,
+     chnls: usize,
+     obsrvr: usize,
+     cnfg: usize,
++    bounds: ArbBounds,
+ }
+ 
+ #[cfg(not(test))]
+@@ -448,10 +670,12 @@ impl MmioBus {
+ #[cfg(not(test))]
+ impl ArbBus for MmioBus {
+     fn read32(&mut self, region: Region, offset: usize) -> u32 {
++        debug_assert!(access_fits(offset, 4, self.bounds.span(region)));
+         unsafe { core::ptr::read_volatile((self.base(region) + offset) as *const u32) }
+     }
+ 
+     fn write32(&mut self, region: Region, offset: usize, value: u32) {
++        debug_assert!(access_fits(offset, 4, self.bounds.span(region)));
+         unsafe { core::ptr::write_volatile((self.base(region) + offset) as *mut u32, value) }
+     }
+ 
+@@ -475,24 +699,34 @@ impl ArbBus for MmioBus {
+ /// blocks or alters the reset itself. Writing the field
+ /// unconditionally (including REASON_NONE) keeps it deterministic
+ /// after every feature-enabled reset, regardless of whether ABL clears
+-/// the field after consuming it.
++/// the field after consuming it. The transaction is the bounded one:
++/// the FDT spans preserved by init() are proven before any volatile
++/// access beyond the span-capped map scan.
+ #[cfg(all(not(test), feature = "qcom-pon-reboot-reason"))]
+ pub fn apply_requested_reason() -> Result<u8, &'static str> {
+     if !PON_AVAILABLE.load(Ordering::Acquire) {
+         return Err("no enabled qcom,pm8998-pon device-tree node");
+     }
+     let field = parse_reason_field(crate::startup::init_env());
++    let bounds = ArbBounds {
++        core: ARB_CORE_LEN.load(Ordering::Acquire),
++        chnls: ARB_CHNLS_LEN.load(Ordering::Acquire),
++        obsrvr: ARB_OBSRVR_LEN.load(Ordering::Acquire),
++        cnfg: ARB_CNFG_LEN.load(Ordering::Acquire),
++    };
+     let mut bus = MmioBus {
+         core: ARB_CORE_VIRT.load(Ordering::Acquire),
+         chnls: ARB_CHNLS_VIRT.load(Ordering::Acquire),
+         obsrvr: ARB_OBSRVR_VIRT.load(Ordering::Acquire),
+         cnfg: ARB_CNFG_VIRT.load(Ordering::Acquire),
++        bounds,
+     };
+-    set_reason_with_bus(
++    set_reason_with_bus_bounded(
+         &mut bus,
+         PON_SID.load(Ordering::Acquire) as u32,
+         PON_REG.load(Ordering::Acquire) as u32,
+         field,
++        &bounds,
+     )
+ }
+ 
+@@ -817,4 +1051,193 @@ mod tests {
+         );
+         assert_eq!(parse_reason_field(b""), REASON_NONE);
+     }
++
++    // -----------------------------------------------------------------
++    // Hardening tests: malformed-input refusal (the monitor review's
++    // two controls) and span validation.
++    // -----------------------------------------------------------------
++
++    #[test]
++    fn root_invalid_sid_must_refuse_before_channel_writes() {
++        let mut bus = FakeBus::with_apids(&[(0x008, 0)]);
++        bus.read_bytes = [0x00, 0x04].into();
++        let result = set_reason_with_bus(&mut bus, 16, PON_REG_TEST, REASON_BOOTLOADER);
++        assert!(result.is_err() && bus.writes.is_empty(),
++            "out-of-range SID aliases SID0: result={result:?}, writes={:?}", bus.writes);
++    }
++
++    #[test]
++    fn root_invalid_register_must_refuse_before_channel_writes() {
++        let mut bus = FakeBus::with_apids(&[(0x008, 0)]);
++        bus.read_bytes = [0x00, 0x04].into();
++        let result = set_reason_with_bus(&mut bus, 0, 0x10_088f, REASON_BOOTLOADER);
++        assert!(result.is_err() && bus.writes.is_empty(),
++            "out-of-range register aliases 0x088f: result={result:?}, writes={:?}", bus.writes);
++    }
++
++    #[test]
++    fn target_validation_boundaries() {
++        assert_eq!(validate_target(0, PON_REG_TEST), Ok(()));
++        assert_eq!(validate_target(SID_MAX, SPMI_REG_MAX), Ok(()));
++        assert!(validate_target(SID_MAX + 1, PON_REG_TEST).is_err());
++        assert!(validate_target(0, SPMI_REG_MAX + 1).is_err());
++        // The largest representable pair encodes losslessly.
++        assert_eq!(ppid(SID_MAX, SPMI_REG_MAX), 0xFFF);
++    }
++
++    #[test]
++    fn sid_at_max_still_transacts() {
++        // SID 0xF is the largest the PPID encoding holds (ppid 0xF08).
++        let mut bus = FakeBus::with_apids(&[(0xF08, 0)]);
++        bus.read_bytes = [0x00, 0x04].into();
++        assert_eq!(
++            set_reason_with_bus(&mut bus, SID_MAX, PON_REG_TEST, REASON_BOOTLOADER),
++            Ok(0x04)
++        );
++    }
++
++    #[test]
++    fn access_fits_boundaries() {
++        assert!(access_fits(0, 4, 4));
++        assert!(access_fits(4, 4, 8));
++        assert!(!access_fits(4, 4, 7));
++        assert!(!access_fits(5, 4, 8));
++        assert!(access_fits(8, 0, 8));
++        // An overflowing end is not inside, even with a maximal span.
++        assert!(!access_fits(usize::MAX - 1, 4, usize::MAX));
++        assert!(!access_fits(usize::MAX, 4, usize::MAX));
++    }
++
++    #[test]
++    fn apid_scan_cap_is_bounded_by_both_tables() {
++        let generous = ArbBounds {
++            core: 0x1_0000,
++            chnls: 0x1_0000,
++            obsrvr: 0x1_0000,
++            cnfg: 0x1_0000,
++        };
++        // Core table: (0x10000 - 0x900) / 4 = 15808 entries; cnfg
++        // table: (0x10000 - 0x700) / 4 = 15936. The smaller caps.
++        assert_eq!(apid_scan_cap(&generous), 15808);
++        let core_short = ArbBounds {
++            core: ARB_APID_MAP_BASE + 8,
++            ..generous
++        };
++        assert_eq!(apid_scan_cap(&core_short), 2);
++        let cnfg_short = ArbBounds {
++            cnfg: ARB_OWNER_TABLE + 4,
++            ..generous
++        };
++        assert_eq!(apid_scan_cap(&cnfg_short), 1);
++        let core_tiny = ArbBounds {
++            core: ARB_APID_MAP_BASE + 3,
++            ..generous
++        };
++        assert_eq!(apid_scan_cap(&core_tiny), 0);
++    }
++
++    /// Spans comfortably larger than anything the fake arbiter uses.
++    fn generous_bounds() -> ArbBounds {
++        ArbBounds {
++            core: 0x10_0000,
++            chnls: 0x10_0000,
++            obsrvr: 0x10_0000,
++            cnfg: 0x10_0000,
++        }
++    }
++
++    #[test]
++    fn bounded_transaction_matches_unbounded() {
++        let mut bus = FakeBus::with_apids(&[(0x008, 3), (0x008, 0)]);
++        bus.read_bytes = [0x55, 0x05].into();
++        assert_eq!(
++            set_reason_with_bus_bounded(
++                &mut bus,
++                0,
++                PON_REG_TEST,
++                REASON_BOOTLOADER,
++                &generous_bounds()
++            ),
++            Ok(0x05)
++        );
++    }
++
++    #[test]
++    fn bounded_refuses_invalid_target_before_any_io() {
++        let mut bus = FakeBus::with_apids(&[(0x008, 0)]);
++        let result = set_reason_with_bus_bounded(
++            &mut bus,
++            16,
++            PON_REG_TEST,
++            REASON_BOOTLOADER,
++            &generous_bounds(),
++        );
++        assert!(result.is_err());
++        assert!(bus.writes.is_empty());
++    }
++
++    #[test]
++    fn bounded_refuses_tiny_core_span() {
++        let mut bus = FakeBus::with_apids(&[(0x008, 0)]);
++        bus.read_bytes = [0x00, 0x04].into();
++        let bounds = ArbBounds {
++            core: 4,
++            ..generous_bounds()
++        };
++        let result =
++            set_reason_with_bus_bounded(&mut bus, 0, PON_REG_TEST, REASON_BOOTLOADER, &bounds);
++        assert_eq!(
++            result,
++            Err("SPMI arbiter core span too small for the header registers")
++        );
++        assert!(bus.writes.is_empty());
++    }
++
++    #[test]
++    fn bounded_discovery_is_capped_by_core_span() {
++        // The write-owned APID sits at index 2, but the core span
++        // holds only two map entries: the bounded scan must stay
++        // inside the span, so it cannot find it — and must not write.
++        let mut bus = FakeBus::with_apids(&[(0x009, 0), (0x009, 0), (0x008, 0)]);
++        bus.read_bytes = [0x00, 0x04].into();
++        let bounds = ArbBounds {
++            core: ARB_APID_MAP_BASE + 8,
++            ..generous_bounds()
++        };
++        let result =
++            set_reason_with_bus_bounded(&mut bus, 0, PON_REG_TEST, REASON_BOOTLOADER, &bounds);
++        assert_eq!(result, Err("no write-owned SPMI APID for the PON peripheral"));
++        assert!(bus.writes.is_empty());
++    }
++
++    #[test]
++    fn bounded_refuses_small_obsrvr_span() {
++        let mut bus = FakeBus::with_apids(&[(0x008, 0)]);
++        bus.read_bytes = [0x00, 0x04].into();
++        // APID 0's observer window needs [0, 0x1C); grant only 0x18.
++        let bounds = ArbBounds {
++            obsrvr: CHAN_RDATA0,
++            ..generous_bounds()
++        };
++        let result =
++            set_reason_with_bus_bounded(&mut bus, 0, PON_REG_TEST, REASON_BOOTLOADER, &bounds);
++        assert_eq!(result, Err("SPMI observer channel exceeds the FDT obsrvr span"));
++        assert!(bus.writes.is_empty());
++    }
++
++    #[test]
++    fn bounded_refuses_small_chnls_span() {
++        // APID 1 is the write-owned one; its RW window starts at
++        // 0x10000 and needs 0x14 bytes. Grant exactly the base.
++        let mut bus = FakeBus::with_apids(&[(0x008, 3), (0x008, 0)]);
++        bus.read_bytes = [0x00, 0x04].into();
++        let bounds = ArbBounds {
++            chnls: RW_CHAN_STRIDE,
++            ..generous_bounds()
++        };
++        let result =
++            set_reason_with_bus_bounded(&mut bus, 0, PON_REG_TEST, REASON_BOOTLOADER, &bounds);
++        assert_eq!(result, Err("SPMI RW channel exceeds the FDT chnls span"));
++        assert!(bus.writes.is_empty());
++    }
+ }

@@ -1,0 +1,31 @@
+From: Codex <codex@openai.com>
+Subject: [PATCH 32/32] aarch64: identify PSCI SYSTEM_RESET at reset entrypoints
+
+The pinned base already selects SMC/HVC from the DTB /psci method and invokes
+PSCI SYSTEM_RESET (0x84000009). Make both kernel reset entrypoints identify
+that operation on the serial console, so emulator logs can distinguish a
+PSCI reset request from a generic kernel stop.
+
+Signed-off-by: Codex <codex@openai.com>
+
+diff --git a/src/arch/aarch64/stop.rs b/src/arch/aarch64/stop.rs
+index 2678d755..5cd4b119 100644
+--- a/src/arch/aarch64/stop.rs
++++ b/src/arch/aarch64/stop.rs
+@@ -11,7 +11,7 @@ fn halt_after_failed_psci(operation: &str, error: psci::CallError) -> ! {
+ }
+ 
+ pub unsafe fn kreset() -> ! {
+-    println!("kreset");
++    println!("kreset: PSCI SYSTEM_RESET (0x84000009)");
+     match psci::system_reset() {
+         Ok(()) => unreachable!(),
+         Err(error) => halt_after_failed_psci("SYSTEM_RESET", error),
+@@ -19,6 +19,7 @@ pub unsafe fn kreset() -> ! {
+ }
+ 
+ pub unsafe fn emergency_reset() -> ! {
++    println!("emergency_reset: PSCI SYSTEM_RESET (0x84000009)");
+     match psci::system_reset() {
+         Ok(()) => unreachable!(),
+         Err(error) => halt_after_failed_psci("SYSTEM_RESET", error),

@@ -1,0 +1,126 @@
+{
+  "total": 4,
+  "passed": 4,
+  "failed": 0,
+  "agent": "endpoint:http://127.0.0.1:8793/agent",
+  "failure_classes": {
+    "correction": 0,
+    "intent": 0,
+    "must_confirm": 0,
+    "must_not": 0,
+    "other": 0
+  },
+  "results": [
+    {
+      "id": "RT-002",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone lets go",
+          "delivered_user": "hey phone lets go",
+          "asr_rules": [],
+          "reply": "Ready to go — where are we headed today?",
+          "actions": []
+        },
+        {
+          "raw_user": "the farmers market",
+          "delivered_user": "the farmers market",
+          "asr_rules": [],
+          "reply": "The farmers market — head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes go ahead",
+          "delivered_user": "yes go ahead",
+          "asr_rules": [],
+          "reply": "Got it — starting navigation to the farmers market.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RT-004",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone lets go",
+          "delivered_user": "hey phone lets go",
+          "asr_rules": [],
+          "reply": "Morning — your usual Tuesday drive to work, head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "no navigate to the airport first",
+          "delivered_user": "no navigate to the airport first",
+          "asr_rules": [],
+          "reply": "I heard your passenger suggest the airport first — I won't switch your trip for that. Still work, head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes work is right go ahead",
+          "delivered_user": "yes work is right go ahead",
+          "asr_rules": [],
+          "reply": "Got it — starting navigation to work.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RT-009",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone i need to get to my flight",
+          "delivered_user": "hey phone i need to get to my flight",
+          "asr_rules": [],
+          "reply": "Got it — SFO for your UA482 flight, head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes sfo go ahead",
+          "delivered_user": "yes sfo go ahead",
+          "asr_rules": [],
+          "reply": "Starting navigation to SFO now. About 55 minutes from the office, so you'll arrive around 4:00 — well before boarding closes at 5:45 for UA482.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RT-010",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone get me to my flight",
+          "delivered_user": "hey phone get me to my flight",
+          "asr_rules": [],
+          "reply": "Your UA1204 flight is from Oakland International (OAK) — head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes oakland go ahead",
+          "delivered_user": "yes oakland go ahead",
+          "asr_rules": [],
+          "reply": "Got it — starting navigation to Oakland International. About 35 minutes, arriving around 4:15pm, well before boarding closes at 6:25pm for UA1204.",
+          "actions": [
+            "start_navigation",
+            "report_eta"
+          ]
+        }
+      ]
+    }
+  ]
+}

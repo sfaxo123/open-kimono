@@ -1,0 +1,353 @@
+From ff56c966aaa97dde22b159f5746f59d9e84de99b Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Mon, 26 Oct 2026 21:13:16 +0000
+Subject: [PATCH] sync: add preparatory IRQ-save mutex with explicit unsafe
+ scope
+
+Unwired helper only. Caller must prove no scheduling, migration or IRQ re-enable through cleanup. Host mask/order/negative and lifetime/Send/API checks plus A64/RV codegen and A64 check/link passed; no runtime or global IRQ ownership proof.
+
+Agent: Codex with Perplexity, Cursor and Luna
+Model: gpt-6-sol (root); pplx-5090 (coordinator); Cursor default (author); gpt-6-luna (review)
+Provider: OpenAI; Cursor; local LiteLLM
+Refs: cloud-dispatch-cursor-20261026T210304-1720309
+---
+ src/sync/irq_lock.rs       | 179 +++++++++++++++++++++++++++++++++++++
+ src/sync/irq_lock_tests.rs | 127 ++++++++++++++++++++++++++
+ src/sync/mod.rs            |   2 +
+ 3 files changed, 308 insertions(+)
+ create mode 100644 src/sync/irq_lock.rs
+ create mode 100644 src/sync/irq_lock_tests.rs
+
+diff --git a/src/sync/irq_lock.rs b/src/sync/irq_lock.rs
+new file mode 100644
+index 00000000..126791d4
+--- /dev/null
++++ b/src/sync/irq_lock.rs
+@@ -0,0 +1,179 @@
++//! IRQ-save spin mutex: masks the local CPU IRQ line before acquiring an inner
++//! `spin::Mutex` and restores the saved IRQ-enable bit only after releasing it.
++//!
++//! This primitive does not by itself establish a lock graph, forbid CPU
++//! migration, or prove anything about other CPUs. Inside `with` the closure must
++//! not re-acquire the same lock, schedule, or re-enable interrupts.
++
++#![allow(dead_code)]
++
++use core::{
++    marker::PhantomData,
++    sync::atomic::{compiler_fence, Ordering},
++};
++
++/// Saved local-CPU IRQ state returned by [`MaskPolicy::save_and_disable`].
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) struct Saved {
++    pub(crate) prior_enabled: bool,
++}
++
++/// Local-CPU IRQ mask operations.
++///
++/// # Safety
++///
++/// `save_and_disable` must record whether the local IRQ line was enabled, then
++/// mask it before returning. `restore` must set only
++/// that IRQ-enable bit back to `saved.prior_enabled` on the current CPU and
++/// leave every other status bit at its current value. Both must act as compiler
++/// barriers. Callers guarantee the thread does not migrate CPUs between a save
++/// and its matching restore.
++pub(crate) unsafe trait MaskPolicy {
++    fn save_and_disable() -> Saved;
++    /// # Safety
++    /// `saved` must come from the matching `save_and_disable` on this CPU.
++    unsafe fn restore(saved: Saved);
++}
++
++/// RAII token: masks on construction, restores the saved bit on drop.
++/// Never leaves this module and is neither `Send` nor `Sync`.
++struct IrqToken<P: MaskPolicy> {
++    saved: Saved,
++    _policy: PhantomData<fn() -> P>,
++    _not_send: PhantomData<*mut ()>,
++}
++
++impl<P: MaskPolicy> IrqToken<P> {
++    fn new() -> Self {
++        compiler_fence(Ordering::SeqCst);
++        let saved = P::save_and_disable();
++        compiler_fence(Ordering::SeqCst);
++        Self {
++            saved,
++            _policy: PhantomData,
++            _not_send: PhantomData,
++        }
++    }
++}
++
++impl<P: MaskPolicy> Drop for IrqToken<P> {
++    fn drop(&mut self) {
++        compiler_fence(Ordering::SeqCst);
++        // SAFETY: `saved` came from `P::save_and_disable` on this CPU in `new`,
++        // and the unsafe `with` caller guarantees no CPU migration through restore.
++        // !Send alone only prevents thread transfer; it does not pin a CPU.
++        unsafe { P::restore(self.saved) };
++        compiler_fence(Ordering::SeqCst);
++    }
++}
++
++/// Spin mutex that holds the local IRQ line masked while locked.
++///
++/// `Send`/`Sync` come only from the inner `spin::Mutex<T>`; the policy marker
++/// is `fn() -> P`, which is always `Send + Sync` and adds no bound.
++pub(crate) struct IrqSaveMutex<T, P: MaskPolicy> {
++    inner: spin::Mutex<T>,
++    _policy: PhantomData<fn() -> P>,
++}
++
++impl<T, P: MaskPolicy> IrqSaveMutex<T, P> {
++    pub(crate) const fn new(value: T) -> Self {
++        Self {
++            inner: spin::Mutex::new(value),
++            _policy: PhantomData,
++        }
++    }
++
++    /// Masks local IRQs, locks, runs `f`, unlocks, then restores the saved
++    /// IRQ bit. On unwind the inner guard is still dropped before the token.
++    ///
++    /// # Safety
++    /// The caller must ensure that acquisition, `f`, and cleanup (including
++    /// unwinding) cannot schedule, block, migrate CPUs, or re-enable local IRQs.
++    /// This guard does not pin a CPU. `f` must not recursively acquire this mutex.
++    pub(crate) unsafe fn with<R>(&self, f: impl for<'a> FnOnce(&'a mut T) -> R) -> R {
++        let token = IrqToken::<P>::new();
++        let result = {
++            let mut guard = self.inner.lock();
++            f(&mut *guard)
++        };
++        drop(token);
++        result
++    }
++
++    #[cfg(test)]
++    pub(crate) fn inner_for_test(&self) -> &spin::Mutex<T> {
++        &self.inner
++    }
++}
++
++/// Production policy for the architecture being compiled.
++#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
++pub(crate) struct ArchMask;
++
++#[cfg(target_arch = "aarch64")]
++unsafe impl MaskPolicy for ArchMask {
++    #[inline(always)]
++    fn save_and_disable() -> Saved {
++        let old: u64;
++        // SAFETY: reads DAIF and sets only the I bit; memory clobber kept.
++        unsafe {
++            core::arch::asm!(
++                "mrs {old}, DAIF",
++                "msr DAIFSet, #2",
++                old = out(reg) old,
++                options(nostack, preserves_flags),
++            );
++        }
++        Saved {
++            prior_enabled: (old & (1 << 7)) == 0,
++        }
++    }
++
++    #[inline(always)]
++    unsafe fn restore(saved: Saved) {
++        // SAFETY: touches only the I bit of DAIF; memory clobber kept.
++        unsafe {
++            if saved.prior_enabled {
++                core::arch::asm!("msr DAIFClr, #2", options(nostack, preserves_flags));
++            } else {
++                core::arch::asm!("msr DAIFSet, #2", options(nostack, preserves_flags));
++            }
++        }
++    }
++}
++
++#[cfg(target_arch = "riscv64")]
++unsafe impl MaskPolicy for ArchMask {
++    #[inline(always)]
++    fn save_and_disable() -> Saved {
++        let old: usize;
++        // SAFETY: atomically reads sstatus and clears only SIE; memory clobber kept.
++        unsafe {
++            core::arch::asm!(
++                "csrrci {old}, sstatus, 2",
++                old = out(reg) old,
++                options(nostack, preserves_flags),
++            );
++        }
++        Saved {
++            prior_enabled: (old & 2) != 0,
++        }
++    }
++
++    #[inline(always)]
++    unsafe fn restore(saved: Saved) {
++        // SAFETY: touches only sstatus.SIE; memory clobber kept.
++        unsafe {
++            if saved.prior_enabled {
++                core::arch::asm!("csrsi sstatus, 2", options(nostack, preserves_flags));
++            } else {
++                core::arch::asm!("csrci sstatus, 2", options(nostack, preserves_flags));
++            }
++        }
++    }
++}
++
++#[cfg(test)]
++#[path = "irq_lock_tests.rs"]
++mod tests;
+diff --git a/src/sync/irq_lock_tests.rs b/src/sync/irq_lock_tests.rs
+new file mode 100644
+index 00000000..4ae25b1e
+--- /dev/null
++++ b/src/sync/irq_lock_tests.rs
+@@ -0,0 +1,127 @@
++//! Host tests for `IrqSaveMutex` using a thread-local fake CPU status register.
++//! The fake models only the local mask bit; it proves nothing about hardware.
++
++extern crate std;
++
++use super::{IrqSaveMutex, MaskPolicy, Saved};
++use std::{cell::Cell, panic, vec::Vec};
++
++const IE: u64 = 1 << 1;
++const OTHER_BITS: u64 = 0xA5A5_0000_0000_F0F0 & !IE;
++
++std::thread_local! {
++    static STATUS: Cell<u64> = const { Cell::new(0) };
++    static PROBE: Cell<Option<*const spin::Mutex<u32>>> = const { Cell::new(None) };
++    static PROBE_LOCKED_AT_RESTORE: Cell<Option<bool>> = const { Cell::new(None) };
++    static LOG: core::cell::RefCell<Vec<&'static str>> = const { core::cell::RefCell::new(Vec::new()) };
++}
++
++struct FakeMask;
++
++unsafe impl MaskPolicy for FakeMask {
++    fn save_and_disable() -> Saved {
++        let old = STATUS.get();
++        STATUS.set(old & !IE);
++        LOG.with_borrow_mut(|l| l.push("save"));
++        Saved {
++            prior_enabled: old & IE != 0,
++        }
++    }
++
++    unsafe fn restore(saved: Saved) {
++        if let Some(m) = PROBE.get() {
++            // SAFETY: the probe pointer is set by a test to a mutex that outlives the call.
++            let locked = unsafe { &*m }.try_lock().is_none();
++            PROBE_LOCKED_AT_RESTORE.set(Some(locked));
++        }
++        let cur = STATUS.get();
++        STATUS.set(if saved.prior_enabled { cur | IE } else { cur & !IE });
++        LOG.with_borrow_mut(|l| l.push("restore"));
++    }
++}
++
++type M = IrqSaveMutex<u32, FakeMask>;
++
++macro_rules! with_fake {
++    ($lock:expr, $body:expr) => {{
++        // SAFETY: the fake CPU is thread-local, these synchronous closures do
++        // not transfer execution or re-enable the simulated IRQ bit.
++        unsafe { ($lock).with($body) }
++    }};
++}
++
++fn reset(status: u64) {
++    STATUS.set(status);
++    PROBE.set(None);
++    PROBE_LOCKED_AT_RESTORE.set(None);
++    LOG.with_borrow_mut(|l| l.clear());
++}
++
++#[test]
++fn initially_enabled_masks_inside_and_reenables_after() {
++    reset(OTHER_BITS | IE);
++    let m = M::new(1);
++    let seen = with_fake!(&m, |v| {
++        *v += 1;
++        STATUS.get()
++    });
++    assert_eq!(seen & IE, 0, "IRQ must be masked inside the closure");
++    assert_eq!(STATUS.get(), OTHER_BITS | IE);
++    assert_eq!(with_fake!(&m, |v| *v), 2);
++}
++
++#[test]
++fn initially_masked_stays_masked_after() {
++    reset(OTHER_BITS);
++    let m = M::new(0);
++    with_fake!(&m, |v| *v = 7);
++    assert_eq!(STATUS.get(), OTHER_BITS, "restore must not enable a masked CPU");
++}
++
++#[test]
++fn nested_different_mutexes_restore_saved_masked_bit() {
++    reset(OTHER_BITS | IE);
++    let a = M::new(0);
++    let b = M::new(0);
++    with_fake!(&a, |_| {
++        with_fake!(&b, |_| assert_eq!(STATUS.get() & IE, 0));
++        assert_eq!(STATUS.get(), OTHER_BITS, "inner restore must keep IRQ masked");
++    });
++    assert_eq!(STATUS.get(), OTHER_BITS | IE);
++}
++
++#[test]
++fn restore_happens_after_inner_unlock() {
++    reset(IE);
++    let m = M::new(0);
++    PROBE.set(Some(m.inner_for_test() as *const _));
++    with_fake!(&m, |v| *v = 3);
++    assert_eq!(
++        PROBE_LOCKED_AT_RESTORE.get(),
++        Some(false),
++        "inner mutex must already be released when restore runs"
++    );
++    assert_eq!(LOG.with_borrow(|l| l.clone()), ["save", "restore"]);
++}
++
++#[test]
++fn unwind_releases_lock_then_restores() {
++    reset(OTHER_BITS | IE);
++    let m = M::new(0);
++    PROBE.set(Some(m.inner_for_test() as *const _));
++    let r = panic::catch_unwind(panic::AssertUnwindSafe(|| {
++        with_fake!(&m, |_| panic!("closure panic"));
++    }));
++    assert!(r.is_err());
++    assert_eq!(PROBE_LOCKED_AT_RESTORE.get(), Some(false));
++    assert!(!m.inner_for_test().is_locked());
++    assert_eq!(STATUS.get(), OTHER_BITS | IE);
++}
++
++#[test]
++fn unrelated_status_bits_preserved_through_changes_inside_scope() {
++    reset(OTHER_BITS | IE);
++    let m = M::new(0);
++    with_fake!(&m, |_| STATUS.set(STATUS.get() | (1 << 40)));
++    assert_eq!(STATUS.get(), OTHER_BITS | IE | (1 << 40));
++}
+diff --git a/src/sync/mod.rs b/src/sync/mod.rs
+index 6ad2708b..ff0824d6 100644
+--- a/src/sync/mod.rs
++++ b/src/sync/mod.rs
+@@ -1,5 +1,7 @@
+ pub use self::{ordered::*, wait_condition::WaitCondition, wait_queue::WaitQueue};
+ 
++#[cfg(any(target_arch = "aarch64", target_arch = "riscv64", test))]
++pub(crate) mod irq_lock;
+ pub mod ordered;
+ pub mod wait_condition;
+ pub mod wait_queue;
+-- 
+2.43.0
+

@@ -1,0 +1,49 @@
+From cb1dfb1388a33674ccfa14bd20806f038ba42819 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Mon, 26 Oct 2026 07:08:31 +0000
+Subject: [PATCH] gic: write only the requested interrupt enable or disable bit
+
+ICENABLER is W1C; reading enabled bits and replaying them disables
+unrelated IRQs. ISENABLER similarly needs only a one-bit W1S write.
+
+Agent: Codex with Luna
+Model: gpt-6-sol; gpt-6-luna
+Provider: OpenAI
+Refs: perplexity-redox-hourly-safety-check
+---
+ src/arch/aarch64/device/irqchip/gic.rs | 10 ++++------
+ 1 file changed, 4 insertions(+), 6 deletions(-)
+
+diff --git a/src/arch/aarch64/device/irqchip/gic.rs b/src/arch/aarch64/device/irqchip/gic.rs
+index 7672d333..3541783a 100644
+--- a/src/arch/aarch64/device/irqchip/gic.rs
++++ b/src/arch/aarch64/device/irqchip/gic.rs
+@@ -373,21 +373,19 @@ impl GicDistIf {
+ 
+     pub unsafe fn irq_enable(&mut self, irq: u32) {
+         unsafe {
++            // Write-one-to-set: do not replay the current enable state.
+             let offset = GICD_ISENABLER + (4 * (irq / 32));
+             let shift = 1 << (irq % 32);
+-            let mut val = self.read(offset);
+-            val |= shift;
+-            self.write(offset, val);
++            self.write(offset, shift);
+         }
+     }
+ 
+     pub unsafe fn irq_disable(&mut self, irq: u32) {
+         unsafe {
++            // Write-one-to-clear: replaying enabled bits disables other IRQs.
+             let offset = GICD_ICENABLER + (4 * (irq / 32));
+             let shift = 1 << (irq % 32);
+-            let mut val = self.read(offset);
+-            val |= shift;
+-            self.write(offset, val);
++            self.write(offset, shift);
+         }
+     }
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,11 @@
+[package]
+name = "fdt-diff"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Deterministic, bounds-checked Flattened Device Tree (DTB) comparator for first-boot evidence (HW-07, Lane H): parses FDT blobs strictly, diffs two blobs byte-wise first then structurally (MissingNode/MissingProp/ValueMismatch/NameMismatch), reports node paths + hex offsets. Used to judge the phone-captured /sys/firmware/fdt against the DTB embedded in full31."
+
+[dependencies]
+
+[profile.release]
+panic = "abort"

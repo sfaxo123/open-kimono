@@ -1,0 +1,51 @@
+From cf3054196e7dbfad2a252e23a6a38b769e30f7c6 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:05:01 +0000
+Subject: [PATCH 04/21] context: pass a Kstack in scheduler test helpers
+
+Context::new gained a Kstack argument but the test helpers in
+context/switch.rs were not updated, so the kernel test binary did not
+compile. test_work_stealing still needs a physical frame allocator at
+runtime and fails on a host test run.
+
+Co-Authored-By: Cursor <noreply@cursor.com>
+Co-authored-by: Cursor <cursoragent@cursor.com>
+---
+ src/context/switch.rs | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/src/context/switch.rs b/src/context/switch.rs
+index 84013be8..863ee7fc 100644
+--- a/src/context/switch.rs
++++ b/src/context/switch.rs
+@@ -1398,7 +1398,7 @@ impl ContextSwitchPercpu {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+-    use crate::context::{Context, ContextLock, Status, WeakContextRef};
++    use crate::context::{Context, ContextLock, Kstack, Status, WeakContextRef};
+     use alloc::sync::Arc;
+     use core::{cmp::Reverse, sync::atomic::Ordering};
+ 
+@@ -1413,7 +1413,9 @@ mod tests {
+             unsafe {
+                 crate::percpu::init_tlb_shootdown(cpu.cpu_id, core::ptr::from_mut(cpu));
+ 
+-                let idle_context = Arc::new(ContextLock::new(Context::new(None).unwrap()));
++                let idle_context = Arc::new(ContextLock::new(
++                    Context::new(None, Kstack::new().unwrap()).unwrap(),
++                ));
+                 cpu.switch_internals.set_idle_context(idle_context);
+             }
+ 
+@@ -1437,7 +1439,9 @@ mod tests {
+ 
+     #[cfg(test)]
+     pub fn new_context() -> Arc<ContextLock> {
+-        Arc::new(ContextLock::new(Context::new(None).unwrap()))
++        Arc::new(ContextLock::new(
++            Context::new(None, Kstack::new().unwrap()).unwrap(),
++        ))
+     }
+ 
+     #[cfg(test)]

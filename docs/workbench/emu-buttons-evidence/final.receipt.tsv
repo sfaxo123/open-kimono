@@ -1,0 +1,7 @@
+artifact	sha256	path
+emulator	588ac3f028c74a73322c3f1cbac31228650bd7a6d85f76bbe79f38e80519188c	$HOME/Developer/forks/qemu-oneplus6/build/qemu-system-aarch64
+payload	51636a0a36343722b3f8565150d2aa32669e8729e458598addd4a1d65ca51792	$HOME/Developer/experiments/redox-oneplus6-emu-buttons-e2e/out/phone-boot/redox-ramboot.efi
+image	6d9067fc61c208111f6a8fee41b3f78720cfeb19f265c6d5dbfc7e0b45f680bc	$HOME/Developer/experiments/redox-oneplus6-emu-buttons-e2e/out/emu-op6/buttons-e2e-final/esp.img
+uboot_image	49edb185b6c28ebf5408c95dc37e05764d26e29ed1e0983078efa5f08f06a69c	$HOME/Developer/experiments/redox-oneplus6-emu-buttons-e2e/out/emu-op6/buttons-e2e-final/oneplus6-u-boot-with-ram.bin
+uboot_source	c50fec59e1c6bedaa5077b324615bf3eb001315144501da850d007b0a7619662	$HOME/artifacts/handoff/oneplus-redox-20261024/phone-boot/u-boot-nodtb.bin.gz-dtb
+serial_log	4aee4e35887fb0d3f9f60c05644bb9cb9a6366e49ef03630bcfc20ba1f38264c	$HOME/Developer/experiments/redox-oneplus6-emu-buttons-e2e/out/emu-op6/buttons-e2e-final/serial.log

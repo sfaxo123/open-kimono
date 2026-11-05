@@ -1,0 +1,219 @@
+CURRENT CODEX REVIEW — 2026-10-25 3:49 AM PT
+Host-only repairs verified; guest payload gate STILL NOT MET. Two original boots
+failed before userspace. The later “0 boots spent” addendum below is stale and
+incorrect for the original phase; never treat it as another available boot budget.
+
+DSH9196 timed out3:45AM PT and is STOPPED/renamed; Codex finished the focused
+host-only corrections. New companions split under300lines. Tests call the SAME
+evaluate_run as boot;27 passed/0failed, exit0. Real loopback nonce+ACK, directional
+PCAP with real nonce+LF framing, padding/nonTCP/fragment/truncation/affix negatives,
+invalid time limits, TERM-resistant owned group and interrupted real-driver stub
+all verified. Per-test dirs/owned process checks avoid parallel verifier collision.
+No QEMU guest or staging write was performed during this repair.
+Log: $HOME/artifacts/handoff/redox-perplexity/host-repair-final3-20261025T1052.log
+
+Cursor review provided fresh-reader experiment; Codex inspected clone.rs arguments
+(old input FIRST, new disposable output SECOND; source open read-only). Actual
+redoxfs-clone original control rc0/fulltree; staged rc1 SAME incorrecthash block
+0x13FC. Both source hashes unchanged. Receipt:
+$HOME/artifacts/handoff/redox-perplexity/iso-reader-check-20261025T1044/receipt.json
+This confirms corruption visible to a fresh host reader, not solely guest/UEFI.
+It does NOT isolate the staging transaction/teardown root cause.
+
+Durable preboot guard now waits for writer successful exit and performs fresh
+read-only clone/tree walk into disposable owned scratch. Actual corrupted image
+is REFUSED before boot (tested); helper original-control reader rc0 above. No more
+boot without Codex-reviewed staging recovery, passed guard and separate budget.
+Next task: isolate FUSE cleanup/commit corruption on disposable copies; preserve
+original and all evidence. Source forks, GPU models and phone remain untouched.
+
+HISTORICAL PHASE RECEIPTS BELOW — not current owners or renewed budget
+=================================================================
+E1-NET-NATIVE-PROBE — bounded discrimination phase (native std-only Rust TCP client)
+Owner: native-probe writer (5090 lane). Branch: codex/e1-native-probe from main 65b21a8.
+Started 09:55 UTC (2:55 AM PT). Hard total deadline 10:13 UTC (3:13 AM PT).
+
+CHECKPOINT (written <10 min in, before any build):
+
+GOAL
+Bypass ion builtin/stdout path: a tiny native Rust app (std only, zero deps) does
+TcpStream::connect(EXPLICIT CLI endpoint) + write_all(unique nonce), optional
+bounded read of ACK. Guest MUST use 10.0.2.2:PORT (slirp host alias = host peer);
+127.0.0.1 is the guest's own stack and belongs ONLY to the host listener or a
+host-only smoke. The app refuses to run without an explicit endpoint.
+Logs CONNECT_START/CONNECT_OK/WRITE_START/WRITE_OK(bytes)/FLUSH_OK/
+READ_OK/ERROR to stderr->serial. Optionally a second mode opens /scheme/tcp via
+OpenOptions to separate std-net from scheme layer. Purpose: if WRITE_OK appears
+in guest console AND the nonce bytes appear at the host peer + in the pcap TCP
+payload, that proves the transport works for a native client; it does NOT
+blanket-disprove the ion blame — the original ion cause remains unisolated. If
+the app crashes, record exact exception/PC (EL0 fault class like ls) — that is
+NOT a transport failure.
+
+OWNED SCOPE (only these are written by me)
+- apps/net-probe/**                          (new crate: Cargo.toml, src/main.rs)
+- scripts/qemu-demo/e1-net-native-probe.sh   (new driver, <=300 lines)
+- docs/workbench/E1-NET-NATIVE-PROBE.txt     (this file)
+- out/e1net-native/**                        (worktree-local artifacts)
+Nothing else. Shared scripts, forks, images, phone/model/gateway untouched.
+
+BUILD (read-only precedent: scripts/qemu-demo/build.sh)
+podman run redox-base, forks mounted :ro, private CARGO_HOME at
+out/e1net-native/cargo-home (copy of $redox/build/podman/.cargo/bin), private
+target dir out/e1net-native/redox. Zero deps => no vendor/network. Timeout <=900s.
+Binary: out/e1net-native/redox/aarch64-unknown-redox/release/net-probe (ELF aarch64).
+Host loopback smoke of the same source (if built for host) is protocol check only,
+NOT Redox proof.
+
+STAGING (owned copy only)
+Original ISO: ~/Developer/forks/redox/redox/build/aarch64/desktop-minimal/e1-live.iso
+  sha256 c02012eaa182800cc7ed937e0e3ebf7b436f2af3e9dacb5c57bb00c89df361bc (verify before/after).
+Copy ISO -> out/e1net-native/e1net-probe.iso; stage net-probe to usr/bin/net-probe in
+MY COPY using existing RedoxFS tooling only (candidates: base-e1 redox-initfs-ar,
+redoxfs tools in forks; e1-live.sh copy/mount recipe is precedent, NOT executed on
+shared paths). If no existing tool can write the ISO copy, STOP: record exact
+blocker here, keep partial evidence. Never write forks/original ISO.
+
+BOOT (max 2 boots x 90s, stop on first success or identical failure twice; no 3rd boot)
+Same recipe as e1-net-exchange.sh: qemu-system-aarch64 virt/gic3, rtl8139 NIC
+(INTx), -drive file=OWN iso readonly=on, filter-dump pcap, serial FIFO input,
+EXIT trap kills peer+qemu+mounts. Guest shell command: /usr/bin/net-probe <nonce> <port>
+(never builtin echo as payload). Host peer: timeout-bounded socat TCP-LISTEN on
+127.0.0.1 records bytes; after recv, peer sends ACK = nonce back (guest READ leg).
+Unique nonce: e1np-<epoch>-<rand> per run.
+
+ACCEPTANCE (fixture rejects empty/stale nonce, console-only proof)
+FULL SUCCESS = nonce present in host peer recv file AND in pcap TCP payload
+(guest->host data flow) AND WRITE_OK logged by native app on serial.
+OPTIONAL: READ_OK + ACK match.
+PARTIAL: CONNECT_OK + handshake in pcap but no payload => same signature as
+E1-NET-1; would then point at guest write path, not ion.
+CRASH: exact exception/PC recorded; classified as app/EL0 fault, not transport.
+NOT proof: ELF existence, host smoke, console echo, SYN/SYN-ACK alone.
+
+STATUS LOG
+09:55 checkpoint written. Next: write crate + driver, build (<=900s), then staging
+feasibility probe on owned ISO copy.
+
+09:59 BUILD DONE (before this transfer). apps/net-probe compiled for
+aarch64-unknown-redox in the redox-base container (forks :ro, private CARGO_HOME
+at out/e1net-native/cargo-home, private target dir out/e1net-native/redox):
+  out/e1net-native/redox/aarch64-unknown-redox/release/net-probe
+  ELF 64-bit LSB executable, ARM aarch64, statically linked, not stripped
+  sha256 eb1ca79d399589bcb0aae71d78ec86ed0877aa50ead741414a43e16c58a82d84
+  NOTE for the reviewer: that build's log shows the cookbook fetching a ~437 MB
+  toolchain artifact over the network inside the container. The container was not
+  network-isolated. Disclosed, not hidden; no fork or shared cargo tree was written.
+
+10:0x STAGING FEASIBILITY RESOLVED — it IS supported by existing tools.
+An earlier probe (host PATH + forks/*/target + the redox-base container) found no
+RedoxFS writer and would have stopped the phase. That probe was too shallow: the
+fork already ships the toolset at
+  forks/redox/redox/build/fstools/bin/{redoxfs,redoxfs-ar,redoxfs-clone,redoxfs-mkfs,redoxfs-resize}
+`redoxfs` is the FUSE mount (host has fusermount3). The owned copy
+out/e1net-native/e1net-probe.iso is a byte copy of the original (sha256
+c02012eaa182800cc7ed937e0e3ebf7b436f2af3e9dacb5c57bb00c89df361bc before staging,
+matching the E1-NET-EXCHANGE ledger). Partition map of the image: p1 BIOS boot,
+p2 EFI System, p3 start sector 4096, 253M RedoxFS (magic present).
+Staging path: mount OUR COPY with redoxfs, cp net-probe to usr/bin/net-probe,
+chmod 755, cmp against the built binary, unmount. The original ISO is never
+written; its hash is re-checked after the phase.
+
+10:0x BOOT PHASE RUNNING (bounded): driver scripts/qemu-demo/e1-net-native-probe.sh,
+max 2 attempts x 90 s kill-after, EXIT trap kills peer + QEMU + the FUSE mount.
+Guest endpoint is 10.0.2.2:<port> (slirp host alias); the host peer listens on
+127.0.0.1 only and answers ACK-<nonce>. Guest shell is fed exactly
+  /usr/bin/net-probe <nonce> 10.0.2.2:<port>
+never builtin echo. Receipts per attempt: serial log, pcap (filter-dump), host
+recv file, extracted pcap payload, all hashed into e1net-native-ledger.tsv.
+Acceptance: FULL needs the run's nonce at the peer AND in the pcap TCP payload
+AND native WRITE_OK; handshake-only => PARTIAL (the E1-NET-1 signature with a
+native client); an EL0 fault => CRASH with the exception/PC recorded, not a
+transport result. Console-only WRITE_OK is rejected by construction.
+
+RESULT — PHASE ENDS AT A STAGING-INTEGRITY BLOCKER. No transport verdict.
+-------------------------------------------------------------------------
+Staging itself appeared to work: redoxfs (fork fstools) FUSE-mounted the owned
+copy, net-probe was copied to usr/bin/net-probe, chmod 755, and cmp confirmed the
+bytes (binary sha256 9ec92a9e0e14819bb828a92b1e79724820c1fb121cf40a2c330bd3a230afd7f7,
+592856 bytes, ELF aarch64 static). Owned copy after staging: sha256
+87ae0aa883724a60b7247ca0f5fb570684fc92610caa31d13b7f81e2767b942f. The ORIGINAL ISO
+is byte-identical after the phase: c02012eaa182800cc7ed937e0e3ebf7b436f2af3e9dacb5c57bb00c89df361bc
+(verified before and after; partition table and RedoxFS magic offsets unchanged).
+
+Both boots (2 of 2 allowed, 90 s kill-after each) died in the E1 BOOTLOADER, before
+any guest userspace existed. Identical signature, so the loop stopped by rule:
+
+  RedoxFS 035daea7-...: 253 MiB ... Switching to live disk
+  ERROR - READ_BLOCK: INCORRECT HASH 0xD490B8FBCA2D82EA != 0x2173214C35205F83 for block 0x13FC
+  SETUP PANIC: panicked at src/main.rs:368:39: Failed to find usr: I/O error
+
+Classification, stated narrowly: the write into the owned copy left the image
+failing the bootloader's per-block hash check. This is NOT a transport failure,
+NOT an ion result, and NOT an EL0 app fault — the guest never started, the pcap
+holds 0 packets, and the host peer recorded nothing. The native client was never
+executed, so E1-NET-1's payload question is still open.
+
+Why: the fork's FUSE writer (build/fstools/bin/redoxfs, usage
+`redoxfs [--no-daemon|-d] [--uuid] [disk or uuid] [mountpoint] [block in hex]`)
+accepted the write but the E1 bootloader verifies block hashes and rejected the
+resulting image. Nothing in this lane hand-patched the image.
+
+Next step for Codex review (needs a 3rd boot, so NOT taken here):
+  a) rebuild the owned image hash-consistently with the same fstools:
+     redoxfs-ar DISK FOLDER [BOOTLOADER]  (writes a folder tree into a RedoxFS
+     image, the way the image is built) and/or redoxfs-clone NEW-DISK OLD-DISK,
+     then boot the rebuilt copy; or
+  b) stage through the RAM-boot initfs path (stage.sh precedent, base-e1
+     redox-initfs-ar packs a directory tree) — fully tool-supported but a
+     different boot recipe than the E1-NET-1 ISO path, so it is a different
+     experiment; or
+  c) mount with an explicit partition/block argument if the FUSE driver needs it.
+Receipts kept: out/e1net-native/{serial-1.log,serial-2.log,pcap-1.pcap,pcap-2.pcap,
+pcap-payload-*.txt,peer-*.log,e1net-native-ledger.tsv,driver-run1.log}.
+Boots used: 2 of 2. No third boot was run.
+
+STATUS LOG (continued)
+09:58 correction applied per parent: guest endpoint is EXPLICIT CLI arg, guest runs
+  use 10.0.2.2:4766 (slirp host alias); 127.0.0.1 only for host listener/smoke.
+  App refuses to run without an explicit endpoint. Native success would show the
+  transport works for a native client; the original ion cause stays unisolated.
+09:59 ACK semantics per parent: after write_all+flush the app KEEPS THE SOCKET OPEN,
+  sets a 5 s read timeout (logs READ_TIMEOUT_SET or READ_TIMEOUT_UNSUPPORTED with
+  the exact error), then read(); logs READ_ACK (match "ACK-<nonce>"), READ_MISMATCH,
+  READ_EOF (peer closed before ACK = close-before-drain signal), or READ_ERROR;
+  only then drop()/CLOSED. Host peer (127.0.0.1 only) records the line then sends
+  ACK-<nonce> back. No kernel behavior patch; discriminator evidence only.
+10:01 BUILD GREEN via cookbook redox-base (forks :ro, private cargo-home + target,
+  no network): out/e1net-native/redox/aarch64-unknown-redox/release/net-probe
+  ELF 64-bit ARM aarch64 statically linked; sha256 9ec92a9e0e14819bb828a92b1e79724820c1fb121cf40a2c330bd3a230afd7f7
+10:06 phase run 1 (scripts/qemu-demo/e1-net-native-probe.sh):
+  original ISO hash BEFORE = c02012eaa182800cc7ed937e0e3ebf7b436f2af3e9dacb5c57bb00c89df361bc (matches ledger)
+  owned copy out/e1net-native/e1net-probe.iso created (268435456 B)
+  EXACT BLOCKER: $redox/build/fstools/bin/redoxfs --no-daemon mounted the owned
+  copy successfully but ~10 s after launch; script's mountpoint wait window was 5 s,
+  so it exited 3 ('BLOCKER: redoxfs did not mount owned ISO copy') before cp.
+  Tool itself WORKS (mountpoint observed live); binary was NOT staged.
+  FIX APPLIED: wait window 5 s -> 20 s (bash -n clean). Stale mount cleaned.
+  Boots consumed: 0 of 2. No boot ran (deadline window).
+10:11 phase banked at total deadline 10:13 UTC. Partial evidence = build artifact,
+  ISO copy, verified mount, fixed driver. NEXT WINDOW: rerun driver (staging then
+  boot 1 of 2). No third boot without Codex review; max 2 boots x 90s stands.
+
+HOST-REPAIR PHASE CHECKPOINT (10:33 UTC / 3:33 AM PT, Codex-reviewed)
+1. Scope: host-only harness repair of e1-net-native-probe.sh. NO boots, NO image staging writes this phase.
+2. Fix list: socat 3-address bug (remove '-'); acceptance AFTER pcap extraction; directional guest->host TCP payload parse via python3 (no downloads); RUN_TIMEOUT numeric <=90 + lower bound; exit nonzero on no-FULL or original-hash mismatch; immutable per-run dirs + nonce scope; cleanup reaps owned process group, unmounts and waits writers; boot requires explicit BOOT=1.
+3. Regression: orchestration selftest with fake capture (extraction before acceptance), real loopback peer+ACK smoke, invalid timeout rejection, failed-verdict exit, interrupted-child cleanup proof.
+4. Native 3e40e1c banked, both boots inconclusive — not re-audited here. RedoxFS image corruption investigation belongs to the separate Spark reader.
+5. Deliverable: commit/push diff + selftest results; NOT runtime transport success.
+
+HOST-REPAIR GREEN (2026-10-25 ~11:02 UTC / 4:02 AM PT): host-only suite
+scripts/qemu-demo/e1-net-native-probe-tests.sh = 27 passed, 0 failed, exit 0
+after one fix: sourced main sets set -e and the run-2-* glob count aborted the
+harness before the interruption test; tests now set +e and count with find.
+Covers: pcap parser (incl_len 3rd field, linktype, IPv4/TCP validation,
+fragment/truncation/padding refusal, real nonce+LF protocol framing), exact
+-Fx accept framing with prefix/suffix negatives, evaluate_run shared by boot
+loop and tests, traps exit 130/143 with no next attempt, bounded TERM->KILL
+reap incl. TERM-resistant child, real loopback socat peer ACK smoke.
+No QEMU boots, no image writes this phase.

@@ -1,0 +1,7 @@
+# QEMU -trace excerpt, run touch-debug1 (payload 8c3887e9..., before the GICv3 Group 1 fix)
+# grep -n 'rmi4_s3706\|interrupt 647' out/emu-op6/touch-debug1/unimp.log
+1:rmi4_s3706_irq status 0x00 en 0x03 level 0
+1593:rmi4_s3706_irq status 0x00 en 0x03 level 0
+1594:rmi4_s3706_touch slot 0 touching 1 x 540 y 1140
+1595:rmi4_s3706_irq status 0x02 en 0x03 level 1
+1596:gicv3_dist_set_irq GICv3 distributor interrupt 647 level changed to 1

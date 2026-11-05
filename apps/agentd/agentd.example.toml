@@ -1,0 +1,39 @@
+# agentd runtime config — EXAMPLE ONLY.
+#
+# On the phone this file lives at `~/agentic/agentd.toml`, outside the repo, and
+# the gateway token lives in a separate file that is never committed.
+# Format: flat `key = "value"` lines, `#` comments. Unknown keys are a hard
+# error, so a typo fails loudly instead of quietly changing the endpoint.
+
+# Bind address. Loopback or the phone's Meshnet IP only — never 0.0.0.0.
+listen = "127.0.0.1:8770"
+
+# First brain: the homelab LiteLLM gateway, over Meshnet (plain HTTP, no TLS).
+gateway_url = "http://MESH_HOST:4000/v1/chat/completions"
+gateway_model = "auto"
+
+# Second brain: the on-phone llama.cpp server, used when the gateway is
+# unreachable. The switch is always announced in the journal.
+local_url = "http://127.0.0.1:8080/v1/chat/completions"
+local_model = "gemma3-1b-q4"
+
+# Where the bearer token for `gateway_url` is read at runtime (single line).
+# chmod 600. Never put the key in this file, and never commit either one.
+key_file = "$HOME/agentic/litellm.key"
+
+# Wall-clock limit for one model attempt before the next brain is tried.
+model_timeout_sec = 30
+
+# How many model round-trips one request may take (tool calls included).
+max_tool_rounds = 6
+
+# Idle time before the power manager may switch an unneeded component off (A5).
+idle_timeout_sec = 120
+
+# Components pre-approved for power auto-switch advice (comma list).
+# Anything not listed is only ever proposed. Radios, the screen and
+# Bluetooth stay dry-run regardless — agentd never executes those.
+# power_preapproved = "wifi, bluetooth"
+
+# Optional: directory holding index.html for the kimono view, served at `/`.
+# static_dir = "$HOME/agentic/kimono"

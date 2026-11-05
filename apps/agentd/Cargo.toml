@@ -1,0 +1,25 @@
+[package]
+name = "agentd"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Track A agentic OS layer for the OnePlus 6: request -> model -> tools, every step journaled as trace-events JSONL (open kimono)."
+
+[dependencies]
+trace-events = { path = "../../crates/trace-events" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# A3: the Lego layer. `svcd` is used unmodified (Track A may not edit existing
+# crates); its blake3 dependency is forced onto the pure-Rust path so the
+# aarch64-musl cross-build needs no cross-gcc — see docs/track-a/BUILD.md.
+svcd = { path = "../../crates/svcd" }
+blake3 = { version = "1.8", default-features = false, features = ["pure"] }
+
+[[bin]]
+name = "agentd"
+path = "src/main.rs"
+
+# A0: the cross-build smoke binary.
+[[bin]]
+name = "smoke"
+path = "src/bin/smoke.rs"

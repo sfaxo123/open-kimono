@@ -1,0 +1,26 @@
+From da83e59759eebba4921ceaece6c1541691415e91 Mon Sep 17 00:00:00 2001
+From: claude-code <claude@macbook.local>
+Date: Sat, 31 Oct 2026 22:26:47 +0000
+Subject: [PATCH 36/37] aarch64: qcom SCM - emit smc #0 as .inst, as psci.rs
+ does
+
+---
+ src/arch/aarch64/device/qcom_scm.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/aarch64/device/qcom_scm.rs b/src/arch/aarch64/device/qcom_scm.rs
+index 9b5df43a..e1f601bb 100644
+--- a/src/arch/aarch64/device/qcom_scm.rs
++++ b/src/arch/aarch64/device/qcom_scm.rs
+@@ -86,7 +86,7 @@ unsafe fn smc64(function_id: u64, arg_info: u64, arg0: u64, arg1: u64) -> (u64,
+     let mut result1 = arg_info;
+     unsafe {
+         asm!(
+-            "smc #0",
++            ".inst 0xd4000003", // smc #0 (the assembler rejects the mnemonic without el3), as in psci.rs
+             inout("x0") result,
+             inout("x1") result1,
+             inout("x2") arg0 => _,
+-- 
+2.43.0
+

@@ -1,0 +1,75 @@
+{
+  "name": "deploy",
+  "description": "A build-and-deploy surface: a heading, a live step list read from the data model, a progress bar, a note field and two actions.",
+  "messages": [
+    {
+      "version": "v0.9",
+      "createSurface": {
+        "surfaceId": "deploy",
+        "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+      }
+    },
+    {
+      "version": "v0.9",
+      "updateDataModel": {
+        "surfaceId": "deploy",
+        "value": {
+          "app": "redox-orb",
+          "env": "staging",
+          "percent": 62,
+          "note": "",
+          "steps": [
+            { "name": "checkout", "state": "done" },
+            { "name": "compile", "state": "running" },
+            { "name": "smoke test", "state": "queued" }
+          ]
+        }
+      }
+    },
+    {
+      "version": "v0.9",
+      "updateComponents": {
+        "surfaceId": "deploy",
+        "components": [
+          { "id": "root", "component": "Column", "children": ["title", "sub", "rule", "steps", "bar", "note", "go", "cancel"] },
+          {
+            "id": "title",
+            "component": "Text",
+            "variant": "h1",
+            "text": { "call": "formatString", "args": { "value": "Deploy ${/app}" }, "returnType": "string" }
+          },
+          {
+            "id": "sub",
+            "component": "Text",
+            "variant": "caption",
+            "text": { "call": "formatString", "args": { "value": "target ${/env} - ${/percent}% built" }, "returnType": "string" }
+          },
+          { "id": "rule", "component": "Divider" },
+          { "id": "steps", "component": "List", "direction": "vertical", "children": { "componentId": "step", "path": "/steps" } },
+          {
+            "id": "step",
+            "component": "Text",
+            "text": { "call": "formatString", "args": { "value": "${name} - ${state}" }, "returnType": "string" }
+          },
+          { "id": "bar", "component": "Progress", "value": { "path": "/percent" }, "min": 0, "max": 100, "label": "build" },
+          { "id": "note", "component": "TextField", "label": "Release note", "value": { "path": "/note" }, "variant": "shortText" },
+          {
+            "id": "go",
+            "component": "Button",
+            "variant": "primary",
+            "child": "go_label",
+            "action": {
+              "event": {
+                "name": "deploy.confirm",
+                "context": { "note": { "path": "/note" }, "env": { "path": "/env" } }
+              }
+            }
+          },
+          { "id": "go_label", "component": "Text", "text": "Deploy now" },
+          { "id": "cancel", "component": "Button", "child": "cancel_label", "action": { "event": { "name": "deploy.cancel" } } },
+          { "id": "cancel_label", "component": "Text", "text": "Cancel" }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+docs/GOTCHAS.md merge=union
+docs/PROVENANCE.md merge=union
+.gitignore merge=union

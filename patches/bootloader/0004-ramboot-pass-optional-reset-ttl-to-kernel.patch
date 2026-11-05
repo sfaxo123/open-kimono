@@ -1,0 +1,37 @@
+From 1ef1b9902fba697e5dd102ee38d97f7aabb1979f Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 31 Oct 2026 21:26:35 +0000
+Subject: [PATCH] ramboot: pass optional reset TTL into the kernel environment
+
+Forward a numeric REDOX_RAMBOOT_TTL supplied to the UEFI build into the
+kernel environment so the RAM shell can schedule its opt-in reset.
+
+Agent: Codex
+Host: 3090
+Session: codex:01a193d7-050d-7ce0-8ae2-c123e25fe012
+Model: gpt-6-luna
+Provider: openai
+---
+ src/main.rs | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/main.rs b/src/main.rs
+index 0b7b290..b5aa4ec 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -630,6 +630,12 @@ fn main(os: &impl Os) -> (usize, u64, KernelArgs) {
+ 
+         #[cfg(feature = "ramboot")]
+         writeln!(w, "REDOX_RAMBOOT=1").unwrap();
++        #[cfg(feature = "ramboot")]
++        if let Some(ttl) = option_env!("REDOX_RAMBOOT_TTL") {
++            if !ttl.is_empty() && ttl.bytes().all(|byte| byte.is_ascii_digit()) {
++                writeln!(w, "REDOX_RAMBOOT_TTL={ttl}").unwrap();
++            }
++        }
+         #[cfg(not(feature = "ramboot"))]
+         {
+             if let Some(live) = live_opt {
+-- 
+2.43.0
+

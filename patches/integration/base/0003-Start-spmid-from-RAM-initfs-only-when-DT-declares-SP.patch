@@ -1,0 +1,140 @@
+From ef40656a84169b4e87e1277baaaa7acefb518ea4 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:35:37 +0000
+Subject: [PATCH 03/10] Start spmid from RAM initfs only when DT declares SPMI
+
+Probe the device tree before mapping fixed SDM845 windows, so QEMU exits cleanly without SPMI hardware. Include the daemon and its unit in the drive-free initfs.
+
+Co-Authored-By: Codex <noreply@openai.com>
+---
+ Cargo.lock                      |  1 +
+ Makefile                        |  3 ++-
+ drivers/spmid/Cargo.toml        |  1 +
+ drivers/spmid/README.md         |  4 ++--
+ drivers/spmid/src/main.rs       | 19 +++++++++++++++++--
+ init.initfs.d/30_spmid.service  |  6 ++++++
+ init.initfs.d/90_ramboot.target |  2 +-
+ 7 files changed, 30 insertions(+), 6 deletions(-)
+ create mode 100644 init.initfs.d/30_spmid.service
+
+diff --git a/Cargo.lock b/Cargo.lock
+index d82e3e9a..0432734c 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2495,6 +2495,7 @@ name = "spmid"
+ version = "0.1.0"
+ dependencies = [
+  "common",
++ "fdt 0.1.5",
+  "inputd",
+  "mmio-replay",
+  "orbclient",
+diff --git a/Makefile b/Makefile
+index 369b9612..b05afba8 100644
+--- a/Makefile
++++ b/Makefile
+@@ -15,7 +15,7 @@ BUILD_FLAGS +=  --target-dir $(BUILD_DIR)
+ INITFS_BINS = ipcd init logd ramfs randd zerod \
+ 	acpid fbbootlogd hwd inputd lived \
+ 	pcid pcid-spawner rtcd vesad
+-RAMBOOT_BINS = ipcd init logd ramfs randd zerod rtcd ramsh
++RAMBOOT_BINS = ipcd init logd ramfs randd zerod rtcd ramsh spmid
+ INITFS_DRIVERS_BINS = nvmed virtio-blkd  virtio-gpud
+ BASE_BINS = fbcond getty inputd pcid pcid-spawner redoxerd audiod dhcpd ptyd netstack nbdd
+ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+@@ -151,6 +151,7 @@ ramboot-initfs:
+ 	done
+ 	cp "$(SRC_DIR)/init.initfs.d"/00_* "$(SRC_DIR)/init.initfs.d"/ramfs@.service \
+ 		"$(SRC_DIR)/init.initfs.d"/30_ramsh.service \
++		"$(SRC_DIR)/init.initfs.d"/30_spmid.service \
+ 		"$(SRC_DIR)/init.initfs.d"/90_ramboot.target "$(BUILD_DIR)/ramboot-initfs/lib/init.d/"
+ 	$(CARGO_HOST) run --manifest-path "$(SRC_DIR)/initfs/tools/Cargo.toml" --bin redox-initfs-ar -- \
+ 		"$(BUILD_DIR)/ramboot-initfs" "$(TARGET_DIR)/bootstrap" -o "$(BUILD_DIR)/ramboot-initfs.img"
+diff --git a/drivers/spmid/Cargo.toml b/drivers/spmid/Cargo.toml
+index 511ba643..0d663a07 100644
+--- a/drivers/spmid/Cargo.toml
++++ b/drivers/spmid/Cargo.toml
+@@ -8,6 +8,7 @@ description = "Read-only SDM845 SPMI PMIC button daemon"
+ [dependencies]
+ mmio-replay = { path = "../mmio-replay" }
+ spmid-core = { path = "../spmid-core" }
++fdt.workspace = true
+ 
+ [features]
+ host-compile = []
+diff --git a/drivers/spmid/README.md b/drivers/spmid/README.md
+index a6046002..299c69e9 100644
+--- a/drivers/spmid/README.md
++++ b/drivers/spmid/README.md
+@@ -1,7 +1,7 @@
+ # spmid (OnePlus 6 downstream driver)
+ 
+-`spmid` reads SDM845 SPMI arbiter v5 and PM8998 PON/GPIO buttons, then publishes `K_POWER`, `K_VOLUME_DOWN`, and `K_VOLUME_UP` OrbClient key edges to `inputd`'s producer endpoint. It never writes PMIC registers. Its only MMIO writes are the arbiter observer's CONFIG and CMD0 registers for read transactions. Poll interval is 50 ms (20 wakeups/s); no background start unit is installed.
++`spmid` reads SDM845 SPMI arbiter v5 and PM8998 PON/GPIO buttons, then publishes `K_POWER`, `K_VOLUME_DOWN`, and `K_VOLUME_UP` OrbClient key edges to `inputd`'s producer endpoint. It never writes PMIC registers. Its only MMIO writes are the arbiter observer's CONFIG and CMD0 registers for read transactions. Poll interval is 50 ms (20 wakeups/s). The K8 RAM initfs starts it through `30_spmid.service`; it exits without MMIO access if the device tree has no `qcom,spmi-pmic-arb` node.
+ 
+-The current profile uses the static `sdm845.dtsi` window addresses and EE 0. Do not start it on a phone until the live DT and PMIC status polarity have been checked against `specs/spmi-pmic-buttons.md` and the phone oracle. The daemon exits on probe, transaction, or inputd errors. A true Redox aarch64 build and device test remain pending because this host does not have `aarch64-unknown-redox` installed.
++The current profile uses the static `sdm845.dtsi` window addresses and EE 0. The live phone DT and PMIC status polarity still need checking against `specs/spmi-pmic-buttons.md` and the phone oracle before hardware validation. The daemon exits on probe, transaction, or inputd errors. K8 built the Redox aarch64 binary inside the Podman cookbook toolchain and booted it in QEMU without SPMI hardware; the device path remains untested.
+ 
+ Host verification: `cargo test -p spmid-core -p spmid --offline` and `cargo check -p spmid --features host-compile --offline`. The `host-compile` feature compiles the Redox code path with the host standard library; it is a compile check only, not a supported Linux runtime.
+diff --git a/drivers/spmid/src/main.rs b/drivers/spmid/src/main.rs
+index c7597a18..1db0fe65 100644
+--- a/drivers/spmid/src/main.rs
++++ b/drivers/spmid/src/main.rs
+@@ -1,9 +1,10 @@
+-//! Read-only PM8998 button sampler. Manual opt-in until phone oracle validation.
++//! Read-only PM8998 button sampler. Start only when the SPMI DT node exists.
+ #[cfg(any(target_os = "redox", feature = "host-compile"))]
+ mod redox {
+     use std::error::Error;
+-    use std::thread;
++    use std::io::Write;
+     use std::time::Duration;
++    use std::{fs, thread};
+ 
+     use common::{MemoryType, PhysBorrowed, Prot};
+     use inputd::ProducerHandle;
+@@ -75,6 +76,20 @@ mod redox {
+         }
+     }
+     pub fn run() -> Result<(), Box<dyn Error>> {
++        let dtb = fs::read("/scheme/kernel.dtb")?;
++        let dt = fdt::Fdt::new(&dtb).map_err(|e| format!("invalid device tree: {e:?}"))?;
++        if dt.find_compatible(&["qcom,spmi-pmic-arb"]).is_none() {
++            let message = "spmid: no SPMI arbiter in device tree; skipping";
++            if let Ok(mut debug) = fs::OpenOptions::new()
++                .write(true)
++                .open("/scheme/debug/no-preserve")
++            {
++                let _ = writeln!(debug, "{message}");
++            } else {
++                eprintln!("{message}");
++            }
++            return Ok(());
++        }
+         let hardware = Hardware::new()?;
+         let mut arb = Arbiter::new(
+             hardware,
+diff --git a/init.initfs.d/30_spmid.service b/init.initfs.d/30_spmid.service
+new file mode 100644
+index 00000000..89b54ed0
+--- /dev/null
++++ b/init.initfs.d/30_spmid.service
+@@ -0,0 +1,6 @@
++[unit]
++description = "SPMI PMIC buttons when available"
++
++[service]
++cmd = "spmid"
++type = "oneshot_async"
+diff --git a/init.initfs.d/90_ramboot.target b/init.initfs.d/90_ramboot.target
+index f5f151c8..2d3eccba 100644
+--- a/init.initfs.d/90_ramboot.target
++++ b/init.initfs.d/90_ramboot.target
+@@ -1,3 +1,3 @@
+ [unit]
+ description = "RAM-only boot shell"
+-requires_weak = ["30_ramsh.service"]
++requires_weak = ["30_ramsh.service", "30_spmid.service"]
+-- 
+2.43.0
+

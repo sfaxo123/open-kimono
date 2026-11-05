@@ -1,0 +1,11 @@
+[package]
+name = "op6-boot"
+version = "0.1.0"
+edition = "2021"
+description = "HW-20: Rust replacement for BOOT-ATTEMPT.sh — verify/plan/attempt with consent double-gate and a Boot+Devices verb whitelist. NEVER executed in this packet."
+
+[dependencies]
+
+[[bin]]
+name = "op6-boot"
+path = "src/main.rs"

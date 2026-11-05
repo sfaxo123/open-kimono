@@ -1,0 +1,32 @@
+From e80df71b173bde563a65cc5108175e3d4cbe0fce Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 26 Oct 2026 00:21:22 +0000
+Subject: [PATCH 19/21] aarch64: log first architected timer PPI for emulator
+ gate
+
+---
+ src/arch/aarch64/device/generic_timer.rs | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/generic_timer.rs
+index 9c8b0316..03d122b0 100644
+--- a/src/arch/aarch64/device/generic_timer.rs
++++ b/src/arch/aarch64/device/generic_timer.rs
+@@ -1,5 +1,7 @@
++use core::sync::atomic::{AtomicBool, Ordering};
+ use spin::Once;
+ 
++static TIMER_PPI_SEEN: AtomicBool = AtomicBool::new(false);
+ use super::{cpu::registers::control_regs, ic_for_chip, irqchip};
+ use crate::{
+     context::{self, timeout},
+@@ -200,6 +202,9 @@ pub(crate) fn handle(hwirq: u32, raw_iar: u32, token: &mut CleanLockToken) -> bo
+     let Some(config) = TIMER.get().filter(|config| config.hwirq == hwirq) else {
+         return false;
+     };
++    if !TIMER_PPI_SEEN.swap(true, Ordering::Relaxed) {
++        info!("architected timer PPI fired hwirq={hwirq}");
++    }
+ 
+     let mut ctrl = read_ctrl(config);
+     if ctrl.contains(TimerCtrlFlags::ISTATUS) {

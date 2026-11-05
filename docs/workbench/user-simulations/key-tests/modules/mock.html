@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>On-the-fly modules — mock</title>
+<style>
+  body { margin: 0; padding: 24px 12px; background: #101216; color: #e8eaed;
+         font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  h1 { font-size: 17px; font-weight: 600; text-align: center; margin: 0 0 4px; }
+  .sub { text-align: center; color: #9aa0a6; font-size: 12.5px; margin: 0 0 22px; }
+  .card { max-width: 360px; margin: 0 auto 18px; background: #1c1f26;
+          border: 1px solid #2c3038; border-radius: 16px; padding: 18px; }
+  .card .kind { font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+                color: #8ab4f8; margin: 0 0 6px; }
+  .card .title { font-size: 19px; font-weight: 600; margin: 0 0 10px; }
+  .big { display: flex; align-items: baseline; gap: 6px; margin: 2px 0 12px; }
+  .big .num { font-size: 44px; font-weight: 700; line-height: 1; }
+  .big .unit { font-size: 18px; color: #c9ccd1; }
+  .big .cap { margin-left: auto; font-size: 12.5px; color: #9aa0a6;
+              text-transform: uppercase; letter-spacing: .06em; }
+  .row { display: flex; justify-content: space-between; padding: 7px 0;
+         border-top: 1px solid #2c3038; font-size: 15px; }
+  .row .label { color: #9aa0a6; }
+  .row .value { font-weight: 500; text-align: right; }
+  .btn { display: block; width: 100%; margin-top: 14px; padding: 12px 0;
+         background: #8ab4f8; color: #0b57d0; border: none; border-radius: 10px;
+         font-size: 16px; font-weight: 600; text-align: center; }
+  .purpose { max-width: 360px; margin: -8px auto 20px; color: #9aa0a6;
+             font-size: 12.5px; text-align: center; }
+</style>
+</head>
+<body>
+<h1>Apps on the fly — three test modules</h1>
+<p class="sub">Static mock of the JSON manifests in this folder. Sample data from KEY TEST 1. Nothing here runs.</p>
+
+<!-- eta-card -->
+<div class="card">
+  <p class="kind">eta-card</p>
+  <p class="title">San Francisco International Airport (SFO)</p>
+  <div class="big"><span class="num">55</span><span class="unit">min</span><span class="cap">drive time</span></div>
+  <div class="row"><span class="label">Route</span><span class="value">I-880</span></div>
+  <div class="row"><span class="label">Tolls</span><span class="value">No tolls on the fast route</span></div>
+</div>
+<p class="purpose">Purpose: show the drive time to the current destination at a glance while a route is active.</p>
+
+<!-- flight-card -->
+<div class="card">
+  <p class="kind">flight-card</p>
+  <p class="title">UA482 from SFO</p>
+  <div class="big"><span class="num">16:50</span><span class="cap">leave by</span></div>
+  <div class="row"><span class="label">Departs</span><span class="value">18:30</span></div>
+  <div class="row"><span class="label">Boarding closes</span><span class="value">17:45</span></div>
+  <div class="row"><span class="label">Airport</span><span class="value">San Francisco International Airport (SFO)</span></div>
+  <div class="row"><span class="label">Drive</span><span class="value">55 min</span></div>
+  <button class="btn" type="button">Open in Maps</button>
+</div>
+<p class="purpose">Purpose: on a day the user flies, show the one thing that matters — when to leave for the airport. Button = app_launch (maps).</p>
+
+<!-- maps-card -->
+<div class="card">
+  <p class="kind">maps-card</p>
+  <p class="title">San Francisco</p>
+  <button class="btn" type="button">Open in Maps</button>
+</div>
+<p class="purpose">Purpose: one tap to open the place just discussed in Maps. Button = app_launch (maps).</p>
+
+</body>
+</html>

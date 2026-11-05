@@ -1,0 +1,33 @@
+# Local build and run artifacts
+*.log
+*.jsonl
+*.sqlite*
+*.gguf
+*.safetensors
+__pycache__/
+.venv/
+node_modules/
+target/
+output/
+results/
+artifacts/
+tmp/
+
+# Credentials and local environment
+.env
+*.env
+*.key
+
+# EFI diagnostic QEMU FAT staging
+/tools/efi-diag/qemu-fat/
+/out/
+
+# Library crates keep their lockfile local (integration happens at repo root).
+crates/*/Cargo.lock
+
+# Demo journals are committed test fixtures, not runtime artifacts.
+!apps/timeline/fixtures/*.jsonl
+apps/*/Cargo.lock
+/docs/.plan-runner-state.json
+!tools/user-sim/*.jsonl
+!docs/workbench/user-simulations/**/*.jsonl

@@ -1,0 +1,678 @@
+From 920c69bdcac38de8ece0c0dc5b5bea0276506ee3 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sun, 25 Oct 2026 00:28:47 +0000
+Subject: [PATCH 11/21] graphical_debug: scrolling, scaled, coloured boot
+ console
+
+Keep a shadow cell grid so the console scrolls instead of wrapping to
+the top, redrawing only cells that change and never reading framebuffer
+memory. Scale the 8x16 font by min(width, height) / 540 (2x on the
+OnePlus 6's 1080x2280 panel), clear to black, draw the logger prefix in
+orange and the message in white, and whole WARN/ERROR/PANIC lines in
+orange. Optionally clean written lines to the point of coherency, for
+the bootloader mapping that may be cacheable before the kernel's own
+write-combining map exists.
+
+Host tests render into a framebuffer model: a golden 'K' cell, every
+printable glyph against the font, colours, scrolling, wrapping, escape
+handling, untouched stride padding, 2x scaling and grid clamping.
+
+Co-Authored-By: Cursor <noreply@cursor.com>
+---
+ src/arch/aarch64/device/cpu/boot.rs  |   2 +-
+ src/arch/aarch64/device/cpu/mod.rs   |   2 +
+ src/devices/graphical_debug/debug.rs | 504 ++++++++++++++++++++++-----
+ src/devices/graphical_debug/mod.rs   |  24 +-
+ 4 files changed, 447 insertions(+), 85 deletions(-)
+
+diff --git a/src/arch/aarch64/device/cpu/boot.rs b/src/arch/aarch64/device/cpu/boot.rs
+index edaebb5e..fc7b88af 100644
+--- a/src/arch/aarch64/device/cpu/boot.rs
++++ b/src/arch/aarch64/device/cpu/boot.rs
+@@ -221,7 +221,7 @@ fn cache_line_size() -> usize {
+     4usize << ((ctr >> 16) & 0xf)
+ }
+ 
+-fn clean_data_to_poc(base: usize, len: usize) {
++pub(crate) fn clean_data_to_poc(base: usize, len: usize) {
+     let line = cache_line_size();
+     let mut address = base & !(line - 1);
+     let end = base.saturating_add(len);
+diff --git a/src/arch/aarch64/device/cpu/mod.rs b/src/arch/aarch64/device/cpu/mod.rs
+index d8a5f0c1..e82bf4aa 100644
+--- a/src/arch/aarch64/device/cpu/mod.rs
++++ b/src/arch/aarch64/device/cpu/mod.rs
+@@ -9,6 +9,8 @@ mod boot;
+ pub mod registers;
+ mod topology;
+ 
++pub(crate) use boot::clean_data_to_poc;
++
+ bitfield::bitfield! {
+     pub struct MachineId(u32);
+     get_implementer, _: 31, 24;
+diff --git a/src/devices/graphical_debug/debug.rs b/src/devices/graphical_debug/debug.rs
+index 4b684c8a..12285360 100644
+--- a/src/devices/graphical_debug/debug.rs
++++ b/src/devices/graphical_debug/debug.rs
+@@ -1,4 +1,22 @@
+-use core::ptr;
++static FONT: &[u8] = include_bytes!("../../../res/unifont.font");
++
++const GLYPH_W: usize = 8;
++const GLYPH_H: usize = 16;
++
++pub const WHITE: u32 = 0x00FF_FFFF;
++pub const ORANGE: u32 = 0x00FF_8C00;
++pub const BLACK: u32 = 0x0000_0000;
++
++/// A text cell: the byte in the low 8 bits, `ORANGE_CELL` selects the colour.
++const ORANGE_CELL: u16 = 0x100;
++const BLANK: u16 = b' ' as u16;
++
++/// Shadow grid capacity; 1080x2280 at 2x needs 67 * 71 cells.
++pub const MAX_CELLS: usize = 32 * 1024;
++
++/// The kernel logger's `module::path:LEVEL -- message` separator.
++const SEPARATOR: &[u8] = b" -- ";
++const PANIC: &[u8] = b"PANIC";
+ 
+ pub(super) struct Display {
+     pub(super) width: usize,
+@@ -9,21 +27,36 @@ pub(super) struct Display {
+ 
+ unsafe impl Send for Display {}
+ 
+-static FONT: &[u8] = include_bytes!("../../../res/unifont.font");
+-
+ enum Mode {
+     Plain,
+     Esc,
+     Csi,
+ }
+ 
++/// Integer glyph scale that keeps text legible on high-density panels.
++pub fn scale_for(width: usize, height: usize) -> usize {
++    (width.min(height) / 540).clamp(1, 4)
++}
++
++/// Scrolling text console. The grid shadows what is on screen, so scrolling
++/// redraws only the cells that change and never reads framebuffer memory.
+ pub struct DebugDisplay {
+     pub(super) display: Display,
++    cells: &'static mut [u16],
++    scale: usize,
++    cols: usize,
++    rows: usize,
+     x: usize,
+     y: usize,
+-    w: usize,
+-    h: usize,
+     mode: Mode,
++    /// The rest of the current line is orange (warning, error or panic).
++    line_orange: bool,
++    /// The logger prefix of the current line has been coloured.
++    prefix_seen: bool,
++    /// Clean written lines to the point of coherency, for mappings that may
++    /// be cacheable (the bootloader's, before the kernel's write-combining map).
++    clean_cache: bool,
++    dirty: Option<(usize, usize)>,
+ }
+ 
+ impl DebugDisplay {
+@@ -32,124 +65,433 @@ impl DebugDisplay {
+         height: usize,
+         stride: usize,
+         onscreen_ptr: *mut u32,
++        cells: &'static mut [u16],
+     ) -> DebugDisplay {
+-        let display = Display {
+-            width,
+-            height,
+-            stride,
+-            onscreen_ptr,
+-        };
++        let scale = scale_for(width, height);
++        let cols = (width / (GLYPH_W * scale)).min(cells.len());
++        let rows = (height / (GLYPH_H * scale)).min(cells.len() / cols.max(1));
++        cells.fill(BLANK);
+ 
+-        let w = display.width / 8;
+-        let h = display.height / 16;
+-        DebugDisplay {
+-            display,
++        let mut debug_display = DebugDisplay {
++            display: Display {
++                width,
++                height,
++                stride,
++                onscreen_ptr,
++            },
++            cells,
++            scale,
++            cols,
++            rows,
+             x: 0,
+             y: 0,
+-            w,
+-            h,
+             mode: Mode::Plain,
+-        }
++            line_orange: false,
++            prefix_seen: false,
++            clean_cache: false,
++            dirty: None,
++        };
++        debug_display.clear_screen();
++        debug_display
+     }
+ 
+-    pub fn write(&mut self, buf: &[u8]) {
+-        for &b in buf {
+-            if self.x >= self.w || b == b'\n' {
+-                self.x = 0;
+-                self.y = (self.y + 1) % self.h;
+-            }
++    pub fn set_clean_cache(&mut self, clean_cache: bool) {
++        self.clean_cache = clean_cache;
++    }
+ 
+-            if b == b'\r' {
+-                self.x = 0;
+-            }
++    pub fn write(&mut self, buf: &[u8]) {
++        if self.cols == 0 || self.rows == 0 {
++            return;
++        }
+ 
++        for &b in buf {
+             match (b, &self.mode) {
+-                // Byte 0x1B starts ESC sequence
+                 (0x1B, _) => {
+                     self.mode = Mode::Esc;
+                     continue;
+                 }
+-                // Ignore other nonprintable characters
+-                (0x00..=0x1F | 0x80..=0xFF, _) => {
+-                    self.mode = Mode::Plain;
+-                    continue;
+-                }
+-                // '[' after ESC starts CSI sequence
+                 (b'[', Mode::Esc) => {
+                     self.mode = Mode::Csi;
+                     continue;
+                 }
+-                // Capture any bytes after ESC
+                 (_, Mode::Esc) => {
+                     self.mode = Mode::Plain;
+                     continue;
+                 }
+-                // Byte 0x40 to 0x7E ends CSI
+                 (0x40..=0x7E, Mode::Csi) => {
+                     self.mode = Mode::Plain;
+                     continue;
+                 }
+-                // Capture any bytes after CSI
+-                (_, Mode::Csi) => {
+-                    continue;
+-                }
+-                // Allow any other bytes
++                (_, Mode::Csi) => continue,
+                 (_, Mode::Plain) => {}
+             }
+ 
+-            if self.x == 0 {
+-                self.clear_row(self.y);
+-                self.clear_row((self.y + 1) % self.h);
++            match b {
++                b'\n' => {
++                    self.newline();
++                    self.line_orange = false;
++                    self.prefix_seen = false;
++                }
++                b'\r' => self.x = 0,
++                0x20..=0x7E => {
++                    if self.x >= self.cols {
++                        self.newline();
++                    }
++                    let colour = if self.line_orange { ORANGE_CELL } else { 0 };
++                    self.put(self.x, self.y, u16::from(b) | colour);
++                    self.x += 1;
++                    self.colour_line();
++                }
++                _ => {}
+             }
++        }
++
++        self.flush();
++    }
+ 
+-            self.char(self.x * 8, self.y * 16, b as char, 0xFFFFFF);
++    fn row_text_ends_with(&self, pattern: &[u8]) -> bool {
++        let Some(start) = self.x.checked_sub(pattern.len()) else {
++            return false;
++        };
++        let row = &self.cells[self.y * self.cols..];
++        row[start..self.x]
++            .iter()
++            .zip(pattern)
++            .all(|(&cell, &b)| cell as u8 == b)
++    }
++
++    fn row_text_contains(&self, pattern: &[u8]) -> bool {
++        let row = &self.cells[self.y * self.cols..self.y * self.cols + self.x];
++        row.windows(pattern.len())
++            .any(|w| w.iter().zip(pattern).all(|(&cell, &b)| cell as u8 == b))
++    }
+ 
+-            self.x += 1;
++    /// Orange for the logger prefix, and for the whole line on a warning,
++    /// error or panic; message text stays white.
++    fn colour_line(&mut self) {
++        if !self.prefix_seen && self.row_text_ends_with(SEPARATOR) {
++            self.prefix_seen = true;
++            self.recolour_row_so_far();
++            self.line_orange =
++                self.row_text_contains(b":WARN") || self.row_text_contains(b":ERROR");
++        } else if !self.line_orange && self.row_text_ends_with(PANIC) {
++            self.line_orange = true;
++            self.recolour_row_so_far();
+         }
+     }
+ 
+-    fn clear_row(&mut self, y: usize) {
+-        for row in y * 16..(y + 1) * 16 {
+-            unsafe {
+-                ptr::write_bytes(
+-                    self.display.onscreen_ptr.add(row * self.display.stride),
+-                    0,
+-                    self.display.width,
+-                );
++    fn recolour_row_so_far(&mut self) {
++        for x in 0..self.x {
++            let cell = self.cells[self.y * self.cols + x];
++            if cell & ORANGE_CELL == 0 {
++                self.put(x, self.y, cell | ORANGE_CELL);
+             }
+         }
+     }
+ 
+-    /// Draw a character
+-    fn char(&mut self, x: usize, y: usize, character: char, color: u32) {
+-        if x + 8 <= self.display.width && y + 16 <= self.display.height {
+-            let phys_y = y % self.display.height;
+-            let mut dst = unsafe {
+-                self.display
+-                    .onscreen_ptr
+-                    .add(phys_y * self.display.stride + x)
+-            };
+-
+-            let font_i = 16 * (character as usize);
+-            if font_i + 16 <= FONT.len() {
+-                for row in 0..16 {
+-                    let row_data = FONT[font_i + row];
+-                    for col in 0..8 {
+-                        if (row_data >> (7 - col)) & 1 == 1 {
+-                            unsafe {
+-                                *dst.add(col) = color;
+-                            }
+-                        }
+-                    }
++    fn newline(&mut self) {
++        self.x = 0;
++        if self.y + 1 < self.rows {
++            self.y += 1;
++        } else {
++            self.scroll();
++        }
++    }
++
++    fn scroll(&mut self) {
++        for y in 0..self.rows {
++            for x in 0..self.cols {
++                let below = if y + 1 < self.rows {
++                    self.cells[(y + 1) * self.cols + x]
++                } else {
++                    BLANK
++                };
++                self.put(x, y, below);
++            }
++        }
++    }
+ 
+-                    let next_phys_y = (phys_y + row + 1) % self.display.height;
+-                    dst = unsafe {
+-                        self.display
+-                            .onscreen_ptr
+-                            .add(next_phys_y * self.display.stride + x)
+-                    };
++    fn put(&mut self, x: usize, y: usize, cell: u16) {
++        let slot = &mut self.cells[y * self.cols + x];
++        if *slot != cell {
++            *slot = cell;
++            self.draw_cell(x, y, cell);
++        }
++    }
++
++    fn pixel(&self, x: usize, y: usize) -> *mut u32 {
++        unsafe { self.display.onscreen_ptr.add(y * self.display.stride + x) }
++    }
++
++    fn draw_cell(&mut self, x: usize, y: usize, cell: u16) {
++        let colour = if cell & ORANGE_CELL != 0 {
++            ORANGE
++        } else {
++            WHITE
++        };
++        let font_i = GLYPH_H * usize::from(cell as u8);
++        let glyph = FONT.get(font_i..font_i + GLYPH_H).unwrap_or(&[0; GLYPH_H]);
++        let (cell_w, cell_h) = (GLYPH_W * self.scale, GLYPH_H * self.scale);
++        let (px, py) = (x * cell_w, y * cell_h);
++
++        for gy in 0..cell_h {
++            let bits = glyph[gy / self.scale];
++            for gx in 0..cell_w {
++                let on = (bits >> (7 - gx / self.scale)) & 1 == 1;
++                unsafe {
++                    self.pixel(px + gx, py + gy)
++                        .write_volatile(if on { colour } else { BLACK });
+                 }
+             }
+         }
++        self.mark_dirty(py, py + cell_h);
++    }
++
++    fn clear_screen(&mut self) {
++        for y in 0..self.display.height {
++            for x in 0..self.display.width {
++                unsafe { self.pixel(x, y).write_volatile(BLACK) };
++            }
++        }
++        self.mark_dirty(0, self.display.height);
++        self.flush();
++    }
++
++    fn mark_dirty(&mut self, start: usize, end: usize) {
++        self.dirty = Some(match self.dirty {
++            Some((s, e)) => (s.min(start), e.max(end)),
++            None => (start, end),
++        });
++    }
++
++    fn flush(&mut self) {
++        let Some((start, end)) = self.dirty.take() else {
++            return;
++        };
++        if self.clean_cache {
++            let row_bytes = self.display.stride * 4;
++            clean_data_to_poc(self.pixel(0, start) as usize, (end - start) * row_bytes);
++        }
++    }
++}
++
++#[cfg(all(target_arch = "aarch64", not(test)))]
++fn clean_data_to_poc(base: usize, len: usize) {
++    crate::arch::device::cpu::clean_data_to_poc(base, len);
++}
++
++#[cfg(not(all(target_arch = "aarch64", not(test))))]
++fn clean_data_to_poc(_base: usize, _len: usize) {}
++
++#[cfg(test)]
++mod tests {
++    use super::{DebugDisplay, BLACK, FONT, MAX_CELLS, ORANGE, WHITE};
++
++    const SENTINEL: u32 = 0xDEAD_BEEF;
++
++    struct Fb {
++        pixels: Vec<u32>,
++        stride: usize,
++        display: DebugDisplay,
++    }
++
++    fn fb(width: usize, height: usize, stride: usize) -> Fb {
++        let mut pixels = vec![SENTINEL; stride * height];
++        let cells = Box::leak(vec![0u16; MAX_CELLS].into_boxed_slice());
++        let display = DebugDisplay::new(width, height, stride, pixels.as_mut_ptr(), cells);
++        Fb {
++            pixels,
++            stride,
++            display,
++        }
++    }
++
++    impl Fb {
++        /// One glyph cell as text art: `#` white, `o` orange, `.` black.
++        fn cell_art(&self, col: usize, row: usize) -> String {
++            let scale = self.display.scale;
++            let (w, h) = (8 * scale, 16 * scale);
++            let mut art = String::new();
++            for y in (row * h..(row + 1) * h).step_by(scale) {
++                for x in (col * w..(col + 1) * w).step_by(scale) {
++                    art.push(match self.pixels[y * self.stride + x] {
++                        WHITE => '#',
++                        ORANGE => 'o',
++                        BLACK => '.',
++                        _ => '?',
++                    });
++                }
++                art.push('\n');
++            }
++            art
++        }
++
++        fn row_text(&self, row: usize) -> String {
++            let cols = self.display.cols;
++            self.display.cells[row * cols..(row + 1) * cols]
++                .iter()
++                .map(|&c| c as u8 as char)
++                .collect::<String>()
++                .trim_end()
++                .to_owned()
++        }
++    }
++
++    /// unifont 'K' (0x4B), the first byte of "Kernel".
++    const GOLDEN_K: &str = "\
++........
++........
++........
++........
++.#....#.
++.#...#..
++.#..#...
++.#.#....
++.##.....
++.##.....
++.#.#....
++.#..#...
++.#...#..
++.#....#.
++........
++........
++";
++
++    /// A glyph straight from the font file, in `cell_art` notation.
++    fn glyph_art(b: u8) -> String {
++        FONT[16 * b as usize..16 * b as usize + 16]
++            .iter()
++            .map(|bits| {
++                (0..8)
++                    .map(|c| if (bits >> (7 - c)) & 1 == 1 { '#' } else { '.' })
++                    .chain(['\n'])
++                    .collect::<String>()
++            })
++            .collect()
++    }
++
++    fn blank_art() -> String {
++        (".".repeat(8) + "\n").repeat(16)
++    }
++
++    #[test]
++    fn glyph_cell_matches_the_golden_bitmap() {
++        let mut fb = fb(640, 480, 640);
++        fb.display.write(b"K");
++        assert_eq!(fb.cell_art(0, 0), GOLDEN_K);
++        assert_eq!(glyph_art(b'K'), GOLDEN_K);
++        assert_eq!(fb.cell_art(1, 0), blank_art());
++    }
++
++    #[test]
++    fn every_printable_glyph_follows_the_font() {
++        let mut fb = fb(1024, 768, 1024);
++        let text: Vec<u8> = (0x20..=0x7E).collect();
++        fb.display.write(&text);
++        for (i, &b) in text.iter().enumerate() {
++            assert_eq!(fb.cell_art(i, 0), glyph_art(b), "glyph {:?}", b as char);
++        }
++    }
++
++    #[test]
++    fn logger_prefix_is_orange_and_message_white() {
++        let mut fb = fb(640, 480, 640);
++        fb.display.write(b"Kernel:INFO -- K\n");
++        assert_eq!(fb.cell_art(0, 0), GOLDEN_K.replace('#', "o"));
++        assert_eq!(fb.cell_art(15, 0), GOLDEN_K);
++    }
++
++    #[test]
++    fn warnings_errors_and_panics_are_orange_to_the_end() {
++        let mut fb = fb(640, 480, 640);
++        fb.display
++            .write(b"a:WARN -- K\nb:ERROR -- K\nKERNEL PANIC K\nplain K\n");
++        let orange = GOLDEN_K.replace('#', "o");
++        assert_eq!(fb.cell_art(10, 0), orange);
++        assert_eq!(fb.cell_art(11, 1), orange);
++        assert_eq!(fb.cell_art(0, 2), orange);
++        assert_eq!(fb.cell_art(13, 2), orange);
++        assert_eq!(fb.cell_art(6, 3), GOLDEN_K);
++    }
++
++    #[test]
++    fn text_scrolls_up_when_the_screen_is_full() {
++        let mut fb = fb(640, 480, 640);
++        let rows = fb.display.rows;
++        assert_eq!(rows, 30);
++        for i in 0..rows + 2 {
++            fb.display.write(format!("line {i}\n").as_bytes());
++        }
++        assert_eq!(fb.row_text(0), "line 3");
++        assert_eq!(fb.row_text(rows - 2), "line 31");
++        assert_eq!(fb.row_text(rows - 1), "");
++        // The pixels follow the grid: the top row now draws "line 3".
++        for (col, b) in b"line 3  ".iter().enumerate() {
++            assert_eq!(fb.cell_art(col, 0), glyph_art(*b), "column {col}");
++        }
++        for (col, b) in b"line 31 ".iter().enumerate() {
++            assert_eq!(fb.cell_art(col, rows - 2), glyph_art(*b), "column {col}");
++        }
++        assert_eq!(fb.cell_art(0, rows - 1), blank_art());
++    }
++
++    #[test]
++    fn long_lines_wrap_and_keep_their_colour() {
++        let mut fb = fb(640, 480, 640);
++        let cols = fb.display.cols;
++        let mut line = b"x:ERROR -- ".to_vec();
++        line.resize(cols, b'-');
++        line.extend_from_slice(b"K\n");
++        fb.display.write(&line);
++        assert_eq!(fb.row_text(1), "K");
++        assert_eq!(fb.cell_art(0, 1), GOLDEN_K.replace('#', "o"));
++    }
++
++    #[test]
++    fn escape_sequences_and_control_bytes_are_not_drawn() {
++        let mut fb = fb(640, 480, 640);
++        fb.display.write(b"\x1b[1;31mK\x1b[0m\x07\tK");
++        assert_eq!(fb.row_text(0), "KK");
++    }
++
++    #[test]
++    fn stride_padding_is_never_written() {
++        let (width, height, stride) = (800, 600, 832);
++        let mut fb = fb(width, height, stride);
++        for i in 0..200 {
++            fb.display.write(format!("{i:>120}\n").as_bytes());
++        }
++        for y in 0..height {
++            for x in width..stride {
++                assert_eq!(fb.pixels[y * stride + x], SENTINEL, "({x}, {y})");
++            }
++            for x in 0..width {
++                assert_ne!(fb.pixels[y * stride + x], SENTINEL, "({x}, {y})");
++            }
++        }
++    }
++
++    #[test]
++    fn phone_panel_uses_doubled_glyphs() {
++        let mut fb = fb(1080, 2280, 1080);
++        assert_eq!(fb.display.scale, 2);
++        assert_eq!((fb.display.cols, fb.display.rows), (67, 71));
++        fb.display.write(b"K");
++        assert_eq!(fb.cell_art(0, 0), GOLDEN_K);
++        // Each font pixel covers a 2x2 block: glyph row 4, column 1 is set.
++        let (x, y) = (2 * 1, 2 * 4);
++        let block = [(x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)];
++        assert!(block.iter().all(|&(x, y)| fb.pixels[y * 1080 + x] == WHITE));
++    }
++
++    #[test]
++    fn grid_is_clamped_to_the_cell_buffer() {
++        let mut pixels = vec![0u32; 1024 * 768];
++        let cells = Box::leak(vec![0u16; 100].into_boxed_slice());
++        let mut display = DebugDisplay::new(1024, 768, 1024, pixels.as_mut_ptr(), cells);
++        assert_eq!((display.cols, display.rows), (100, 1));
++        for _ in 0..3 {
++            display.write(&[b'K'; 250]);
++        }
+     }
+ }
+diff --git a/src/devices/graphical_debug/mod.rs b/src/devices/graphical_debug/mod.rs
+index b701c9a8..7504f3a4 100644
+--- a/src/devices/graphical_debug/mod.rs
++++ b/src/devices/graphical_debug/mod.rs
+@@ -1,4 +1,4 @@
+-use core::str;
++use core::{cell::SyncUnsafeCell, str};
+ use spin::Mutex;
+ 
+ pub use self::debug::DebugDisplay;
+@@ -9,6 +9,25 @@ pub static DEBUG_DISPLAY: Mutex<Option<DebugDisplay>> = Mutex::new(None);
+ 
+ pub static FRAMEBUFFER: Mutex<(usize, usize, usize)> = Mutex::new((0, 0, 0));
+ 
++static CELLS: SyncUnsafeCell<[u16; debug::MAX_CELLS]> = SyncUnsafeCell::new([0; debug::MAX_CELLS]);
++
++/// Replace the boot display. The previous one is dropped first, as the new one
++/// takes over the single shadow grid.
++fn install_display(width: usize, height: usize, stride: usize, virt: usize) {
++    let mut display = DEBUG_DISPLAY.lock();
++    display.take();
++    // SAFETY: the only other reference into CELLS was owned by the display
++    // dropped above, and DEBUG_DISPLAY's lock is held.
++    let cells = unsafe { &mut *CELLS.get() };
++    *display = Some(DebugDisplay::new(
++        width,
++        height,
++        stride,
++        virt as *mut u32,
++        cells,
++    ));
++}
++
+ #[allow(unused)]
+ pub fn init(env: &[u8]) {
+     println!("Starting graphical debug");
+@@ -58,8 +77,7 @@ pub fn init(env: &[u8]) {
+         width, height, stride, phys, virt
+     );
+ 
+-    let debug_display = DebugDisplay::new(width, height, stride, virt as *mut u32);
+-    *DEBUG_DISPLAY.lock() = Some(debug_display);
++    install_display(width, height, stride, virt);
+ }
+ 
+ #[allow(unused)]

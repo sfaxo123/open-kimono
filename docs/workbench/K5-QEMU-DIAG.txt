@@ -1,0 +1,49 @@
+
+
+U-Boot 2026.10-g8649a54d301a (Oct 24 2026 - 23:19:03 +0000)
+
+DRAM:  2 GiB
+using memory 0xbe442000-0xbf482000 for malloc()
+Core:  51 devices, 14 uclasses, devicetree: board
+Flash: 64 MiB
+Loading Environment from Flash...
+*** Warning - bad CRC, using default environment
+
+In:    serial,usbkbd
+Out:   serial,vidconsole
+Err:   serial,vidconsole
+No USB controllers found
+Net:   No ethernet found.
+
+
+Hit any key to stop autoboot: 2
+Hit any key to stop autoboot: 1
+Hit any key to stop autoboot: 0
+Scanning for bootflows in all bootdevs
+Seq  Method       State   Uclass    Part  Name                      Filename
+---  -----------  ------  --------  ----  ------------------------  ----------------
+Scanning global bootmeth 'efi_mgr':
+No EFI variables loaded
+Missing TPMv2 device for EFI_TCG_PROTOCOL
+Missing RNG device for EFI_RNG_PROTOCOL
+  0  efi_mgr      ready   (none)       0  <NULL>
+** Booting bootflow '<NULL>' with efi_mgr
+Booting: Label: virtio 0 Device path: /VenHw(e61d73b9-a384-4acc-aeab-82e828f3628b,0000000000000000)/VenHw(e61d73b9-a384-4acc-aeab-82e828f3628b,8d0000001f000000)/VenHw(e61d73b9-a384-4acc-aeab-82e828f3628b,17008d0000000000)
+OnePlus 6 EFI diagnostic
+CurrentEL: EL1
+EFI memory map: 20 regions, 524288 pages (2048 MiB)
+  CONVENTIONAL 0x40000000 512000 pages
+  RUNTIME_SERVICES_DATA 0xbd000000 1 pages
+  CONVENTIONAL 0xbd001000 799 pages
+  BOOT_SERVICES_CODE 0xbd320000 4424 pages
+  RUNTIME_SERVICES_DATA 0xbe468000 1 pages
+  BOOT_SERVICES_CODE 0xbe469000 4119 pages
+  RUNTIME_SERVICES_CODE 0xbf480000 16 pages
+  BOOT_SERVICES_CODE 0xbf490000 2416 pages
+DTB address: 0xbfeb4000
+DTB size: 8192 bytes
+DTB model: linux,dummy-virt
+DTB compatible: linux,dummy-virt
+GOP: unavailable
+Press a key or wait 60 seconds...
+qemu-system-aarch64: terminating on signal 15 from pid 587813 (timeout)

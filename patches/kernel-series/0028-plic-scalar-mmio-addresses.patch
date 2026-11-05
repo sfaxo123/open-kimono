@@ -1,0 +1,228 @@
+From b8c0b2c1dc49def0a7a46ecc62a2565062e25d74 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Tue, 27 Oct 2026 00:56:43 +0000
+Subject: [PATCH] plic: use scalar MMIO addresses without mapped register
+ references
+
+Preserve exact access widths/offsets, priority-before-RMW ordering, null
+and zero-claim failures and !Send/!Sync. Global IRQ ownership, CPU affinity
+and MMIO exclusivity remain unproved. Root completed verification after
+author timeout124 and corrected unsupported serialization comments.
+8 source-rooted tests/444parity cases,4behavioral controls,4compile-fail
+fixtures+2positive controls and RV64/A64 check+link pass. Source prep only.
+
+Agent: Codex with Perplexity, Cursor, Luna and Spark
+Model: Codex; pplx-5090; Cursor tool default; gpt-6-luna; spark
+Provider: OpenAI; Cursor; local LiteLLM
+Refs: cloud-dispatch-cursor-20261027T004003-1053955; ask-20261027T005452-1294583
+---
+ src/arch/riscv64/device/irqchip/plic.rs | 119 +++++++++++++++++++-----
+ 1 file changed, 95 insertions(+), 24 deletions(-)
+
+diff --git a/src/arch/riscv64/device/irqchip/plic.rs b/src/arch/riscv64/device/irqchip/plic.rs
+index 2795d973..8220dc61 100644
+--- a/src/arch/riscv64/device/irqchip/plic.rs
++++ b/src/arch/riscv64/device/irqchip/plic.rs
+@@ -7,9 +7,11 @@ use crate::{
+     },
+     sync::CleanLockToken,
+ };
+-use core::{mem, num::NonZero, sync::atomic::Ordering};
+-use syscall::{Error, Io, Mmio, EINVAL};
++use core::{marker::PhantomData, mem, num::NonZero, sync::atomic::Ordering};
++use syscall::{Error, Io, Mmio, MmioPtr, EINVAL};
+ 
++// Offset-only layout metadata: `InterruptThresholdRegs` and `PlicRegs` are never
++// instantiated, referenced or dereferenced over MMIO.
+ #[repr(packed(4))]
+ #[repr(C)]
+ struct InterruptThresholdRegs {
+@@ -39,45 +41,109 @@ const _: () = assert!(0x2000 == mem::offset_of!(PlicRegs, enable));
+ const _: () = assert!(0x20_0000 == mem::offset_of!(PlicRegs, thresholds));
+ const _: () = assert!(0x1000 == size_of::<InterruptThresholdRegs>());
+ 
+-impl PlicRegs {
+-    pub fn set_priority(self: &mut Self, irq: usize, priority: usize) {
++const REG_SIZE: usize = size_of::<Mmio<u32>>();
++const PRIORITY_OFFSET: usize = mem::offset_of!(PlicRegs, source_priority);
++const PENDING_OFFSET: usize = mem::offset_of!(PlicRegs, pending);
++const ENABLE_OFFSET: usize = mem::offset_of!(PlicRegs, enable);
++const ENABLE_CONTEXT_STRIDE: usize = size_of::<[Mmio<u32>; 32]>();
++const THRESHOLDS_OFFSET: usize = mem::offset_of!(PlicRegs, thresholds);
++const THRESHOLD_CONTEXT_STRIDE: usize = size_of::<InterruptThresholdRegs>();
++const THRESHOLD_OFFSET: usize = mem::offset_of!(InterruptThresholdRegs, threshold);
++const CLAIM_COMPLETE_OFFSET: usize = mem::offset_of!(InterruptThresholdRegs, claim_complete);
++/// Bytes of the register block reachable with `context < MAX_CONTEXTS`.
++const PLIC_MMIO_SIZE: usize = THRESHOLDS_OFFSET + THRESHOLD_CONTEXT_STRIDE * MAX_CONTEXTS;
++
++const _: () = assert!(4 == REG_SIZE);
++const _: () = assert!(0 == PRIORITY_OFFSET);
++const _: () = assert!(0x80 == ENABLE_CONTEXT_STRIDE);
++const _: () = assert!(0 == THRESHOLD_OFFSET && 4 == CLAIM_COMPLETE_OFFSET);
++const _: () = assert!(0x24_0000 == PLIC_MMIO_SIZE);
++
++/// Kernel virtual base address of one PLIC register block. All register
++/// accesses are individual 32-bit volatile reads/writes at `base + offset`;
++/// no Rust reference to the mapped registers is ever created.
++struct PlicMmio {
++    base: NonZero<usize>,
++    // Keeps `Plic` !Send and !Sync, as it was while it stored `*mut PlicRegs`.
++    _not_send_sync: PhantomData<*mut ()>,
++}
++
++impl PlicMmio {
++    /// Returns `None` for a null `base`, which callers treat as uninitialized.
++    ///
++    /// # Safety
++    ///
++    /// For as long as the returned value (or the `Plic` owning it) is used:
++    /// - `base..base + PLIC_MMIO_SIZE` must be mapped as device memory covering
++    ///   this PLIC's registers, and the range must not wrap the address space;
++    /// - `base` must be 4-byte aligned;
++    /// - no other code may access these registers concurrently or alias them as
++    ///   Rust memory; required serialization is a caller obligation.
++    ///   The current global `IRQ_CHIP` is not a lock or proof of exclusivity.
++    ///
++    /// Storing the address as an integer, the auto traits of this type, and
++    /// `&mut self` receivers do not establish any of these conditions.
++    unsafe fn new(base: usize) -> Option<Self> {
++        NonZero::new(base).map(|base| Self {
++            base,
++            _not_send_sync: PhantomData,
++        })
++    }
++
++    fn reg(&self, offset: usize) -> MmioPtr<u32> {
++        debug_assert!(offset < PLIC_MMIO_SIZE && offset % REG_SIZE == 0);
++        // SAFETY: callers pass in-bounds, 4-byte aligned offsets derived from the
++        // asserted layout above, and `new`'s contract covers the mapped range.
++        unsafe { MmioPtr::new((self.base.get() + offset) as *mut u32) }
++    }
++
++    fn set_priority(&mut self, irq: usize, priority: usize) {
+         assert!(irq > 0 && irq <= 1023 && priority < 8);
+-        self.source_priority[irq].write(priority as u32);
++        self.reg(PRIORITY_OFFSET + REG_SIZE * irq)
++            .write(priority as u32);
+     }
+ 
+-    pub fn pending(self: &Self, irq_lane: usize) -> u32 {
++    #[allow(dead_code)]
++    fn pending(&self, irq_lane: usize) -> u32 {
+         assert!(irq_lane < 32);
+-        self.pending[irq_lane].read()
++        self.reg(PENDING_OFFSET + REG_SIZE * irq_lane).read()
+     }
+ 
+-    pub fn enable(self: &mut Self, context: usize, irq: NonZero<usize>, enable: bool) {
++    fn enable(&mut self, context: usize, irq: NonZero<usize>, enable: bool) {
+         assert!(irq.get() <= 1023 && context < MAX_CONTEXTS);
+         let irq_lane = irq.get() / 32;
+         let irq = irq.get() % 32;
+-        self.enable[context][irq_lane].writef(1u32 << irq, enable);
++        self.reg(ENABLE_OFFSET + ENABLE_CONTEXT_STRIDE * context + REG_SIZE * irq_lane)
++            .writef(1u32 << irq, enable);
++    }
++
++    fn threshold_block(context: usize) -> usize {
++        THRESHOLDS_OFFSET + THRESHOLD_CONTEXT_STRIDE * context
+     }
+ 
+-    pub fn set_priority_threshold(self: &mut Self, context: usize, priority: usize) {
++    fn set_priority_threshold(&mut self, context: usize, priority: usize) {
+         assert!(context < MAX_CONTEXTS && priority <= 7);
+-        self.thresholds[context].threshold.write(priority as u32);
++        self.reg(Self::threshold_block(context) + THRESHOLD_OFFSET)
++            .write(priority as u32);
+     }
+ 
+-    pub fn claim(self: &mut Self, context: usize) -> Option<NonZero<usize>> {
++    fn claim(&mut self, context: usize) -> Option<NonZero<usize>> {
+         assert!(context < MAX_CONTEXTS);
+-        let claim = self.thresholds[context].claim_complete.read();
++        let claim = self
++            .reg(Self::threshold_block(context) + CLAIM_COMPLETE_OFFSET)
++            .read();
+         NonZero::new(claim as usize)
+     }
+ 
+-    pub fn complete(self: &mut Self, context: usize, claim: NonZero<usize>) {
++    fn complete(&mut self, context: usize, claim: NonZero<usize>) {
+         assert!(context < MAX_CONTEXTS);
+-        self.thresholds[context]
+-            .claim_complete
++        self.reg(Self::threshold_block(context) + CLAIM_COMPLETE_OFFSET)
+             .write(claim.get() as u32);
+     }
+ }
+ 
+ pub struct Plic {
+-    regs: *mut PlicRegs,
++    regs: Option<PlicMmio>,
+     ndev: usize,
+     virq_base: usize,
+     context: usize,
+@@ -86,7 +152,7 @@ pub struct Plic {
+ impl Plic {
+     pub fn new() -> Self {
+         Self {
+-            regs: 0 as *mut PlicRegs,
++            regs: None,
+             ndev: 0,
+             virq_base: 0,
+             context: 0,
+@@ -136,7 +202,12 @@ impl InterruptController for Plic {
+             .and_then(|x| x.as_value::<usize>().ok())
+             .unwrap();
+ 
+-        self.regs = (addr + crate::PHYS_OFFSET) as *mut PlicRegs;
++        // SAFETY: assumes, as before, that `get_mmio_address` yields this PLIC's
++        // physical base and that the `PHYS_OFFSET` linear map covers its whole
++        // register range as device memory. Mapping/alignment and access
++        // exclusivity remain the existing driver assumptions, not checks here.
++        // The global `IRQ_CHIP` does not prove serialization; see `PlicMmio::new`.
++        self.regs = unsafe { PlicMmio::new(addr + crate::PHYS_OFFSET) };
+         self.ndev = ndev;
+ 
+         self.virq_base = *irq_idx;
+@@ -157,32 +228,32 @@ impl InterruptController for Plic {
+             .unwrap();
+         info!("PLIC: using context {}", self.context);
+ 
+-        let regs = unsafe { self.regs.as_mut().unwrap() };
++        let regs = self.regs.as_mut().unwrap();
+         regs.set_priority_threshold(self.context, 0);
+ 
+         Ok(())
+     }
+ 
+     fn irq_ack(&mut self) -> u32 {
+-        let regs = unsafe { self.regs.as_mut().unwrap() };
++        let regs = self.regs.as_mut().unwrap();
+         regs.claim(self.context).unwrap().get() as u32
+     }
+ 
+     fn irq_eoi(&mut self, irq_num: u32) {
+-        let regs = unsafe { self.regs.as_mut().unwrap() };
++        let regs = self.regs.as_mut().unwrap();
+         regs.complete(self.context, NonZero::new(irq_num as usize).unwrap());
+     }
+ 
+     fn irq_enable(&mut self, irq_num: u32) {
+         assert!(irq_num > 0 && irq_num as usize <= self.ndev);
+-        let regs = unsafe { self.regs.as_mut().unwrap() };
++        let regs = self.regs.as_mut().unwrap();
+         regs.set_priority(irq_num as usize, 1);
+         regs.enable(self.context, NonZero::new(irq_num as usize).unwrap(), true);
+     }
+ 
+     fn irq_disable(&mut self, irq_num: u32) {
+         assert!(irq_num > 0 && irq_num as usize <= self.ndev);
+-        let regs = unsafe { self.regs.as_mut().unwrap() };
++        let regs = self.regs.as_mut().unwrap();
+         regs.set_priority(irq_num as usize, 1);
+         regs.enable(self.context, NonZero::new(irq_num as usize).unwrap(), false);
+     }
+-- 
+2.43.0
+

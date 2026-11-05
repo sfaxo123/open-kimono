@@ -1,0 +1,39 @@
+// SPDX-License-Identifier: GPL-2.0+
+#include <command.h>
+#include <asm/global_data.h>
+#include <asm-generic/sections.h>
+#include <mapmem.h>
+#include <linux/types.h>
+#include <linux/printk.h>
+
+DECLARE_GLOBAL_DATA_PTR;
+
+extern char embedded_efi_start[];
+extern char embedded_efi_end[];
+
+static int do_op6efi(struct cmd_tbl *cmdtp, int flag, int argc,
+                     char *const argv[])
+{
+        ulong start = map_to_sysmem(embedded_efi_start);
+        ulong end = map_to_sysmem(embedded_efi_end);
+        ulong image_start = map_to_sysmem(__image_copy_start);
+        ulong image_end = map_to_sysmem(__image_copy_end);
+        ulong monitor_start = gd->relocaddr;
+        ulong monitor_end = monitor_start + gd->mon_len;
+        ulong size = end - start;
+
+        printf("op6efi: EFI [0x%lx,0x%lx), image [0x%lx,0x%lx), monitor [0x%lx,0x%lx)\n",
+               start, end, image_start, image_end, monitor_start, monitor_end);
+        if (!size || start < image_start || end > image_end ||
+            start < monitor_start || end > monitor_end)
+                return CMD_RET_FAILURE;
+
+        /* bootefi requires the size after a colon for an in-memory EFI image. */
+        return run_commandf("bootefi %lx:%lx %lx", start, size,
+                            (ulong)map_to_sysmem(gd->fdt_blob)) ?
+                            CMD_RET_FAILURE : CMD_RET_SUCCESS;
+}
+
+U_BOOT_CMD(op6efi, 1, 0, do_op6efi,
+           "boot the embedded EFI application",
+           "\nRuns the linked EFI payload with the control FDT.");

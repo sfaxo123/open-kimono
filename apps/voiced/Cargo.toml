@@ -1,0 +1,23 @@
+[package]
+name = "voiced"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A4: capture -> STT -> agentd request -> TTS of the answer, every step a trace-events record. Mic ownership lives here, not in the browser."
+
+# Track A rule: in-repo crates only, plus the JSON parser trace-events already
+# pulls. No async runtime: the phone runs a static musl binary and every
+# exchange here is plain HTTP or a child process.
+[dependencies]
+trace-events = { path = "../../crates/trace-events" }
+voice-bridge = { path = "../../apps/voice-bridge" }
+serde_json = { version = "1", default-features = false, features = ["alloc", "std"] }
+
+[dev-dependencies]
+trace-events = { path = "../../crates/trace-events" }
+voice-bridge = { path = "../../apps/voice-bridge" }
+serde_json = { version = "1", default-features = false, features = ["alloc", "std"] }
+
+[[bin]]
+name = "voiced"
+path = "src/main.rs"

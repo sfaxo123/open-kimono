@@ -1,0 +1,26 @@
+From d576eb47bd68ee9fb8d33db0b01c6b910778c7cf Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:44:06 +0000
+Subject: [PATCH 09/10] ramboot: package idle touch diagnostics
+
+Co-Authored-By: Codex <noreply@openai.com>
+---
+ Makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index 5018f7ab..c2115a35 100644
+--- a/Makefile
++++ b/Makefile
+@@ -15,7 +15,7 @@ BUILD_FLAGS +=  --target-dir $(BUILD_DIR)
+ INITFS_BINS = ipcd init logd ramfs randd zerod \
+ 	acpid fbbootlogd hwd inputd lived \
+ 	pcid pcid-spawner rtcd vesad
+-RAMBOOT_BINS = ipcd init logd ramfs randd zerod rtcd ramsh spmid vesad
++RAMBOOT_BINS = ipcd init logd ramfs randd zerod rtcd ramsh spmid vesad geni-i2cd rmi4d
+ INITFS_DRIVERS_BINS = nvmed virtio-blkd  virtio-gpud
+ BASE_BINS = fbcond getty inputd pcid pcid-spawner redoxerd audiod dhcpd ptyd netstack nbdd
+ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+-- 
+2.43.0
+

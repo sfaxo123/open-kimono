@@ -1,0 +1,13 @@
+[package]
+name = "net-probe"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[[bin]]
+name = "net-probe"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+panic = "abort"

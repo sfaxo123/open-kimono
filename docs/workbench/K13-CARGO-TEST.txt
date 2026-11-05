@@ -1,0 +1,28 @@
+   Compiling qcom-rproc v0.1.0 ($HOME/Developer/experiments/redox-oneplus6-k13/crates/qcom-rproc)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.60s
+     Running unittests src/lib.rs (crates/qcom-rproc/target/debug/deps/qcom_rproc-91041eb557b15a78)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/core.rs (crates/qcom-rproc/target/debug/deps/core-6c5cbe5158ff5b76)
+
+running 8 tests
+test glink_ring_channel_intents ... ok
+test glink_version_and_frame_vector ... ok
+test pas_invalid_memory_never_calls_smc ... ok
+test pas_requests_and_negative_ids ... ok
+test qmi_rejects_trailing_and_invalid_type ... ok
+test qmi_golden_tlv_and_malformed ... ok
+test qrtr_vector_and_nameserver ... ok
+test smem_bounds_and_missing ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests qcom_rproc
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

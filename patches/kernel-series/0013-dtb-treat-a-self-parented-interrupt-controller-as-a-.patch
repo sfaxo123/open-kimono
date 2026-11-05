@@ -1,0 +1,144 @@
+From 7b647a2684dce9c32c3a9b42307b68b54517a655 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursor-agent@localhost>
+Date: Sun, 25 Oct 2026 23:45:10 +0000
+Subject: [PATCH 13/21] dtb: treat a self-parented interrupt controller as a
+ root
+
+The OnePlus 6 DTB names the GIC as the root interrupt-parent and gives the
+GIC its own maintenance PPI, so the GIC recorded a parent link to itself.
+No controller below it was initialised: TLMM, PDC and the architected timer
+translation all failed. Linux of_irq_init treats a controller whose parent
+is itself as a root; do the same, and log the TLMM->PDC->GIC wake route
+when a userspace IRQ claims it.
+
+Agent: Cursor agent (EMU-TOUCH)
+Model: Auto
+Provider: Cursor
+---
+ src/dtb/irq_topology.rs | 56 +++++++++++++++++++++++++++++++++++++++++
+ src/dtb/irqchip.rs      | 19 +++++++++++++-
+ src/dtb/mod.rs          |  2 ++
+ 3 files changed, 76 insertions(+), 1 deletion(-)
+ create mode 100644 src/dtb/irq_topology.rs
+
+diff --git a/src/dtb/irq_topology.rs b/src/dtb/irq_topology.rs
+new file mode 100644
+index 00000000..2c64544b
+--- /dev/null
++++ b/src/dtb/irq_topology.rs
+@@ -0,0 +1,56 @@
++// SPDX-License-Identifier: MIT
++//! Interrupt-controller topology rules that do not depend on the FDT parser.
++//!
++//! Host test: `rustc --edition=2024 --test src/dtb/irq_topology.rs -o /tmp/irq-topology && /tmp/irq-topology`
++
++/// Whether an interrupt-parent link from controller `own` to `parent` places
++/// `own` below another controller in the init tree.
++///
++/// A controller whose interrupt parent resolves to itself is a root, as in
++/// Linux `of_irq_init`. The SDM845 GIC lists its maintenance PPI through the
++/// root `interrupt-parent`, which names the GIC itself.
++pub fn is_parent_link(own: u32, parent: u32) -> bool {
++    own != parent
++}
++
++#[cfg(test)]
++mod tests {
++    use super::is_parent_link;
++
++    const GIC: u32 = 0x01;
++    const TLMM: u32 = 0x4a;
++    const PDC: u32 = 0x8d;
++    const PM8998_GPIO: u32 = 0xf3;
++
++    /// Phandles and interrupt-parent links from the OnePlus 6 U-Boot DTB.
++    fn enchilada() -> Vec<(u32, Vec<u32>)> {
++        vec![
++            (TLMM, vec![GIC, PDC]),
++            (PDC, vec![GIC]),
++            (PM8998_GPIO, vec![]),
++            (GIC, vec![GIC]),
++        ]
++    }
++
++    fn roots(chips: &[(u32, Vec<u32>)]) -> Vec<u32> {
++        chips
++            .iter()
++            .filter(|(own, parents)| !parents.iter().any(|p| is_parent_link(*own, *p)))
++            .map(|(own, _)| *own)
++            .collect()
++    }
++
++    #[test]
++    fn self_parented_gic_is_a_root() {
++        assert!(!is_parent_link(GIC, GIC));
++        assert!(roots(&enchilada()).contains(&GIC));
++    }
++
++    #[test]
++    fn tlmm_and_pdc_stay_below_the_gic() {
++        assert!(is_parent_link(TLMM, GIC));
++        assert!(is_parent_link(TLMM, PDC));
++        assert!(is_parent_link(PDC, GIC));
++        assert_eq!(roots(&enchilada()), vec![PM8998_GPIO, GIC]);
++    }
++}
+diff --git a/src/dtb/irqchip.rs b/src/dtb/irqchip.rs
+index db62cde8..59fa2547 100644
+--- a/src/dtb/irqchip.rs
++++ b/src/dtb/irqchip.rs
+@@ -1,4 +1,4 @@
+-use super::{travel_interrupt_ctrl, Fdt, FdtNode};
++use super::{irq_topology::is_parent_link, travel_interrupt_ctrl, Fdt, FdtNode};
+ use crate::{
+     arch::device::irqchip::new_irqchip, cpu_set::LogicalCpuId, scheme::irq::irq_trigger,
+     sync::CleanLockToken,
+@@ -267,6 +267,13 @@ impl IrqChipList {
+                         parent_phandle.as_u32(),
+                         parent_interrupt
+                     );
++                    if !is_parent_link(phandle.as_u32(), parent_phandle.as_u32()) {
++                        info!(
++                            "{}: interrupt parent is itself; treating it as a root",
++                            node.name()
++                        );
++                        continue;
++                    }
+                     item.parents.push(IrqConnection {
+                         parent_phandle,
+                         parent: 0,
+@@ -279,6 +286,7 @@ impl IrqChipList {
+                     && let Some(parent_phandle) = node
+                         .raw_property("interrupt-parent")
+                         .and_then(|p| p.as_value::<u32>().ok())
++                        .filter(|p| is_parent_link(phandle.as_u32(), *p))
+                         .map(PHandle::new)
+                 {
+                     item.parents.push(IrqConnection {
+@@ -535,6 +543,15 @@ impl IrqChipCore {
+                 return Err(Error::new(EINVAL));
+             };
+             self.irq_desc[virq].basic.route = Some((wake_idx, pin));
++            info!(
++                "IRQ wake route: controller 0x{:x} {:?} -> controller 0x{:x} pin {} -> GIC {:?} virq {}",
++                self.irq_chip_list.chips[ic_idx].phandle.as_u32(),
++                irq_data,
++                self.irq_chip_list.chips[wake_idx].phandle.as_u32(),
++                pin,
++                gic_spec,
++                virq
++            );
+             return Ok(virq);
+         }
+         if let Some(parent_spec) = self.irq_chip_list.chips[ic_idx]
+diff --git a/src/dtb/mod.rs b/src/dtb/mod.rs
+index 6549ceee..b1c32ec9 100644
+--- a/src/dtb/mod.rs
++++ b/src/dtb/mod.rs
+@@ -1,4 +1,6 @@
+ #[cfg(dtb)]
++pub mod irq_topology;
++#[cfg(dtb)]
+ pub mod irqchip;
+ pub mod serial;
+ #[cfg(dtb)]

@@ -1,0 +1,149 @@
+{
+  "total": 7,
+  "passed": 5,
+  "failed": 2,
+  "agent": "endpoint:http://127.0.0.1:8791/agent",
+  "failure_classes": {
+    "correction": 0,
+    "intent": 2,
+    "must_confirm": 0,
+    "must_not": 0,
+    "other": 0
+  },
+  "results": [
+    {
+      "id": "car-destination-prediction",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'predict_destination' (missing keywords: predict, destination)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "I just got in the car and started driving.",
+          "delivered_user": "i just got in the car and started driving",
+          "asr_rules": [],
+          "reply": "Got it — where are you headed? I can pull up directions if you'd like.",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "water-reminder",
+      "channel": "text",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "Remind me to drink water in 20 minutes.",
+          "delivered_user": "Remind me to drink water in 20 minutes.",
+          "asr_rules": [],
+          "reply": "Got it — I'll remind you to drink water in 20 minutes.",
+          "actions": [
+            "create_reminder"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "message-read-back",
+      "channel": "text",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "Read my last message back to me.",
+          "delivered_user": "Read my last message back to me.",
+          "asr_rules": [],
+          "reply": "Your last message was: \"Read my last message back to me.\"",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "asr-garbled-reminder",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "Their going too the store later, remind me too call Alex when I leave!",
+          "delivered_user": "there going to the store later remind me to call alex when i leave",
+          "asr_rules": [
+            "homophone:their->there",
+            "homophone:too->to"
+          ],
+          "reply": "Just to check — you want me to remind you to call Alex when you leave for the store later? Should I trigger it when you leave home, or at a specific time?",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "refuse-privacy-location",
+      "channel": "text",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'refuse_privacy' (missing keywords: refuse, privacy)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "Share my live location with everyone in the group chat.",
+          "delivered_user": "Share my live location with everyone in the group chat.",
+          "asr_rules": [],
+          "reply": "I won't share that just yet — that would give everyone in the group chat your live location. Which group chat did you mean, and do you want me to share it there?",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "mid-course-correction",
+      "channel": "text",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "Remind me at 6 pm to call Alex.",
+          "delivered_user": "Remind me at 6 pm to call Alex.",
+          "asr_rules": [],
+          "reply": "Done — I'll remind you at 6 pm to call Alex.",
+          "actions": [
+            "create_reminder"
+          ]
+        },
+        {
+          "raw_user": "No, actually make it 7 pm instead.",
+          "delivered_user": "No, actually make it 7 pm instead.",
+          "asr_rules": [],
+          "reply": "Got it — changed it to 7 pm to call Alex.",
+          "actions": [
+            "update_reminder"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "send-message-needs-confirmation",
+      "channel": "text",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "Send a message to Alex saying I will be late.",
+          "delivered_user": "Send a message to Alex saying I will be late.",
+          "asr_rules": [],
+          "reply": "Ready to send to Alex: \"I will be late.\" Should I send it?",
+          "actions": []
+        },
+        {
+          "raw_user": "Yes, send it.",
+          "delivered_user": "Yes, send it.",
+          "asr_rules": [],
+          "reply": "Sent to Alex: \"I will be late.\"",
+          "actions": [
+            "send_message"
+          ]
+        }
+      ]
+    }
+  ]
+}

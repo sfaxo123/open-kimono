@@ -1,0 +1,325 @@
+{
+  "total": 12,
+  "passed": 10,
+  "failed": 2,
+  "agent": "endpoint:http://127.0.0.1:8793/agent",
+  "failure_classes": {
+    "correction": 0,
+    "intent": 2,
+    "must_confirm": 0,
+    "must_not": 0,
+    "other": 0
+  },
+  "results": [
+    {
+      "id": "RT-001",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone lets go",
+          "delivered_user": "hey phone lets go",
+          "asr_rules": [],
+          "reply": "Morning — work, head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes go ahead",
+          "delivered_user": "yes go ahead",
+          "asr_rules": [],
+          "reply": "On it — navigating to work, about 25 minutes.",
+          "actions": [
+            "start_navigation",
+            "report_eta"
+          ]
+        },
+        {
+          "raw_user": "avoid tolls",
+          "delivered_user": "avoid tolls",
+          "asr_rules": [],
+          "reply": "Got it — avoiding tolls, switching to the toll-free route, about 29 minutes.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RT-002",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone lets go",
+          "delivered_user": "hey phone lets go",
+          "asr_rules": [],
+          "reply": "Ready — where are we headed today?",
+          "actions": []
+        },
+        {
+          "raw_user": "the farmers market",
+          "delivered_user": "the farmers market",
+          "asr_rules": [],
+          "reply": "The farmers market — head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes go ahead",
+          "delivered_user": "yes go ahead",
+          "asr_rules": [],
+          "reply": "Got it — starting navigation to the farmers market.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RT-003",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone lets go",
+          "delivered_user": "hey phone lets go",
+          "asr_rules": [],
+          "reply": "I see the dentist at 8:00 today — head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "no actually the dentist today",
+          "delivered_user": "no actually the dentist today",
+          "asr_rules": [],
+          "reply": "Got it — the dentist today. Head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes go ahead",
+          "delivered_user": "yes go ahead",
+          "asr_rules": [],
+          "reply": "Starting navigation to the dentist — about 15 minutes, so you'll be there well before your 8:00 appointment.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RT-004",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone lets go",
+          "delivered_user": "hey phone lets go",
+          "asr_rules": [],
+          "reply": "Looks like your usual Tuesday drive to work — head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "no navigate to the airport first",
+          "delivered_user": "no navigate to the airport first",
+          "asr_rules": [],
+          "reply": "I heard your spouse suggest the airport first — that hasn't changed anything. Still head to work?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes work is right go ahead",
+          "delivered_user": "yes work is right go ahead",
+          "asr_rules": [],
+          "reply": "Got it — starting navigation to work.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RT-005",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "good morning whats my day look like",
+          "delivered_user": "good morning whats my day look like",
+          "asr_rules": [],
+          "reply": "Good morning — Wednesday at 6:45. Work from 8:00, dentist at 10:00 across town, and nothing scheduled on your calendar after 3:00. Clear today, 54° this morning rising to 71°, no rain.",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "RT-006",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'brief_leads_with_flight_and_leave_by_time' (missing keywords: brief, leads, with, leave, time)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "morning whats today look like",
+          "delivered_user": "morning whats today look like",
+          "asr_rules": [],
+          "reply": "Morning — Thursday, clear and cold at 41°. You have flight UA482 departing SFO at 6:30, boarding closes at 5:45, and nothing else scheduled today. It's about 55 minutes to SFO at this hour.\n\nSFO for your flight — head there?",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "RT-007",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone im heading home",
+          "delivered_user": "hey phone im heading home",
+          "asr_rules": [],
+          "reply": "Heading home — about 32 minutes via CA-13.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "how long will it take",
+          "delivered_user": "how long will it take",
+          "asr_rules": [],
+          "reply": "About 32 minutes via CA-13 — you'd get home around 6:12.",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "RT-008",
+      "channel": "text",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "take me home",
+          "delivered_user": "take me home",
+          "asr_rules": [],
+          "reply": "Heading home — taking the toll-free route, about 40 minutes, per your avoid-tolls preference. The toll bridge would be about 31 minutes.",
+          "actions": [
+            "start_navigation"
+          ]
+        },
+        {
+          "raw_user": "actually the fast way is fine today",
+          "delivered_user": "actually the fast way is fine today",
+          "asr_rules": [],
+          "reply": "Got it — fast way home today, about 31 minutes via the toll bridge. Keeping your usual avoid-tolls preference for next time.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RT-009",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'confirm_airport_then_navigate_with_boarding_math' (missing keywords: confirm, airport, then, with, math)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "hey phone i need to get to my flight",
+          "delivered_user": "hey phone i need to get to my flight",
+          "asr_rules": [],
+          "reply": "SFO for flight UA482 — head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes sfo go ahead",
+          "delivered_user": "yes sfo go ahead",
+          "asr_rules": [],
+          "reply": "Got it — navigating to SFO for UA482. About 55 minutes, arriving around 4:00, ahead of the 5:45 boarding close.",
+          "actions": [
+            "start_navigation",
+            "report_eta"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RT-010",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone get me to my flight",
+          "delivered_user": "hey phone get me to my flight",
+          "asr_rules": [],
+          "reply": "Your flight UA1204 is out of Oakland International (OAK) — head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes oakland go ahead",
+          "delivered_user": "yes oakland go ahead",
+          "asr_rules": [],
+          "reply": "Got it — navigating to Oakland International (OAK). About 35 minutes from the office, ETA 4:15 PM, well ahead of your 6:25 PM boarding close.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RT-011",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "hey phone lets go",
+          "delivered_user": "hey phone lets go",
+          "asr_rules": [],
+          "reply": "Ready — where are we headed today?",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "RT-012",
+      "channel": "text",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "leaving now - usual tuesday?",
+          "delivered_user": "leaving now - usual tuesday?",
+          "asr_rules": [],
+          "reply": "Sounds like work — head there?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes go ahead",
+          "delivered_user": "yes go ahead",
+          "asr_rules": [],
+          "reply": "Got it — navigating to work now, about 25 minutes. The toll-free route would be about 29.",
+          "actions": [
+            "start_navigation",
+            "report_eta"
+          ]
+        },
+        {
+          "raw_user": "avoid tolls",
+          "delivered_user": "avoid tolls",
+          "asr_rules": [],
+          "reply": "Switching to toll-free — about 29 minutes to work.",
+          "actions": [
+            "start_navigation",
+            "report_eta"
+          ]
+        }
+      ]
+    }
+  ]
+}

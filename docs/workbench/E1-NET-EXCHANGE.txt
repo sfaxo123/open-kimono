@@ -1,0 +1,102 @@
+E1-NET-1 — guest->host TCP nonce exchange over rtl8139/INTx (bounded, emulator-only)
+Date: 2026-10-25 (PT times; UTC in machine logs). Agent lane: 5090.
+Plan: $HOME/artifacts/handoff/redox-perplexity/E1-NETWORK-NEXT-GATE.md (Cursor read-only analysis).
+Branch: codex/e1-net-exchange from main 02a27eb (guards 564ebb3 and intx hardening b3577d6 are ancestors).
+Own files only: scripts/qemu-demo/e1-net-exchange.sh (sha256 911749b75a9b94d86d8a40adece60ddb257b58c75a6792548e6feb0bf4028c1c, final)
+and this doc. Shared scripts, forks/, images, phone/model config untouched. No new repo.
+
+RESULT (BLUF): GATE NOT MET — bounded partial. The guest completed a real TCP
+3-way handshake to the host peer (ARP + SYN + SYN/ACK + ACK observed in the
+packet capture), but the nonce payload was NEVER written to the wire: no data
+segment in the pcap and the host receive file is 0 bytes in both attempts.
+The capture proves connection establishment but does not isolate the component
+responsible for the missing payload. Ion redirection/write behavior, TCP scheme
+handling, scheduling, or the capture/peer path remain candidates until a separate
+probe distinguishes them.
+
+EXACT RUN COMMAND
+  cd $HOME/Developer/experiments/redox-oneplus6-intx
+  INTX_ATTEMPTS=2 INTX_TIMEOUT=90 INTX_LOGIN_PROBE=1 INTX_SKIP_PRECHECK=1 \
+  INTX_SKIP_DTB=1 bash scripts/qemu-demo/e1-net-exchange.sh
+Budget: max 2 boots x 90 s; host peer `timeout 95 socat -u TCP-LISTEN:47011,bind=127.0.0.1,reuseaddr
+OPEN:<recv>,creat,append` started BEFORE QEMU per attempt; EXIT trap kills BOTH peer and QEMU.
+Nonce (unique per run): E1NET-1792920103-18720. Probe (ion builtins only):
+  root | password | echo /scheme/netcfg/ifaces/eth0/addr/* |
+  echo E1NET-1792920103-18720 > /scheme/tcp/10.0.2.2:47011 | echo E1NET-DONE
+
+INPUT HASHES (before == after; read-only held)
+  ISO  e1-live.iso  c02012eaa182800cc7ed937e0e3ebf7b436f2af3e9dacb5c57bb00c89df361bc  (before AND after, identical)
+  DTB  simplefb-virt.dtb 9f72dcd07e6a3798c692eb03ff3b0db99010300fc966397306afa60e5b8050c6 (reused, identical)
+QEMU line = the proven E1-EXP-1 line plus ONLY -object filter-dump,id=e1dump,netdev=e1net,file=<pcap>
+(full text echoed inside each attempt receipt). ISO drive readonly=on.
+
+PRE-BOOT GATES (no boot spent)
+  bash -n clean; E1NET_SELFTEST=1 fixtures 18/18 pass (pcap shapes incl. arp-only,
+  no-synack, no-data, empty; peer empty/stale/exact/substring; serial clean/panic/
+  smoltcpd/no-login; command faults E1NET_PORT=abc|80|70000 -> exit 2 before boot path).
+  filter-dump flag-acceptance probe (no firmware, no guest, timeout 8): accepted.
+
+ATTEMPTS (both identical shape; stopped per identical-signature rule)
+  attempt 1: boot ~09:21:53Z, login probe sent at 18 s, QEMU exited at 83 s.
+  attempt 2: probe sent at 23 s, QEMU exited at 83 s.
+  Guest serial (both): driver+irq tiers clean, 'redox login:' reached, root login OK,
+  ion prompt, all probe lines echoed, the tcp-redirect command executed with NO error
+  text, E1NET-DONE echoed. No "Can't connect tcp socket", no smoltcpd error. serial=clean.
+  Capture attempt 1 (9 packets, sha 0784f5114c62a5e59fb41299ed8bbe9779d24c05b504e333e19a6f7107a80ea7):
+    09:21:58.430 BOOTP/DHCP Request from 52:54:00:12:34:56 (guest MAC) -> slirp Reply   [x2]
+    09:22:06.996 ARP Request who-has 10.0.2.2 tell 10.0.2.15 (from guest MAC)
+    09:22:06.996 ARP Reply 10.0.2.2 is-at 52:55:0a:00:02:02
+    09:22:06.999 10.0.2.15.49152 > 10.0.2.2.47011: Flags [S]
+    09:22:07.998 10.0.2.2.47011 > 10.0.2.15.49152: Flags [S.]
+    09:22:08.017 10.0.2.15.49152 > 10.0.2.2.47011: Flags [.] ack   <- handshake COMPLETE
+    ... then NOTHING for the remaining ~75 s: no [P.] data, no FIN/RST.
+  Capture attempt 2 (sha fa0f971cf6947699bba13601db5d1bd770f130e39a9c0f5deb104e480cc671db): same shape.
+  Host receive files e1net-host-recv-1.txt / -2.txt: 0 bytes (sha e3b0c442... = empty),
+  written by socat only — never synthesized. Nonce absent from pcap payload text.
+  NOTE: the DHCP exchanges above predate the kernel NIC-driver spawn (pcid 09:22:06.47Z),
+  i.e. firmware-era; the guest's 10.0.2.15 in the ARP/SYN comes from the static /etc/net
+  recipe — this gate does NOT claim a dhcpd lease.
+
+CLASSIFIER NOTE (honest correction): the live run recorded pcap=no-arp-request because
+the ARP regex did not match tcpdump's -e rendering ("Request who-has 10.0.2.2
+(ff:ff:ff:ff:ff:ff) tell ..."). Regex fixed + fixture updated to the real -e format
+(selftest still 18/18). Re-scoring the SAME immutable capture text with the fixed
+classifier gives the correct reasons:
+  attempt 1: pcap=synack-no-data  peer=peer-empty  serial=clean  exchange=no
+  attempt 2: pcap=synack-no-data  peer=peer-empty  serial=clean  exchange=no
+The exchange verdict was `no` either way; only the reason string changed.
+Plan fallback (netcfg-read probe) was conditional on pcap-empty; the pcap was NOT
+empty, so attempt 2 legitimately repeated the exchange probe; identical stage+signature
+twice -> stop per budget rule. Budget fully spent: 2 boots. No further boots.
+
+WHAT IS NOW PROVEN (this run, emulator only)
+  [V] Guest TX path: guest-originated ARP + SYN observed on the wire (src MAC 52:54:00:12:34:56).
+  [V] Guest RX path: guest received the ARP reply and the SYN/ACK and answered with ACK.
+  [V] Static IP 10.0.2.15 from the /etc/net recipe is applied at RUNTIME (ARP tell + SYN source).
+  [V] slirp mapping guest 10.0.2.2:47011 -> host 127.0.0.1:47011 works (slirp SYN/ACK; socat
+      accepted and created the recv file).
+  [V] ion `>` redirect to /scheme/tcp/<remote> REACHES the tcp scheme connect path (the connect
+      happened at probe time — this was the previously untested link).
+WHAT IS NOT PROVEN (gate failure point)
+  [ ] The payload write: no TCP data segment, no nonce at the peer. the connection was established but the payload was not observed in either
+      packet capture or peer file. The failing component is not yet isolated.
+NOT CLAIMED: dhcpd lease, DNS, internet reachability, phone behaviour, any real-network proof.
+
+NEXT LEAD (not executed — budget spent; needs a fresh bounded gate):
+  inspect ion's redirect open/write path vs netstack tcp scheme open handler (open succeeds,
+  write silently absent); candidate probes: strace-equivalent scheme debug, or a guest-side
+  write test via a different builtin. Do NOT re-run this script's boot budget without a new plan.
+
+EVIDENCE (out/integration/, all e1net-prefixed, immutable per attempt; historic intx-* untouched)
+  e1net-ledger.tsv                    3f019d52d878667b6d1e5675b981c7cfb08fc15b75c3741a7a8c321ff9c6cfa7
+  e1net-attempt-1.txt (receipt)       7b05cd1b41df8b7b48363c1d319fffa8b4402027498e6993aebf5e85f1199997
+  e1net-attempt-2.txt (receipt)       a0ab4962bdcc4c6c565fad59e5d89c6a165839f7266427efca60933a422823a7
+  e1net-attempt-1.pcap                0784f5114c62a5e59fb41299ed8bbe9779d24c05b504e333e19a6f7107a80ea7
+  e1net-attempt-2.pcap                fa0f971cf6947699bba13601db5d1bd770f130e39a9c0f5deb104e480cc671db
+  e1net-attempt-1-pcap.txt            c17f45f27c5a102cd08d6a5b815e492e62c1de5fb97914ad36c6f3db9056f9e8
+  e1net-attempt-2-pcap.txt            7a89e83a4e131bb37ce6bbf02d53896dd8e462db63abecf36fe35be52a1c68ec
+  e1net-attempt-1-pcap-payload.txt    fef4667c6d268c2217cf9d253a92587ff7c4654afb9e16ecd1ae4f445c83c74e
+  e1net-attempt-2-pcap-payload.txt    a3e59c95060f0215d2e81e10d095711e21dcf94fbc29f768341307782dfff471
+  e1net-attempt-1-raw.txt (serial)    512f61634100ba4f9bd5b32726c31be74da3f13937510727cd78e4917715391f
+  e1net-attempt-2-raw.txt (serial)    6961b548cfcc94b1afe19c96b1f18cf6bb35f6a193bb3fc7fea91f599ae72ab3
+  e1net-host-recv-1.txt / -2.txt      e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 (empty)

@@ -1,0 +1,640 @@
+[
+  {
+    "type": "audio-start",
+    "data": {
+      "rate": 16000,
+      "width": 2,
+      "channels": 1,
+      "timestamp": null
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "audio-chunk",
+    "data": {
+      "rate": 16000,
+      "width": 2,
+      "channels": 1,
+      "timestamp": null
+    },
+    "payload_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"
+  },
+  {
+    "type": "audio-chunk",
+    "data": {
+      "rate": 16000,
+      "width": 2,
+      "channels": 1,
+      "timestamp": 1700000000
+    },
+    "payload_hex": "0001"
+  },
+  {
+    "type": "audio-stop",
+    "data": {
+      "timestamp": 1700000001
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "voice-started",
+    "data": {
+      "timestamp": null
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "voice-stopped",
+    "data": {
+      "timestamp": 1700000002
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "ping",
+    "data": {
+      "text": null
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "ping",
+    "data": {
+      "text": "ping?"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "pong",
+    "data": {
+      "text": "pong!"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "error",
+    "data": {
+      "text": "something broke"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "error",
+    "data": {
+      "text": "bad request",
+      "code": "bad-request"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "timer-started",
+    "data": {
+      "id": "t1",
+      "total_seconds": 60
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "timer-started",
+    "data": {
+      "id": "t2",
+      "total_seconds": 3725,
+      "name": "kitchen",
+      "start_hours": 1,
+      "start_minutes": 2,
+      "start_seconds": 5
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "timer-updated",
+    "data": {
+      "id": "t1",
+      "is_active": true,
+      "total_seconds": 30
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "timer-cancelled",
+    "data": {
+      "id": "t1"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "timer-finished",
+    "data": {
+      "id": "t2"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "user-event",
+    "data": {
+      "name": "my-event"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "user-event",
+    "data": {
+      "name": "light",
+      "data": {
+        "on": true
+      },
+      "context": {
+        "room": "office"
+      }
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "played",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "transcript",
+    "data": {
+      "text": "turn on the lights"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "transcript",
+    "data": {
+      "text": "café — ünïcode",
+      "language": "en",
+      "context": {
+        "session": "abc"
+      }
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "transcribe",
+    "data": {
+      "name": "whisper",
+      "language": "en",
+      "vad_sensitivity": "aggressive",
+      "transcript_names": [
+        "jordan"
+      ],
+      "transcript_terms": [
+        "laptop"
+      ]
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "transcribe",
+    "data": {
+      "vad_sensitivity": "0.75"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "transcript-start",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "transcript-chunk",
+    "data": {
+      "text": "hel"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "transcript-stop",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "detection",
+    "data": {
+      "name": null,
+      "timestamp": null,
+      "speaker": null
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "detection",
+    "data": {
+      "name": "hey mycroft",
+      "timestamp": 1700000000,
+      "speaker": "jordan"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "detect",
+    "data": {
+      "names": null
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "detect",
+    "data": {
+      "names": [
+        "hey mycroft"
+      ]
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "not-detected",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "synthesize",
+    "data": {
+      "text": "hello world"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "synthesize",
+    "data": {
+      "text": "hello",
+      "voice": {
+        "name": "piper",
+        "speaker": "lessac"
+      },
+      "text_format": "ssml",
+      "context": {
+        "k": 1
+      }
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "synthesize",
+    "data": {
+      "text": "hi",
+      "voice": {
+        "language": "de"
+      }
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "synthesize-start",
+    "data": {
+      "voice": {
+        "name": "v"
+      },
+      "text_format": "markdown"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "synthesize-chunk",
+    "data": {
+      "text": "chunk"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "synthesize-stop",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "synthesize-stopped",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "recognize",
+    "data": {
+      "text": "turn on the lights"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "intent",
+    "data": {
+      "name": "turn.on"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "intent",
+    "data": {
+      "name": "turn.on",
+      "entities": [
+        {
+          "name": "light",
+          "value": "desk lamp"
+        },
+        {
+          "name": "brightness",
+          "value": null
+        }
+      ],
+      "text": "Okay"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "not-recognized",
+    "data": {
+      "text": "sorry"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "intents-start",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "handled",
+    "data": {
+      "text": "done"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "not-handled",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "handled-start",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "handled-chunk",
+    "data": {
+      "text": "o"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "handled-stop",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "run-pipeline",
+    "data": {
+      "start_stage": "wake",
+      "end_stage": "tts",
+      "restart_on_end": true
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "run-pipeline",
+    "data": {
+      "start_stage": "asr",
+      "end_stage": "intent",
+      "restart_on_end": false,
+      "wake_word_names": [
+        "hey mycroft"
+      ],
+      "announce_text": "hello"
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "run-satellite",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "pause-satellite",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "streaming-started",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "streaming-stopped",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "satellite-connected",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "satellite-disconnected",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "describe",
+    "data": {},
+    "payload_hex": null
+  },
+  {
+    "type": "info",
+    "data": {
+      "asr": [
+        {
+          "name": "wyoming-whisper",
+          "attribution": {
+            "name": "Rhasspy",
+            "url": "https://github.com/rhasspy"
+          },
+          "installed": true,
+          "description": null,
+          "version": null,
+          "models": [
+            {
+              "name": "small",
+              "attribution": {
+                "name": "Rhasspy",
+                "url": "https://github.com/rhasspy"
+              },
+              "installed": true,
+              "description": null,
+              "version": null,
+              "languages": [
+                "en"
+              ]
+            }
+          ],
+          "supports_transcript_streaming": false,
+          "requires_external_vad": true,
+          "prefers_auto_gain_enabled": true,
+          "prefers_noise_reduction_enabled": true
+        }
+      ],
+      "tts": [
+        {
+          "name": "wyoming-piper",
+          "attribution": {
+            "name": "Rhasspy",
+            "url": "https://github.com/rhasspy"
+          },
+          "installed": true,
+          "description": null,
+          "version": null,
+          "voices": [
+            {
+              "name": "en_US-lessac-medium",
+              "attribution": {
+                "name": "Rhasspy",
+                "url": "https://github.com/rhasspy"
+              },
+              "installed": true,
+              "description": null,
+              "version": null,
+              "languages": [
+                "en"
+              ],
+              "speakers": [
+                {
+                  "name": "lessac"
+                }
+              ]
+            }
+          ],
+          "supports_synthesize_streaming": true
+        }
+      ],
+      "handle": [
+        {
+          "name": "wyoming-hass",
+          "attribution": {
+            "name": "Rhasspy",
+            "url": "https://github.com/rhasspy"
+          },
+          "installed": true,
+          "description": null,
+          "version": null,
+          "models": [
+            {
+              "name": "default",
+              "attribution": {
+                "name": "Rhasspy",
+                "url": "https://github.com/rhasspy"
+              },
+              "installed": true,
+              "description": null,
+              "version": null,
+              "languages": [
+                "en"
+              ]
+            }
+          ],
+          "supports_handled_streaming": false,
+          "supports_home_control": false
+        }
+      ],
+      "intent": [
+        {
+          "name": "wyoming-hassil",
+          "attribution": {
+            "name": "Rhasspy",
+            "url": "https://github.com/rhasspy"
+          },
+          "installed": true,
+          "description": null,
+          "version": null,
+          "models": [
+            {
+              "name": "default",
+              "attribution": {
+                "name": "Rhasspy",
+                "url": "https://github.com/rhasspy"
+              },
+              "installed": true,
+              "description": null,
+              "version": null,
+              "languages": [
+                "en"
+              ]
+            }
+          ]
+        }
+      ],
+      "wake": [
+        {
+          "name": "wyoming-oww",
+          "attribution": {
+            "name": "Rhasspy",
+            "url": "https://github.com/rhasspy"
+          },
+          "installed": true,
+          "description": null,
+          "version": null,
+          "models": [
+            {
+              "name": "hey mycroft",
+              "attribution": {
+                "name": "Rhasspy",
+                "url": "https://github.com/rhasspy"
+              },
+              "installed": true,
+              "description": null,
+              "version": null,
+              "languages": [
+                "en"
+              ],
+              "phrase": "hey mycroft"
+            }
+          ]
+        }
+      ],
+      "mic": [
+        {
+          "name": "mic",
+          "attribution": {
+            "name": "Rhasspy",
+            "url": "https://github.com/rhasspy"
+          },
+          "installed": true,
+          "description": null,
+          "version": null,
+          "mic_format": {
+            "rate": 16000,
+            "width": 2,
+            "channels": 1
+          }
+        }
+      ],
+      "snd": [
+        {
+          "name": "snd",
+          "attribution": {
+            "name": "Rhasspy",
+            "url": "https://github.com/rhasspy"
+          },
+          "installed": true,
+          "description": null,
+          "version": null,
+          "snd_format": {
+            "rate": 22050,
+            "width": 2,
+            "channels": 1
+          }
+        }
+      ]
+    },
+    "payload_hex": null
+  },
+  {
+    "type": "audio-chunk",
+    "data": {
+      "rate": 22050,
+      "width": 2,
+      "channels": 1,
+      "timestamp": null
+    },
+    "payload_hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+  }
+]

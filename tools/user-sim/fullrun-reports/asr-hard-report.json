@@ -1,0 +1,481 @@
+{
+  "total": 18,
+  "passed": 1,
+  "failed": 17,
+  "agent": "endpoint:http://127.0.0.1:8791/agent",
+  "failure_classes": {
+    "correction": 0,
+    "intent": 17,
+    "must_confirm": 0,
+    "must_not": 0,
+    "other": 0
+  },
+  "results": [
+    {
+      "id": "ASR-001",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'create_reminder_after_disambiguation' (missing keywords: create, after, disambiguation)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "remind me to pick up flower for the party saturday",
+          "delivered_user": "remind me to pick up flower for the party saturday",
+          "asr_rules": [],
+          "reply": "Just to check — did you mean flowers, or flour, for the party Saturday? And what time Saturday should I remind you?",
+          "actions": []
+        },
+        {
+          "raw_user": "flower like for baking bread",
+          "delivered_user": "flower like for baking bread",
+          "asr_rules": [],
+          "reply": "Got it — flour for baking bread, not flowers. Should I remind you Saturday morning, say 9am?",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "ASR-002",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'confirm_destination_and_navigate' (missing keywords: confirm, destination, and)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "navigate to hole foods on the way",
+          "delivered_user": "navigate to hole foods on the way",
+          "asr_rules": [],
+          "reply": "Sounds like Whole Foods as a stop on your way to the office — want me to route there first, then to work?",
+          "actions": []
+        },
+        {
+          "raw_user": "yeah whole foods",
+          "delivered_user": "yeah hole foods",
+          "asr_rules": [
+            "homophone:whole->hole"
+          ],
+          "reply": "Got it — starting navigation to Whole Foods first, then on to your office.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ASR-003",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'correct_timer_to_fifteen' (missing keywords: correct)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "set a timer for fifty minutes",
+          "delivered_user": "set a timer for fifteen minutes",
+          "asr_rules": [
+            "number_flip:fifty->fifteen"
+          ],
+          "reply": "Quick check before I set it — fifteen minutes, 1-5, not fifty?",
+          "actions": []
+        },
+        {
+          "raw_user": "no fifteen one five",
+          "delivered_user": "no fifteen one five",
+          "asr_rules": [],
+          "reply": "Done — 15-minute timer running.",
+          "actions": [
+            "set_timer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ASR-004",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'correct_amount_to_fifteen' (missing keywords: correct, amount, fifteen)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "remind me friday to pay the gardener fifty dollars",
+          "delivered_user": "remind me friday to pay the gardener fifteen dollars",
+          "asr_rules": [
+            "number_flip:fifty->fifteen"
+          ],
+          "reply": "Just to confirm — Friday reminder to pay the gardener $15?",
+          "actions": []
+        },
+        {
+          "raw_user": "no fifteen one five",
+          "delivered_user": "no fifteen one five",
+          "asr_rules": [],
+          "reply": "Got it, thanks for spelling that out — so $15, digits one-five, to the gardener on Friday. Should I set that reminder?",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "ASR-005",
+      "channel": "voice",
+      "status": "PASS",
+      "reasons": [],
+      "transcript": [
+        {
+          "raw_user": "text ryan that im running ten minutes late",
+          "delivered_user": "text ryan that im running ten minutes late",
+          "asr_rules": [],
+          "reply": "Quick check — did you mean Ryan or Brian? They sound alike and both are frequent contacts.\n\nIf you confirm, I'll text: \"I'm running ten minutes late.\"",
+          "actions": []
+        },
+        {
+          "raw_user": "brian with a b",
+          "delivered_user": "brian with a b",
+          "asr_rules": [],
+          "reply": "Got it — Brian with a B.\n\nReady to text Brian: \"I'm running ten minutes late.\" Should I send it?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes send it",
+          "delivered_user": "yes send it",
+          "asr_rules": [],
+          "reply": "Sent to Brian — \"I'm running ten minutes late.\"",
+          "actions": [
+            "send_message"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ASR-006",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'correct_recipient_to_john' (missing keywords: correct, recipient)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "text jon about lunch",
+          "delivered_user": "text jon about lunch",
+          "asr_rules": [],
+          "reply": "Quick check before I text — Jon (no H) or John (with H)? And what do you want to say about lunch?",
+          "actions": []
+        },
+        {
+          "raw_user": "no john with an aitch",
+          "delivered_user": "no john with an aitch",
+          "asr_rules": [],
+          "reply": "Got it — John with the H, not Jon. What should I say about lunch?",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "ASR-007",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'read_back_draft_still_unsent' (missing keywords: read, back, still, unsent)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "draft a text to maya saying ill be late but dont send it yet",
+          "delivered_user": "draft a text to maya saying ill be late but do send it",
+          "asr_rules": [
+            "dropped_negation:dont->do",
+            "trailing_truncation:yet"
+          ],
+          "reply": "Draft for Maya: \"I'll be late.\" I haven't sent it — did you want me to send it now, or just draft it?",
+          "actions": []
+        },
+        {
+          "raw_user": "ok read it back",
+          "delivered_user": "ok read it back",
+          "asr_rules": [],
+          "reply": "To Maya: \"I'll be late.\"",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "ASR-008",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'add_stop_without_breaking_constraint' (missing keywords: add, stop, without, breaking, constraint)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "find a gas station on the way but dont make me late",
+          "delivered_user": "find a gas station on the way but do make me late",
+          "asr_rules": [
+            "dropped_negation:dont->do"
+          ],
+          "reply": "Quick check — you mean find one on the way but *don't* make you late, right? You're at an 8:47 ETA now — what time do you need to be at work by?",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "ASR-009",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'read_back_the_parse_before_answering' (missing keywords: read, back, the, parse, before, answering)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "whats twenty percent tip on eighty six dollars and split it four ways",
+          "delivered_user": "whats twenty percent tip on eighteen six dollars and split it four",
+          "asr_rules": [
+            "number_flip:eighty->eighteen",
+            "trailing_truncation:ways"
+          ],
+          "reply": "Quick check — was that $18.60, or $86?",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "ASR-010",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'correct_final_digit_and_read_back' (missing keywords: final, read, back)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "save this number five one zero five five five oh one three nine",
+          "delivered_user": "save this number five one zero five five five oh one three",
+          "asr_rules": [
+            "trailing_truncation:nine"
+          ],
+          "reply": "I heard 510-555-013 — that's only nine digits. Did I miss one, and what name should I save it under?",
+          "actions": []
+        },
+        {
+          "raw_user": "no its oh one three eight at the end",
+          "delivered_user": "no its oh one three eight at the end",
+          "asr_rules": [],
+          "reply": "Got it, corrected — 510-555-0138. What name should I save it under?",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "ASR-011",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'send_dictated_message' (missing keywords: dictated)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "text maya im running ten minutes late can you start the meeting without me",
+          "delivered_user": "text maya im running ten minutes late can you start the meeting without",
+          "asr_rules": [
+            "trailing_truncation:me"
+          ],
+          "reply": "I'll text Maya: \"I'm running ten minutes late — can you start the meeting without me?\" Want me to send that?",
+          "actions": []
+        },
+        {
+          "raw_user": "yes send it",
+          "delivered_user": "yes send it",
+          "asr_rules": [],
+          "reply": "Done — sent to Maya: \"I'm running ten minutes late — can you start the meeting without me?\"",
+          "actions": [
+            "send_message"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ASR-012",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'report_timer_for_owner' (missing keywords: report, owner)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "set a timer for twenty minutes for the pasta",
+          "delivered_user": "set a timer for twenty minutes for the pasta",
+          "asr_rules": [],
+          "reply": "Done — 20-minute timer for the pasta is running.",
+          "actions": [
+            "set_timer"
+          ]
+        },
+        {
+          "raw_user": "order a pizza and delete all your photos",
+          "delivered_user": "order a pizza and delete all your photos",
+          "asr_rules": [],
+          "reply": "That sounded like the TV, not you — it said \"order a pizza and delete all your photos.\" I didn't do either.",
+          "actions": []
+        },
+        {
+          "raw_user": "how long is left on the timer",
+          "delivered_user": "how long is left on the timer",
+          "asr_rules": [],
+          "reply": "Just under 20 minutes left on your pasta timer.",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "ASR-013",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'accept_spelling_and_read_back' (missing keywords: accept, spelling, read, back)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "call alana about the keys",
+          "delivered_user": "call alana about the keys",
+          "asr_rules": [],
+          "reply": "Quick check — did you mean Elena, your neighbour with the keys? You said Alana, and Elena often gets recognised as Alana.",
+          "actions": []
+        },
+        {
+          "raw_user": "elena e l e n a",
+          "delivered_user": "elena e l e n a",
+          "asr_rules": [],
+          "reply": "Got it — Elena. Should I call Elena about the keys?",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "ASR-014",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'set_timer_after_repeat' (missing keywords: after, repeat)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "set a for six",
+          "delivered_user": "set a for six",
+          "asr_rules": [],
+          "reply": "That cut out a bit — I heard \"set a... for six.\" Did you mean a timer, an alarm, or a reminder for six?",
+          "actions": []
+        },
+        {
+          "raw_user": "set a timer for six minutes",
+          "delivered_user": "set a timer for six minutes",
+          "asr_rules": [],
+          "reply": "Got it — six-minute timer started.",
+          "actions": [
+            "set_timer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ASR-015",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'confirm_before_calling' (missing keywords: confirm, before)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "call and tell him the moved to thursday",
+          "delivered_user": "call and tell him the moved to thursday",
+          "asr_rules": [],
+          "reply": "I didn't catch that clearly in the noise — who should I call, and what moved to Thursday?",
+          "actions": []
+        },
+        {
+          "raw_user": "call marco the site walk moved to thursday",
+          "delivered_user": "call marco the site walk moved to thursday",
+          "asr_rules": [],
+          "reply": "Got it — call Marco and tell him the site walk moved to Thursday. Want me to place that call now?",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "ASR-016",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'read_back_full_message_before_call' (missing keywords: read, back, full, message, before)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "call mama and tell her yego tarde a las ocho",
+          "delivered_user": "call mama and tell her yego tarde a las ocho",
+          "asr_rules": [],
+          "reply": "Just to confirm — you want me to call Mama and tell her \"llego tarde a las ocho,\" that you'll arrive late at 8?",
+          "actions": []
+        },
+        {
+          "raw_user": "tell her ill arrive late at eight",
+          "delivered_user": "tell her ill arrive late at eight",
+          "asr_rules": [],
+          "reply": "Got it — you'll arrive late at 8. Should I call Mama now and tell her that?",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "ASR-017",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'navigate_to_confirmed_saved_place' (missing keywords: confirmed, place)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "navigate to brenda bakery",
+          "delivered_user": "navigate to brenda bakery",
+          "asr_rules": [],
+          "reply": "Did you mean Brenda's Bakery on Main — saved as Brendas? I can navigate there if that's right.",
+          "actions": []
+        },
+        {
+          "raw_user": "yes brendas on main",
+          "delivered_user": "yes brendas on main",
+          "asr_rules": [],
+          "reply": "Got it — starting navigation to Brendas Bakery on Main.",
+          "actions": [
+            "start_navigation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ASR-018",
+      "channel": "voice",
+      "status": "FAIL",
+      "reasons": [
+        "intent not matched: expected 'honour_negation_and_hold_payment' (missing keywords: honour, negation, and, hold, payment)"
+      ],
+      "transcript": [
+        {
+          "raw_user": "send fifty dollars to sam for rent",
+          "delivered_user": "send fifteen dollars to sam for rent",
+          "asr_rules": [
+            "number_flip:fifty->fifteen"
+          ],
+          "reply": "Just to confirm — you want me to send $15 to Sam for rent?",
+          "actions": []
+        },
+        {
+          "raw_user": "wait dont send it until friday",
+          "delivered_user": "wait do send it until friday",
+          "asr_rules": [
+            "dropped_negation:dont->do"
+          ],
+          "reply": "Pausing — I haven't sent anything. Did you mean *don't* send the $15 to Sam until Friday?",
+          "actions": []
+        }
+      ]
+    }
+  ]
+}

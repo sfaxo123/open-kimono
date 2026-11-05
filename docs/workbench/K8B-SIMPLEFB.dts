@@ -1,0 +1,17 @@
+/dts-v1/;
+/plugin/;
+
+/* QEMU EDK2's 800x600 ramfb GOP allocation in this fixture. */
+&{/chosen} {
+    #address-cells = <2>;
+    #size-cells = <2>;
+    framebuffer@bc430000 {
+        compatible = "simple-framebuffer";
+        reg = <0x0 0xbc430000 0x0 0x00200000>;
+        width = <800>;
+        height = <600>;
+        stride = <3200>;
+        format = "a8r8g8b8";
+        status = "okay";
+    };
+};

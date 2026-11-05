@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>kimono — open kimono</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top">
+  <span class="brand">KIMONO</span>
+  <span id="run" class="run"></span>
+  <span id="seq" class="seq">seq -</span>
+  <span id="conn" class="conn conn-down">connecting</span>
+</header>
+
+<div id="banner" class="banner-stack" role="status" aria-live="polite"></div>
+
+<div class="strip">
+  <div id="mic" class="mic"></div>
+</div>
+
+<div class="strip" id="services" aria-label="running services"></div>
+<div class="strip" id="power" aria-label="power state"></div>
+
+<section id="modules" class="modules" aria-label="on-the-fly modules"></section>
+
+<main id="timeline" class="timeline" aria-label="event journal"></main>
+
+<form id="ask" class="ask" autocomplete="off">
+  <input id="asktext" name="text" type="text" inputmode="text" placeholder="ask, or say what to build…" enterkeyhint="send">
+  <button type="submit">send</button>
+</form>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

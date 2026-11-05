@@ -1,0 +1,11 @@
+[package]
+name = "caps-check"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Host-testable reference model for the caps: capability broker + Wasm sandbox design (D2)"
+
+[dependencies]
+
+[lib]
+path = "src/lib.rs"

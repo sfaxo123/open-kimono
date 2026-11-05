@@ -1,0 +1,31 @@
+From: Remy <remy@localhost>
+Subject: [PATCH] ramboot: pass optional watchdog handoff mode into the kernel environment
+
+Forward a build-time REDOX_WDT_MODE of exactly "disarm" or
+"leave" into the kernel environment so the kernel's APSS
+watchdog handoff (kernel patch 0043) can select its mode;
+any other value forwards nothing, which the kernel parses
+as disarm. Mirrors 0004's REDOX_RAMBOOT_TTL forwarding.
+
+Agent: Remy (root of record)
+Host: 3090
+Model: Muse Wonder (muse-wonder-1.0)
+Provider: Meta
+---
+diff --git a/src/main.rs b/src/main.rs
+index b5aa4ec..a828ee4 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -636,6 +636,12 @@ fn main(os: &impl Os) -> (usize, u64, KernelArgs) {
+                 writeln!(w, "REDOX_RAMBOOT_TTL={ttl}").unwrap();
+             }
+         }
++        #[cfg(feature = "ramboot")]
++        if let Some(mode) = option_env!("REDOX_WDT_MODE") {
++            if mode == "disarm" || mode == "leave" {
++                writeln!(w, "REDOX_WDT_MODE={mode}").unwrap();
++            }
++        }
+         #[cfg(not(feature = "ramboot"))]
+         {
+             if let Some(live) = live_opt {

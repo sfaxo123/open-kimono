@@ -1,0 +1,64 @@
+From 9d1ab39ee91f140e5979a165effd8749f9be11c2 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursor-agent@localhost>
+Date: Mon, 26 Oct 2026 00:11:10 +0000
+Subject: [PATCH 18/21] irqchip: keep summary interrupts of driverless
+ controllers masked
+
+Unsupported controllers get the Null placeholder, which neither handles nor
+EOIs its summary interrupt. Once the OnePlus 6 controller tree initialises,
+the kernel enabled the LMH, MDSS, SPMI and codec summary lines anyway; one
+such interrupt would stay active at the shared priority and block every
+other device IRQ. Reserve the line but leave it masked until a driver
+exists.
+
+Agent: Cursor agent (EMU-TOUCH)
+Model: Auto
+Provider: Cursor
+---
+ src/arch/aarch64/device/irqchip/null.rs |  3 +++
+ src/dtb/irqchip.rs                      | 13 +++++++++++++
+ 2 files changed, 16 insertions(+)
+
+diff --git a/src/arch/aarch64/device/irqchip/null.rs b/src/arch/aarch64/device/irqchip/null.rs
+index 187edae0..0f422d0a 100644
+--- a/src/arch/aarch64/device/irqchip/null.rs
++++ b/src/arch/aarch64/device/irqchip/null.rs
+@@ -40,4 +40,7 @@ impl InterruptController for Null {
+     fn irq_to_virq(&self, _hwirq: u32) -> Option<usize> {
+         None
+     }
++    fn irq_has_driver(&self) -> bool {
++        false
++    }
+ }
+diff --git a/src/dtb/irqchip.rs b/src/dtb/irqchip.rs
+index 59fa2547..fc7a7317 100644
+--- a/src/dtb/irqchip.rs
++++ b/src/dtb/irqchip.rs
+@@ -187,6 +187,11 @@ pub trait InterruptController: InterruptHandler {
+     fn irq_wakeup_spec(&self, _irq_data: IrqCell) -> Option<IrqCell> {
+         None
+     }
++    /// The placeholder for an unsupported controller cannot acknowledge its
++    /// summary interrupt; enabling it would leave the parent line active.
++    fn irq_has_driver(&self) -> bool {
++        true
++    }
+ }
+ 
+ pub struct IrqConnection {
+@@ -405,6 +410,14 @@ impl IrqChipList {
+                             // assert is unused
+                             irq_desc[virq].basic.child_ic_idx = Some(cur_idx);
+                             irq_desc[virq].basic.used = true;
++                            if !self.chips[cur_idx].ic.irq_has_driver() {
++                                info!(
++                                    "irq chip 0x{:x} has no driver; its summary interrupt {:?} stays masked",
++                                    cur_phandle.as_u32(),
++                                    parent_interrupt
++                                );
++                                continue;
++                            }
+                             // A summary interrupt is held by the parent GIC.
+                             self.chips[parent_idx]
+                                 .ic

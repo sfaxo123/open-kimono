@@ -1,0 +1,579 @@
+From 93e3db02545cddb67b6b3dc49b56564243925e7c Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursor-agent@localhost>
+Date: Mon, 26 Oct 2026 00:03:24 +0000
+Subject: [PATCH 1/3] rmi4d: discover the DT touch node and wait on its
+ attention IRQ
+
+rmi4d mapped GENI MMIO before common::init and panicked at start on
+qemu-oneplus6. It now initialises the memory root first, finds the enabled
+syna,rmi4-i2c node under its qcom,geni-i2c bus in /scheme/kernel.dtb,
+claims the interrupts-extended attention IRQ through the irq scheme and
+reads the touch controller only when that IRQ fires (one drain read after
+arming). Pointer events come from a host-tested Tracker. geni-i2cd gets
+the same common::init fix and the base-addressed mapping.
+
+Agent: Cursor agent (EMU-TOUCH)
+Model: Auto
+Provider: Cursor
+---
+ Cargo.lock                                 |   2 +
+ drivers/geni-i2cd/src/hardware.inc         |  31 ++-
+ drivers/geni-i2cd/src/main.rs              |   3 +-
+ drivers/rmi4-touch-core/src/lib.rs         |  76 +++++++
+ drivers/rmi4-touch-core/tests/attention.rs |  36 ++++
+ drivers/rmi4-touch-core/tests/pointer.rs   |  55 +++++
+ drivers/rmi4d/Cargo.toml                   |   2 +
+ drivers/rmi4d/src/main.rs                  | 223 ++++++++++++++++-----
+ 8 files changed, 371 insertions(+), 57 deletions(-)
+ create mode 100644 drivers/rmi4-touch-core/tests/attention.rs
+ create mode 100644 drivers/rmi4-touch-core/tests/pointer.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 8e42ad04..9d910c11 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2211,10 +2211,12 @@ name = "rmi4d"
+ version = "0.1.0"
+ dependencies = [
+  "common",
++ "fdt 0.1.5",
+  "geni-i2c-core",
+  "inputd",
+  "mmio-replay",
+  "orbclient",
++ "redox_event",
+  "rmi4-touch-core",
+ ]
+ 
+diff --git a/drivers/geni-i2cd/src/hardware.inc b/drivers/geni-i2cd/src/hardware.inc
+index e1a4eafc..8183f18e 100644
+--- a/drivers/geni-i2cd/src/hardware.inc
++++ b/drivers/geni-i2cd/src/hardware.inc
+@@ -2,32 +2,45 @@ use std::ptr::{read_volatile, write_volatile};
+ 
+ use common::{MemoryType, PhysBorrowed, Prot};
+ use mmio_replay::{Mmio, Width};
++
++const WINDOW: u64 = 0x1000;
++
++/// One GENI serial-engine register window. `common::init` must run first.
+ pub struct Mapped {
+     _region: PhysBorrowed,
+     ptr: *mut u8,
++    base: u64,
+ }
+ impl Mapped {
+-    pub fn open() -> Result<Self, Box<dyn std::error::Error>> {
+-        let region = PhysBorrowed::map(0xa90000, 0x1000, Prot::RW, MemoryType::DeviceMemory)?;
++    pub fn open(base: u64) -> Result<Self, Box<dyn std::error::Error>> {
++        let region = PhysBorrowed::map(
++            base as usize,
++            WINDOW as usize,
++            Prot::RW,
++            MemoryType::DeviceMemory,
++        )?;
+         let ptr = region.as_ptr().cast();
+         Ok(Self {
+             _region: region,
+             ptr,
++            base,
+         })
+     }
++    fn reg(&self, addr: u64) -> *mut u32 {
++        let offset = addr
++            .checked_sub(self.base)
++            .filter(|offset| offset % 4 == 0 && offset + 4 <= WINDOW)
++            .expect("GENI access outside the mapped register window");
++        unsafe { self.ptr.add(offset as usize).cast() }
++    }
+ }
+ impl Mmio for Mapped {
+     fn read(&mut self, addr: u64, width: Width) -> u64 {
+         assert_eq!(width, Width::W32);
+-        unsafe { read_volatile(self.ptr.add((addr - 0xa90000) as usize).cast::<u32>()) as u64 }
++        unsafe { read_volatile(self.reg(addr)) as u64 }
+     }
+     fn write(&mut self, addr: u64, width: Width, value: u64) {
+         assert_eq!(width, Width::W32);
+-        unsafe {
+-            write_volatile(
+-                self.ptr.add((addr - 0xa90000) as usize).cast::<u32>(),
+-                value as u32,
+-            )
+-        }
++        unsafe { write_volatile(self.reg(addr), value as u32) }
+     }
+ }
+diff --git a/drivers/geni-i2cd/src/main.rs b/drivers/geni-i2cd/src/main.rs
+index 8a6eece3..5ae73d76 100644
+--- a/drivers/geni-i2cd/src/main.rs
++++ b/drivers/geni-i2cd/src/main.rs
+@@ -10,7 +10,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+     if std::env::args().nth(1).as_deref() != Some("--probe-rmi4") {
+         return Err("explicit --probe-rmi4 required".into());
+     }
+-    let mut bus = Geni::new(hardware::Mapped::open()?, 0xa90000);
++    common::init();
++    let mut bus = Geni::new(hardware::Mapped::open(0xa90000)?, 0xa90000);
+     let mut descriptor = [0u8; 6];
+     bus.write_read(0x20, &[0xe9], &mut descriptor)
+         .map_err(|e| format!("{e:?}"))?;
+diff --git a/drivers/rmi4-touch-core/src/lib.rs b/drivers/rmi4-touch-core/src/lib.rs
+index d3da8836..3b3a5bda 100644
+--- a/drivers/rmi4-touch-core/src/lib.rs
++++ b/drivers/rmi4-touch-core/src/lib.rs
+@@ -9,6 +9,7 @@ pub enum Error {
+     DuplicateFunction(u8),
+     InvalidDescriptor,
+     UnconfiguredReport,
++    InvalidAttention,
+ }
+ impl From<BusError> for Error {
+     fn from(e: BusError) -> Self {
+@@ -120,6 +121,81 @@ impl<B: Bus> Rmi4<B> {
+         self.bus
+     }
+ }
++/// Attention interrupt from `interrupts-extended = <&controller pin flags>`.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct Attention {
++    pub controller: u32,
++    pub pin: u32,
++    pub flags: u32,
++}
++impl Attention {
++    /// One specifier for a two-cell controller such as TLMM; DTB cells are big-endian.
++    pub fn parse(raw: &[u8]) -> Result<Self, Error> {
++        let cell = |i: usize| u32::from_be_bytes([raw[i], raw[i + 1], raw[i + 2], raw[i + 3]]);
++        if raw.len() != 12 {
++            return Err(Error::InvalidAttention);
++        }
++        let attention = Self {
++            controller: cell(0),
++            pin: cell(4),
++            flags: cell(8),
++        };
++        if attention.controller == 0 || !matches!(attention.flags, 1 | 2 | 3 | 4 | 8) {
++            return Err(Error::InvalidAttention);
++        }
++        Ok(attention)
++    }
++    /// Kernel IRQ scheme path that claims this specifier.
++    pub fn irq_path(&self) -> String {
++        format!(
++            "/scheme/irq/phandle-{}/{},{}",
++            self.controller, self.pin, self.flags
++        )
++    }
++}
++
++/// Single-pointer event derived from F12 contacts.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Pointer {
++    Move { x: u16, y: u16 },
++    Button { pressed: bool },
++}
++
++/// The first finger moves the pointer and holds the left button.
++#[derive(Debug, Default)]
++pub struct Tracker {
++    pressed: bool,
++    last: Option<(u16, u16)>,
++}
++impl Tracker {
++    pub fn update(&mut self, contacts: &[Contact]) -> Vec<Pointer> {
++        let mut events = Vec::new();
++        match contacts.first() {
++            Some(contact) => {
++                let position = (contact.x, contact.y);
++                if !self.pressed || self.last != Some(position) {
++                    events.push(Pointer::Move {
++                        x: contact.x,
++                        y: contact.y,
++                    });
++                    self.last = Some(position);
++                }
++                if !self.pressed {
++                    events.push(Pointer::Button { pressed: true });
++                    self.pressed = true;
++                }
++            }
++            None => events.extend(self.release()),
++        }
++        events
++    }
++    /// Releases a held button, for example before exiting on a bus error.
++    pub fn release(&mut self) -> Option<Pointer> {
++        let held = std::mem::take(&mut self.pressed);
++        held.then_some(Pointer::Button { pressed: false })
++    }
++}
++
+ /// F12 Data1: one eight-byte object record per slot; only fingers are exposed.
+ pub fn decode(raw: &[u8]) -> Vec<Contact> {
+     raw.chunks_exact(8)
+diff --git a/drivers/rmi4-touch-core/tests/attention.rs b/drivers/rmi4-touch-core/tests/attention.rs
+new file mode 100644
+index 00000000..81e1c503
+--- /dev/null
++++ b/drivers/rmi4-touch-core/tests/attention.rs
+@@ -0,0 +1,36 @@
++use rmi4_touch_core::{Attention, Error};
++
++/// `interrupts-extended = <0x4a 0x7d 0x02>` from the OnePlus 6 U-Boot DTB:
++/// TLMM phandle 0x4a, GPIO 125, IRQ_TYPE_EDGE_FALLING.
++const ENCHILADA: [u8; 12] = [0, 0, 0, 0x4a, 0, 0, 0, 0x7d, 0, 0, 0, 2];
++
++#[test]
++fn parses_the_enchilada_attention_specifier() {
++    let attention = Attention::parse(&ENCHILADA).unwrap();
++    assert_eq!(
++        attention,
++        Attention {
++            controller: 0x4a,
++            pin: 125,
++            flags: 2
++        }
++    );
++    assert_eq!(attention.irq_path(), "/scheme/irq/phandle-74/125,2");
++}
++
++#[test]
++fn rejects_malformed_specifiers() {
++    assert_eq!(
++        Attention::parse(&ENCHILADA[..8]),
++        Err(Error::InvalidAttention)
++    );
++    let mut two = ENCHILADA.to_vec();
++    two.extend_from_slice(&ENCHILADA);
++    assert_eq!(Attention::parse(&two), Err(Error::InvalidAttention));
++    let mut no_phandle = ENCHILADA;
++    no_phandle[3] = 0;
++    assert_eq!(Attention::parse(&no_phandle), Err(Error::InvalidAttention));
++    let mut no_trigger = ENCHILADA;
++    no_trigger[11] = 0;
++    assert_eq!(Attention::parse(&no_trigger), Err(Error::InvalidAttention));
++}
+diff --git a/drivers/rmi4-touch-core/tests/pointer.rs b/drivers/rmi4-touch-core/tests/pointer.rs
+new file mode 100644
+index 00000000..7909a009
+--- /dev/null
++++ b/drivers/rmi4-touch-core/tests/pointer.rs
+@@ -0,0 +1,55 @@
++use rmi4_touch_core::{Contact, Pointer, Tracker};
++
++fn finger(x: u16, y: u16) -> Contact {
++    Contact {
++        slot: 0,
++        x,
++        y,
++        pressure: 50,
++    }
++}
++
++#[test]
++fn press_hold_move_release() {
++    let mut tracker = Tracker::default();
++    assert_eq!(
++        tracker.update(&[finger(540, 1140)]),
++        vec![
++            Pointer::Move { x: 540, y: 1140 },
++            Pointer::Button { pressed: true }
++        ]
++    );
++    assert!(tracker.update(&[finger(540, 1140)]).is_empty());
++    assert_eq!(
++        tracker.update(&[finger(541, 1140)]),
++        vec![Pointer::Move { x: 541, y: 1140 }]
++    );
++    assert_eq!(
++        tracker.update(&[]),
++        vec![Pointer::Button { pressed: false }]
++    );
++    assert!(tracker.update(&[]).is_empty());
++}
++
++#[test]
++fn a_new_press_at_the_old_position_moves_first() {
++    let mut tracker = Tracker::default();
++    tracker.update(&[finger(10, 20)]);
++    tracker.update(&[]);
++    assert_eq!(
++        tracker.update(&[finger(10, 20)]),
++        vec![
++            Pointer::Move { x: 10, y: 20 },
++            Pointer::Button { pressed: true }
++        ]
++    );
++}
++
++#[test]
++fn release_only_reports_a_held_button() {
++    let mut tracker = Tracker::default();
++    assert_eq!(tracker.release(), None);
++    tracker.update(&[finger(1, 2)]);
++    assert_eq!(tracker.release(), Some(Pointer::Button { pressed: false }));
++    assert_eq!(tracker.release(), None);
++}
+diff --git a/drivers/rmi4d/Cargo.toml b/drivers/rmi4d/Cargo.toml
+index 17b3e423..702d6fac 100644
+--- a/drivers/rmi4d/Cargo.toml
++++ b/drivers/rmi4d/Cargo.toml
+@@ -10,3 +10,5 @@ rmi4-touch-core = { path = "../rmi4-touch-core" }
+ mmio-replay = { path = "../mmio-replay" }
+ inputd = { path = "../inputd" }
+ orbclient.workspace = true
++fdt.workspace = true
++redox_event.workspace = true
+diff --git a/drivers/rmi4d/src/main.rs b/drivers/rmi4d/src/main.rs
+index 4fb71315..816b7b09 100644
+--- a/drivers/rmi4d/src/main.rs
++++ b/drivers/rmi4d/src/main.rs
+@@ -3,68 +3,197 @@
+ mod hardware {
+     include!("../../geni-i2cd/src/hardware.inc");
+ }
++
+ #[cfg(target_os = "redox")]
+-fn main() -> Result<(), Box<dyn std::error::Error>> {
+-    use std::time::Duration;
++mod daemon {
++    use std::error::Error;
++    use std::fs::{self, OpenOptions};
++    use std::io::{Read, Write};
++    use std::os::fd::AsRawFd;
+ 
+-    use geni_i2c_core::Geni;
++    use event::{user_data, EventFlags, EventQueue};
++    use fdt::{node::FdtNode, Fdt};
++    use geni_i2c_core::{Bus, Geni};
+     use inputd::ProducerHandle;
+     use orbclient::{ButtonEvent, MouseEvent};
+-    use rmi4_touch_core::{Data1, Rmi4};
+-    let args: Vec<String> = std::env::args().collect();
+-    if args.len() != 3 {
+-        return Err("usage: rmi4d DATA1_OFFSET SLOTS (oracle-verified)".into());
++    use rmi4_touch_core::{Attention, Data1, Function, Pointer, Rmi4, Tracker, ADDRESS};
++
++    user_data! {
++        enum Source {
++            Irq,
++        }
+     }
+-    let offset = args[1].parse::<u8>()?;
+-    let slots = args[2].parse::<u8>()?;
+-    let descriptor = Data1::checked(offset, slots).map_err(|e| format!("{e:?}"))?;
+-    let bus = Geni::new(hardware::Mapped::open()?, 0xa90000);
+-    let mut touch = Rmi4::discover(bus).map_err(|e| format!("{e:?}"))?;
+-    touch.set_data1(descriptor);
+-    let mut input = ProducerHandle::new()?;
+-    let mut pressed = false;
+-    loop {
+-        let contacts = match touch.poll() {
+-            Ok(contacts) => contacts,
+-            Err(e) => {
+-                if pressed {
+-                    input.write_event(
+-                        ButtonEvent {
+-                            left: false,
+-                            right: false,
+-                            middle: false,
+-                        }
+-                        .to_event(),
+-                    )?;
++
++    fn compatible(node: FdtNode<'_, '_>, name: &str) -> bool {
++        node.compatible().is_some_and(|c| c.all().any(|s| s == name))
++    }
++
++    fn enabled(node: FdtNode<'_, '_>) -> bool {
++        node.property("status")
++            .and_then(|p| p.as_str())
++            .is_none_or(|s| s == "okay" || s == "ok")
++    }
++
++    fn first_reg(node: FdtNode<'_, '_>) -> Option<u64> {
++        Some(node.reg()?.next()?.starting_address as u64)
++    }
++
++    /// GENI I2C base and attention interrupt of the enabled RMI4 node at 0x20.
++    fn find_touch(dtb: &[u8]) -> Result<(u64, Attention), Box<dyn Error>> {
++        let dt = Fdt::new(dtb).map_err(|e| format!("invalid device tree: {e:?}"))?;
++        for bus in dt
++            .all_nodes()
++            .filter(|n| compatible(*n, "qcom,geni-i2c") && enabled(*n))
++        {
++            for child in bus.children() {
++                if !compatible(child, "syna,rmi4-i2c")
++                    || !enabled(child)
++                    || first_reg(child) != Some(u64::from(ADDRESS))
++                {
++                    continue;
+                 }
+-                return Err(format!("{e:?}").into());
++                let base = first_reg(bus).ok_or("GENI I2C node has no reg")?;
++                let raw = child
++                    .property("interrupts-extended")
++                    .ok_or("RMI4 node has no interrupts-extended")?
++                    .value;
++                let attention = Attention::parse(raw).map_err(|e| format!("{e:?}"))?;
++                return Ok((base, attention));
+             }
+-        };
+-        let first = contacts.first();
+-        if let Some(point) = first {
+-            input.write_event(
+-                MouseEvent {
+-                    x: i32::from(point.x),
+-                    y: i32::from(point.y),
++        }
++        Err("no enabled syna,rmi4-i2c at 0x20 under a qcom,geni-i2c bus".into())
++    }
++
++    fn describe(f: Function) -> String {
++        format!(
++            "query={:#04x} command={:#04x} control={:#04x} data={:#04x} irqs={}",
++            f.query, f.command, f.control, f.data, f.irqs
++        )
++    }
++
++    fn emit(
++        input: &mut ProducerHandle,
++        events: &[Pointer],
++        trace: bool,
++    ) -> Result<(), Box<dyn Error>> {
++        for event in events {
++            let raw = match *event {
++                Pointer::Move { x, y } => MouseEvent {
++                    x: i32::from(x),
++                    y: i32::from(y),
+                 }
+                 .to_event(),
+-            )?;
+-        }
+-        let next = first.is_some();
+-        if next != pressed {
+-            input.write_event(
+-                ButtonEvent {
+-                    left: next,
+-                    right: false,
++                Pointer::Button { pressed } => ButtonEvent {
++                    left: pressed,
+                     middle: false,
++                    right: false,
+                 }
+                 .to_event(),
+-            )?;
+-            pressed = next;
++            };
++            input.write_event(raw)?;
++            if trace {
++                println!("rmi4d: sent {event:?} to inputd");
++            }
+         }
+-        std::thread::sleep(Duration::from_millis(16));
++        Ok(())
++    }
++
++    fn report<B: Bus>(
++        touch: &mut Rmi4<B>,
++        tracker: &mut Tracker,
++        input: &mut ProducerHandle,
++        trace: bool,
++        irq_count: Option<usize>,
++    ) -> Result<(), Box<dyn Error>> {
++        let contacts = touch.poll().map_err(|e| format!("{e:?}"))?;
++        if trace {
++            match irq_count {
++                Some(count) => println!("rmi4d: attention IRQ count={count} contacts={contacts:?}"),
++                None => println!("rmi4d: initial drain contacts={contacts:?}"),
++            }
++        }
++        emit(input, &tracker.update(&contacts), trace)
++    }
++
++    pub fn run() -> Result<(), Box<dyn Error>> {
++        let mut args: Vec<String> = std::env::args().skip(1).collect();
++        let trace = args.first().is_some_and(|a| a == "--trace");
++        if trace {
++            args.remove(0);
++        }
++        let [offset, slots] = args.as_slice() else {
++            return Err("usage: rmi4d [--trace] DATA1_OFFSET SLOTS (oracle-verified)".into());
++        };
++        let descriptor =
++            Data1::checked(offset.parse()?, slots.parse()?).map_err(|e| format!("{e:?}"))?;
++        common::init();
++        let (base, attention) = find_touch(&fs::read("/scheme/kernel.dtb")?)?;
++        let bus = Geni::new(crate::hardware::Mapped::open(base)?, base);
++        let mut touch = Rmi4::discover(bus).map_err(|e| format!("{e:?}"))?;
++        let functions = touch.functions();
++        println!(
++            "rmi4d: PDT at I2C {base:#x} address {ADDRESS:#04x}: F01 {}; F12 {}",
++            describe(functions.f01),
++            describe(functions.f12)
++        );
++        touch.set_data1(descriptor);
++
++        let path = attention.irq_path();
++        let mut irq = OpenOptions::new()
++            .read(true)
++            .write(true)
++            .create(true)
++            .open(&path)
++            .map_err(|e| format!("{path}: {e}"))?;
++        let queue = EventQueue::<Source>::new().map_err(|e| format!("event queue: {e:?}"))?;
++        queue
++            .subscribe(irq.as_raw_fd() as usize, Source::Irq, EventFlags::READ)
++            .map_err(|e| format!("event queue: {e:?}"))?;
++        let mut input = ProducerHandle::new()?;
++        let mut tracker = Tracker::default();
++        println!(
++            "rmi4d: attention IRQ {path} armed; Data1 offset {} slots {}",
++            descriptor.offset, descriptor.slots
++        );
++
++        let mut serve = || -> Result<(), Box<dyn Error>> {
++            // An edge latched before the IRQ was armed is never repeated.
++            report(&mut touch, &mut tracker, &mut input, trace, None)?;
++            for event in queue.iter() {
++                let Source::Irq = event.map_err(|e| format!("event queue: {e:?}"))?.user_data;
++                let mut count = [0u8; size_of::<usize>()];
++                if irq.read(&mut count)? < count.len() {
++                    continue;
++                }
++                report(
++                    &mut touch,
++                    &mut tracker,
++                    &mut input,
++                    trace,
++                    Some(usize::from_ne_bytes(count)),
++                )?;
++                irq.write(&count)?;
++            }
++            Ok(())
++        };
++        let result = serve();
++        if result.is_err() {
++            if let Some(release) = tracker.release() {
++                let _ = emit(&mut input, &[release], trace);
++            }
++        }
++        result
++    }
++}
++
++#[cfg(target_os = "redox")]
++fn main() {
++    if let Err(error) = daemon::run() {
++        eprintln!("rmi4d: {error}");
++        std::process::exit(1);
+     }
+ }
++
+ #[cfg(not(target_os = "redox"))]
+ fn main() {
+     eprintln!("rmi4d requires Redox aarch64; use core replay tests on the host");
+-- 
+2.43.0
+

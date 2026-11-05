@@ -1,0 +1,85 @@
+From: Remy <remy@localhost>
+Subject: [PATCH] aarch64: run the watchdog handoff from start() after bootstrap, not at the end of device init
+
+Gate catch (first 8 GiB gate of the P3-fix images,
+2026-11-01): KERNEL PANIC "BOOTSTRAP was not set" at
+src/startup/mod.rs:151, called from init_devicetree right
+after RTC INIT, then HALT. 0043 placed qcom_wdt::handoff()
+at the end of init_devicetree, but handoff() reads
+REDOX_WDT_MODE via crate::startup::init_env(), and init_env()
+is BOOTSTRAP.get().expect(...) - the bootstrap environment
+is only installed by args.bootstrap() in arch start(),
+AFTER init_devicetree returns. Move the call to start(),
+immediately after the bootstrap block and before kmain:
+device init is complete, the environment exists, userspace
+has not started - the same healthy point, a few instructions
+later. mod.rs keeps a pointer comment; the qcom_wdt module
+doc placement sentence is corrected to match.
+
+Agent: Remy (root of record)
+Model: Muse Wonder (muse-wonder-1.0)
+Provider: Meta
+
+---
+diff --git a/src/arch/aarch64/device/mod.rs b/src/arch/aarch64/device/mod.rs
+index c440265d..57ee7eea 100644
+--- a/src/arch/aarch64/device/mod.rs
++++ b/src/arch/aarch64/device/mod.rs
+@@ -64,15 +64,11 @@ pub unsafe fn init_devicetree(fdt: &Fdt) {
+         serial::init(fdt);
+         info!("RTC INIT");
+         rtc::init(fdt);
+-        // P3 F-4 (REVIEW-20261031-2230): the bootloader may have armed
+-        // the APSS watchdog before handoff (~32 s hardware fuse, no
+-        // servicing once U-Boot exits). Device init is complete at
+-        // this point - the healthy point for this phase - so the
+-        // kernel takes ownership of the watchdog now: disarm it
+-        // (normal images) or deliberately leave it armed
+-        // (REDOX_WDT_MODE=leave stall-test images).
+-        #[cfg(feature = "qcom-wdt-handoff")]
+-        qcom_wdt::handoff();
++        // The APSS watchdog handoff (qcom_wdt::handoff, patch 0043)
++        // runs from arch start() right after args.bootstrap(): it
++        // reads REDOX_WDT_MODE via crate::startup::init_env(), which
++        // panics before the bootstrap environment is installed
++        // (patch 0045; the first 0043 gate run panicked here).
+     }
+ }
+ 
+diff --git a/src/arch/aarch64/device/qcom_wdt.rs b/src/arch/aarch64/device/qcom_wdt.rs
+index 22192c12..9c6fb6b5 100644
+--- a/src/arch/aarch64/device/qcom_wdt.rs
++++ b/src/arch/aarch64/device/qcom_wdt.rs
+@@ -7,8 +7,9 @@
+ //! count (0xFFFFF ticks, ~32 s at the sleep clock) and U-Boot's
+ //! servicing stops at handoff, so an armed watchdog bites ~32 s into
+ //! the boot unless the kernel takes ownership (REVIEW-20261031-2230
+-//! F-4). This module is that handoff. At the end of device init it
+-//! either DISARMS the watchdog (normal images; the TTL/reset
++//! F-4). This module is that handoff. Once device init is complete
++//! and the bootstrap environment exists (arch start(), just before
++//! kmain; patch 0045) it either DISARMS the watchdog (normal images; the TTL/reset
+ //! machinery owns the timeline from there) or deliberately LEAVES it
+ //! armed (stall-test images, whose bite must land in the installed
+ //! system — the early download-mode cookie clear, patch 0042, makes
+diff --git a/src/arch/aarch64/start.rs b/src/arch/aarch64/start.rs
+index 58826349..ab35f6da 100644
+--- a/src/arch/aarch64/start.rs
++++ b/src/arch/aarch64/start.rs
+@@ -136,6 +136,16 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
+             args.bootstrap()
+         };
+ 
++        // P3 F-4 (REVIEW-20261031-2230): take ownership of the
++        // bootloader-armed APSS watchdog. Device init is complete
++        // and the bootstrap environment now exists - the earliest
++        // point qcom_wdt::handoff() may read REDOX_WDT_MODE via
++        // crate::startup::init_env() (it panics before
++        // args.bootstrap() installs it; patch 0045). Still before
++        // kmain/userspace: the healthy point for this phase.
++        #[cfg(feature = "qcom-wdt-handoff")]
++        device::qcom_wdt::handoff();
++
+         // TODO: use stack
+         crate::startup::kmain(bootstrap, Kstack::new().expect("failed to allocate stack"));
+     }

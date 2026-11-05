@@ -1,0 +1,15 @@
+{
+  "service": "battery-watcher",
+  "gen": 1,
+  "engine": "tinywasm",
+  "kind": "wasm",
+  "cores": 1,
+  "ram_kb": 8192,
+  "wake": "keep",
+  "uses": [
+    { "cap": "state.rw", "scope": "area=*" },
+    { "cap": "audio.capture", "scope": "*" },
+    { "cap": "network.connect", "scope": "cloud" },
+    { "cap": "time.wake", "scope": "advance=250ms, max=5m" }
+  ]
+}

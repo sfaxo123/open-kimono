@@ -1,0 +1,33 @@
+# voiced configuration — copy to ~/agentic/voiced.conf on the phone.
+# One `key = value` per line; '#' starts a comment. An unknown key is an
+# error, because a silently ignored line on a phone is a bug you find by ear.
+
+# Where the agent daemon answers.
+agentd = http://127.0.0.1:8787
+
+# STT: a Wyoming server when one exists, otherwise the engine the phone has.
+# The command receives the captured audio as a 16 kHz mono s16le WAV on stdin
+# and prints the transcript on stdout. Exit 3 means silence.
+stt = cmd $HOME/agentic/bin/stt-moonshine.sh
+# stt = wyoming 127.0.0.1:10300
+
+# TTS: the command receives the text on stdin and writes a WAV to argv[1].
+tts = cmd $HOME/agentic/bin/tts-ptts.sh
+# tts = wyoming 127.0.0.1:10200
+
+# Playback command; it receives the answer WAV as argv[1].
+play = aplay -q
+# play = none
+
+# quiet = true writes the answer WAV and makes no sound. Keep it true for
+# automated runs (PLAN phone-safety rule); the operator flips it for a trial.
+quiet = true
+
+# Mic ownership. One live holder; a second voiced refuses.
+lock = $HOME/agentic/voiced.mic.lock
+
+# Optional: raw transcript -> cleaned text on stdin/stdout (journalled as
+# text_cleaned, so the screen shows both what was heard and what was used).
+clean = none
+
+language = en

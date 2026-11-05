@@ -1,0 +1,26 @@
+From 6ba64cc289caf25cb41a4db7c6f9ec900d663850 Mon Sep 17 00:00:00 2001
+From: claude-code <claude@macbook.local>
+Date: Sat, 31 Oct 2026 22:25:21 +0000
+Subject: [PATCH 35/37] aarch64: qcom SCM availability flag must be static, not
+ const
+
+---
+ src/arch/aarch64/device/qcom_scm.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/aarch64/device/qcom_scm.rs b/src/arch/aarch64/device/qcom_scm.rs
+index 068a3454..9b5df43a 100644
+--- a/src/arch/aarch64/device/qcom_scm.rs
++++ b/src/arch/aarch64/device/qcom_scm.rs
+@@ -10,7 +10,7 @@ use fdt::properties::Status;
+ 
+ use crate::dtb::Fdt;
+ 
+-const SCM_AVAILABLE: AtomicBool = AtomicBool::new(false);
++static SCM_AVAILABLE: AtomicBool = AtomicBool::new(false);
+ 
+ #[cfg(feature = "qcom-dload-mode-clear")]
+ const SMC64_STANDARD_SIP: u64 = 0x4200_0000;
+-- 
+2.43.0
+

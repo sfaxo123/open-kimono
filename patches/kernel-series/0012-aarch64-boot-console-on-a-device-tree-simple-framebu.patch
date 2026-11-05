@@ -1,0 +1,191 @@
+From ceb7e1839f82ab9cc895d6b4f65d95918d874bc9 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sun, 25 Oct 2026 00:40:01 +0000
+Subject: [PATCH 12/21] aarch64: boot console on a device tree
+ simple-framebuffer
+
+Without a GOP (stock ABL / U-Boot DT handoff) the panel stayed blank
+until vesad. Right after the early serial console, take the DT
+simple-framebuffer if check_placement() accepts it against the kernel's
+boot data, the bootloader's free areas and the DT carve-outs; write it
+through the bootloader's PHYS_OFFSET identity map, register exactly the
+visible buffer as Reserved so memory::init maps it write-combining and
+keeps it out of the allocator and physmap, and stop per-write cache
+cleaning once that mapping is live. The DT record wins over a GOP
+framebuffer, as it does in vesad; a mismatch is logged.
+
+Co-Authored-By: Cursor <noreply@cursor.com>
+---
+ src/arch/aarch64/start.rs          |  6 ++-
+ src/devices/graphical_debug/mod.rs | 70 ++++++++++++++++++++++++++++++
+ src/startup/memory.rs              | 21 +++++++--
+ src/startup/mod.rs                 | 14 ++++++
+ 4 files changed, 105 insertions(+), 6 deletions(-)
+
+diff --git a/src/arch/aarch64/start.rs b/src/arch/aarch64/start.rs
+index 6c942f12..58826349 100644
+--- a/src/arch/aarch64/start.rs
++++ b/src/arch/aarch64/start.rs
+@@ -83,9 +83,10 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
+ 
+             let dtb_res = args.dtb();
+ 
+-            // Try to find serial port prior to logging
+-            if let Ok((dtb, _)) = &dtb_res {
++            // Try to find serial port and framebuffer prior to logging
++            if let Ok((dtb, raw_data)) = &dtb_res {
+                 dtb::serial::init_early(dtb);
++                graphical_debug::init_dtb(dtb, raw_data, &args);
+             }
+ 
+             info!("Redox OS starting...");
+@@ -93,6 +94,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
+ 
+             // Initialize RMM
+             let bump_allocator = crate::startup::memory::init(&args, None, None);
++            graphical_debug::write_combining_mapped();
+ 
+             // Initialize paging
+             paging::init();
+diff --git a/src/devices/graphical_debug/mod.rs b/src/devices/graphical_debug/mod.rs
+index 7504f3a4..a837d223 100644
+--- a/src/devices/graphical_debug/mod.rs
++++ b/src/devices/graphical_debug/mod.rs
+@@ -26,6 +26,76 @@ fn install_display(width: usize, height: usize, stride: usize, virt: usize) {
+         virt as *mut u32,
+         cells,
+     ));
++    // The bootloader maps the framebuffer with whatever attributes firmware
++    // gave the region, possibly cacheable, until memory::init remaps it.
++    if let Some(display) = display.as_mut() {
++        display.set_clean_cache(true);
++    }
++}
++
++/// The aarch64 bootloader identity-maps the first 8 GiB at PHYS_OFFSET.
++#[cfg(dtb)]
++const BOOT_IDENTITY_MAP_END: usize = 8 << 30;
++
++/// Use a device tree `simple-framebuffer` for the boot console. It takes
++/// precedence over the bootloader's GOP framebuffer, as it does for vesad.
++#[cfg(dtb)]
++pub fn init_dtb(dt: &crate::dtb::Fdt, raw_data: &[u8], args: &crate::startup::KernelArgs) {
++    use crate::{
++        dtb::simplefb,
++        memory::{PhysicalAddress, RmmA, RmmArch},
++        startup::memory::{bootloader_free_areas, register_memory_region, BootloaderMemoryKind},
++    };
++
++    let fb = match simplefb::find(dt) {
++        None => return,
++        Some(Err(err)) => {
++            warn!("ignoring device tree simple-framebuffer: {err}");
++            return;
++        }
++        Some(Ok(fb)) => fb,
++    };
++    let reserved = simplefb::reserved_ranges::<64>(dt, raw_data);
++    if let Err(err) = simplefb::check_placement(
++        &fb,
++        BOOT_IDENTITY_MAP_END,
++        &args.boot_data_ranges(),
++        bootloader_free_areas(args),
++        &reserved,
++    ) {
++        warn!(
++            "ignoring device tree simple-framebuffer at {:X}: {err}",
++            fb.phys
++        );
++        return;
++    }
++
++    let virt = RmmA::phys_to_virt(PhysicalAddress::new(fb.phys)).data();
++    let record = (fb.phys, virt, fb.size());
++    let previous = core::mem::replace(&mut *FRAMEBUFFER.lock(), record);
++    // Keep the frames out of the allocator and the physmap, so memory::init
++    // maps exactly the visible buffer, write-combining, and nothing around it.
++    register_memory_region(fb.phys, fb.size(), BootloaderMemoryKind::Reserved);
++    install_display(fb.width, fb.height, fb.stride, virt);
++
++    if previous.0 != 0 && previous != record {
++        info!(
++            "bootloader framebuffer at {:X} differs; using the device tree's",
++            previous.0
++        );
++    }
++    info!(
++        "device tree simple-framebuffer {}x{} stride {} at {:X}",
++        fb.width, fb.height, fb.stride, fb.phys
++    );
++}
++
++/// Called once the kernel's own write-combining framebuffer mapping is live.
++#[allow(unused)]
++pub fn write_combining_mapped() {
++    if let Some(display) = DEBUG_DISPLAY.lock().as_mut() {
++        display.set_clean_cache(false);
++    }
+ }
+ 
+ #[allow(unused)]
+diff --git a/src/startup/memory.rs b/src/startup/memory.rs
+index b9d1ef40..9b81e674 100644
+--- a/src/startup/memory.rs
++++ b/src/startup/memory.rs
+@@ -205,14 +205,27 @@ pub fn register_memory_region(base: usize, size: usize, kind: BootloaderMemoryKi
+     }
+ }
+ 
+-fn register_bootloader_areas(areas_base: usize, areas_size: usize) {
+-    let bootloader_areas = unsafe {
++fn bootloader_areas(areas_base: usize, areas_size: usize) -> &'static [BootloaderMemoryEntry] {
++    unsafe {
+         slice::from_raw_parts(
+             areas_base as *const BootloaderMemoryEntry,
+             areas_size / size_of::<BootloaderMemoryEntry>(),
+         )
+-    };
+-    for bootloader_area in bootloader_areas.iter() {
++    }
++}
++
++/// `(base, size)` of the areas the bootloader reported free. On UEFI these
++/// include its own loader data, so they are not unused before `init`.
++#[cfg_attr(not(dtb), expect(dead_code))]
++pub(crate) fn bootloader_free_areas(args: &KernelArgs) -> impl Iterator<Item = (usize, usize)> {
++    bootloader_areas(args.areas_base as usize, args.areas_size as usize)
++        .iter()
++        .filter(|area| area.kind == BootloaderMemoryKind::Free)
++        .map(|area| (area.base as usize, area.size as usize))
++}
++
++fn register_bootloader_areas(areas_base: usize, areas_size: usize) {
++    for bootloader_area in bootloader_areas(areas_base, areas_size).iter() {
+         register_memory_region(
+             bootloader_area.base as usize,
+             bootloader_area.size as usize,
+diff --git a/src/startup/mod.rs b/src/startup/mod.rs
+index b599f546..4ab58897 100644
+--- a/src/startup/mod.rs
++++ b/src/startup/mod.rs
+@@ -77,6 +77,20 @@ impl KernelArgs {
+         );
+     }
+ 
++    /// `(base, size)` of everything the bootloader handed over in memory.
++    #[cfg_attr(not(dtb), expect(dead_code))]
++    pub(crate) fn boot_data_ranges(&self) -> [(usize, usize); 6] {
++        [
++            (self.kernel_base, self.kernel_size),
++            (self.stack_base, self.stack_size),
++            (self.env_base, self.env_size),
++            (self.hwdesc_base, self.hwdesc_size),
++            (self.areas_base, self.areas_size),
++            (self.bootstrap_base, self.bootstrap_size),
++        ]
++        .map(|(base, size)| (base as usize, size as usize))
++    }
++
+     pub(crate) fn bootstrap(&self) -> Bootstrap {
+         Bootstrap {
+             base: crate::memory::Frame::containing(crate::memory::PhysicalAddress::new(

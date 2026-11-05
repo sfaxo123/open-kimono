@@ -1,0 +1,204 @@
+From 835d61c1eeeffaa52eb11ad10d4517d71134711f Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Mon, 26 Oct 2026 06:11:50 +0000
+Subject: [PATCH] gicv3: add host-tested affinity routing encoders
+
+Pure IROUTER and single-target SGI1R encoders. Validate SGI IDs and reject
+Aff0 outside the non-RSS target list. Do not enable APs or access hardware.
+
+Agent: Codex with DSH and Luna
+Model: local 5090; gpt-6-luna; gpt-6-sol
+Provider: local; OpenAI
+Refs: perplexity-redox-hourly-safety-check
+---
+ .../aarch64/device/irqchip/gicv3/model.rs     | 162 ++++++++++++++++++
+ 1 file changed, 162 insertions(+)
+
+diff --git a/src/arch/aarch64/device/irqchip/gicv3/model.rs b/src/arch/aarch64/device/irqchip/gicv3/model.rs
+index 9df26a2d..237bf8ec 100644
+--- a/src/arch/aarch64/device/irqchip/gicv3/model.rs
++++ b/src/arch/aarch64/device/irqchip/gicv3/model.rs
+@@ -48,6 +48,9 @@ pub enum Gicv3Error {
+     RwpTimeout,
+     InvalidIntid(u32),
+     UnsupportedTrigger(u32),
++    /// SGI target Aff0 >= 16: Range Selector Support is not used by this
++    /// encoder, so this affinity cannot be targeted. Rejected, never aliased.
++    SgiAff0Unrepresentable(u32),
+ }
+ 
+ pub trait Mmio {
+@@ -93,6 +96,57 @@ pub fn mpidr_affinity(mpidr: u64) -> u32 {
+     ((((mpidr >> 32) & 0xff) as u32) << 24) | (mpidr & 0x00ff_ffff) as u32
+ }
+ 
++/// `GICD_IROUTER<n>` routing value for a packed affinity (see
++/// [`mpidr_affinity`]).
++///
++/// Aff0/Aff1/Aff2 keep their packed positions in bits 23:0; Aff3 moves from
++/// packed bits 31:24 to IROUTER bits 39:32. IRM (bit 31, Linux
++/// `GICD_IROUTER_SPI_MODE_ANY`) stays clear — this always names exactly one
++/// target affinity — and every reserved bit (63:40, 31:24) is zero.
++/// Layout cross-checked against Linux `arm-gic-v3.h` (bit-31 SPI_MODE
++/// defines) and `gic_set_affinity`/`gic_cpu_to_affinity` in
++/// `drivers/irqchip/irq-gic-v3.c`, which write MPIDR_HWID_BITMASK-shaped
++/// values (Aff3 at 39:32, Aff2:Aff1:Aff0 in the low 24 bits) to IROUTER.
++pub fn irouter_for_affinity(aff: u32) -> u64 {
++    u64::from(aff & 0x00ff_ffff) | (u64::from(aff >> 24) << 32)
++}
++
++/// SGIs are INTIDs 0..=15, the first half of the 32 private INTIDs.
++pub const SGI_INTID_LAST: u32 = 15;
++/// ICC_SGI1R_EL1 TargetList is 16 bits wide, so without RSS an SGI target's
++/// Aff0 must be below this when Range Selector Support is not used.
++pub const SGI_TARGET_LIST_SIZE: u32 = 16;
++
++/// `ICC_SGI1R_EL1` value that sends SGI `intid` to the CPU named by a packed
++/// affinity (see [`mpidr_affinity`]).
++///
++/// TargetList = `1 << Aff0` at bits 15:0, Aff1 at 23:16, INTID at 27:24,
++/// Aff2 at 39:32, Aff3 at 55:48. RS (bits 47:44) and IRM (bit 40) stay clear.
++/// Layout cross-checked against `gic_send_sgi` in Linux
++/// `drivers/irqchip/irq-gic-v3.c` (`tlist << ICC_SGI1R_TARGET_LIST_SHIFT`,
++/// `irq << ICC_SGI1R_SGI_ID_SHIFT`, Aff1/2/3 at
++/// `ICC_SGI1R_AFFINITY_{1,2,3}_SHIFT` = 16/32/48) and the arm64 sysreg
++/// definitions of ICC_SGI1R_EL1.
++///
++/// Only SGI INTIDs 0..=15 are accepted. Aff0 >= 16 is rejected with an
++/// explicit error, never wrapped modulo 16: this encoder leaves RS clear, so
++/// it only supports Aff0 values directly represented by the TargetList.
++pub fn sgi1r_for_affinity(intid: u32, aff: u32) -> Result<u64, Gicv3Error> {
++    if intid > SGI_INTID_LAST {
++        return Err(Gicv3Error::InvalidIntid(intid));
++    }
++    let aff0 = aff & 0xff;
++    if aff0 >= SGI_TARGET_LIST_SIZE {
++        return Err(Gicv3Error::SgiAff0Unrepresentable(aff0));
++    }
++    let aff1 = (aff >> 8) & 0xff;
++    Ok((1u64 << aff0)
++        | (u64::from(aff1) << 16)
++        | (u64::from(intid) << 24)
++        | (u64::from((aff >> 16) & 0xff) << 32)
++        | (u64::from(aff >> 24) << 48))
++}
++
+ /// Validate an EXPLICIT DT `redistributor-stride`. Absent is represented by
+ /// `None` and stays supported (the walk then derives the step from
+ /// GICR_TYPER.VLPIS); a present value must be at least one RD_base + SGI_base
+@@ -692,4 +746,112 @@ mod tests {
+         assert_eq!(c0.lookup(AFF_A), Ok(RD0));
+         assert_eq!(c1.lookup(AFF_A), Err(Gicv3Error::NoRedistributorForCpu(AFF_A)));
+     }
++
++    // --- affinity -> routing-value encodings (host-tested prerequisite) ---
++
++    /// IROUTER implemented fields: Aff2:Aff1:Aff0 in 23:0, Aff3 in 39:32.
++    /// Everything else (IRM at 31, reserved 30:24 and 63:40) must stay 0.
++    const IROUTER_RESERVED: u64 = 0xffff_ff00_ff00_0000;
++
++    /// SGI1R implemented fields: TargetList 15:0, Aff1 23:16, INTID 27:24,
++    /// Aff2 39:32, Aff3 55:48. Reserved: 63:56, 47:40 (incl. IRM 40, RS 44),
++    /// 31:28.
++    const SGI1R_RESERVED: u64 = 0xff00_ff00_f000_0000;
++
++    #[test]
++    fn irouter_maps_all_four_affinity_levels() {
++        // Aff0=1, Aff1=1, Aff2=0, Aff3=0 -> 0x101. (An earlier example
++        // claiming 0x10001 was wrong: Aff1 sits at bits 15:8, not 16.)
++        assert_eq!(irouter_for_affinity(0x0000_0101), 0x0000_0000_0101);
++        // One of each level, all distinct: Aff3=0x12 Aff2=0x34 Aff1=0x56 Aff0=0x78.
++        assert_eq!(irouter_for_affinity(0x12_34_56_78), 0x0000_0012_0034_5678);
++        // Aff3 alone lands at 39:32, not 31:24.
++        assert_eq!(irouter_for_affinity(0xff00_0000), 0x0000_00ff_0000_0000);
++        // Aff2 alone stays at 23:16.
++        assert_eq!(irouter_for_affinity(0x00ff_0000), 0x0000_0000_00ff_0000);
++    }
++
++    #[test]
++    fn irouter_all_ones_keeps_reserved_and_irm_clear() {
++        let v = irouter_for_affinity(0xffff_ffff);
++        assert_eq!(v, 0x0000_00ff_00ff_ffff);
++        assert_eq!(v & IROUTER_RESERVED, 0);
++        for aff in [0u32, 1, 0xff, 0xff00, 0xff_0000, 0x8080_8080, 0xffff_ffff] {
++            assert_eq!(irouter_for_affinity(aff) & IROUTER_RESERVED, 0);
++        }
++    }
++
++    #[test]
++    fn irouter_distinguishes_affinities_that_differ_only_in_aff3() {
++        let lo = irouter_for_affinity(0x0000_0001);
++        let hi = irouter_for_affinity(0x0700_0001);
++        assert_ne!(lo, hi);
++        assert_eq!(hi - lo, 7 << 32);
++        // Aff3=1 vs Aff1=1 must not collide either.
++        assert_ne!(irouter_for_affinity(0x0100_0000), irouter_for_affinity(0x0000_0100));
++    }
++
++    #[test]
++    fn sgi1r_maps_all_four_affinity_levels() {
++        // SGI 5 to Aff0=1 only: TargetList bit 1, INTID at 27:24.
++        assert_eq!(sgi1r_for_affinity(5, 0x0000_0001), Ok(0x0000_0000_0500_0002));
++        // One of each level: Aff0=1 Aff1=2 Aff2=3 Aff3=4, INTID 0xf.
++        assert_eq!(sgi1r_for_affinity(0xf, 0x04_03_02_01), Ok(0x0004_0003_0f02_0002));
++        // Full-width Aff1 is retained at bits 23:16.
++        assert_eq!(sgi1r_for_affinity(0, 0x0000_ff00), Ok(0x0000_0000_00ff_0001));
++        assert_eq!(sgi1r_for_affinity(0, 0xff_ee_dd_0c), Ok(0x00ff_00ee_00dd_1000));
++        // High bits in Aff2 and Aff3 occupy their own byte fields.
++        assert_eq!(sgi1r_for_affinity(0, 0x00ff_0000), Ok(0x0000_00ff_0000_0001));
++        assert_eq!(sgi1r_for_affinity(0, 0xff00_0000), Ok(0x00ff_0000_0000_0001));
++        // Aff0 boundaries: 0 and 15 accepted.
++        assert_eq!(sgi1r_for_affinity(0, 0x0000_0000), Ok(1));
++        assert_eq!(sgi1r_for_affinity(0, 0x0000_000f), Ok(1 << 15));
++        // Aff1 field is 8 bits: 255 accepted at 23:16.
++        assert_eq!(sgi1r_for_affinity(0, 0x0000_ff00), Ok((255u64 << 16) | 1));
++    }
++
++    #[test]
++    fn sgi1r_rejects_unrepresentable_aff0_without_aliasing() {
++        // Aff0 = 16 and 255 must be explicit errors, never modulo-aliased
++        // onto TargetList bits 0..15.
++        assert_eq!(sgi1r_for_affinity(0, 0x0000_0010), Err(Gicv3Error::SgiAff0Unrepresentable(16)));
++        assert_eq!(sgi1r_for_affinity(0, 0x0000_00ff), Err(Gicv3Error::SgiAff0Unrepresentable(255)));
++        for aff0 in 16..=255 {
++            assert_eq!(
++                sgi1r_for_affinity(0, aff0),
++                Err(Gicv3Error::SgiAff0Unrepresentable(aff0))
++            );
++        }
++        assert_eq!(
++            sgi1r_for_affinity(0, 0xff_ff_ff_ff),
++            Err(Gicv3Error::SgiAff0Unrepresentable(255))
++        );
++    }
++
++    #[test]
++    fn sgi1r_accepts_only_sgi_intids() {
++        assert_eq!(sgi1r_for_affinity(0, 1), Ok(0x0000_0000_0000_0002));
++        assert_eq!(sgi1r_for_affinity(15, 1), Ok(0x0000_0000_0f00_0002));
++        assert_eq!(sgi1r_for_affinity(16, 1), Err(Gicv3Error::InvalidIntid(16)));
++        assert_eq!(sgi1r_for_affinity(u32::MAX, 1), Err(Gicv3Error::InvalidIntid(u32::MAX)));
++    }
++
++    #[test]
++    fn sgi1r_reserved_rs_and_irm_stay_zero() {
++        // Largest representable affinity: Aff3/Aff2/Aff1=0xff, Aff0=0x0f.
++        let v = sgi1r_for_affinity(15, 0xff_ff_ff_0f).unwrap();
++        assert_eq!(v, 0x00ff_00ff_0fff_8000);
++        assert_eq!(v & SGI1R_RESERVED, 0);
++        for aff in [0u32, 1, 0x0f, 0x0f0f, 0x0000_0f0f, 0xff_ff_ff_0f] {
++            assert_eq!(sgi1r_for_affinity(15, aff).unwrap() & SGI1R_RESERVED, 0);
++        }
++    }
++
++    #[test]
++    fn sgi1r_distinguishes_affinities_that_differ_only_in_aff3() {
++        let lo = sgi1r_for_affinity(1, 0x0100_0001).unwrap();
++        let hi = sgi1r_for_affinity(1, 0x0200_0001).unwrap();
++        assert_ne!(lo, hi);
++        assert_eq!(hi - lo, 1 << 48);
++    }
+ }
+-- 
+2.43.0
+

@@ -1,0 +1,20 @@
+[package]
+name = "sandbox"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Runs a user-built service as a Wasm module on wasmi; grant-gated host functions are its only OS access, with fuel and memory limits (Redox-on-OnePlus-6, task B5)."
+
+[features]
+default = ["std"]
+std = ["wasmi/std"]
+
+[dependencies]
+# `auto-dispatch` is load-bearing: without it wasmi uses tail-call dispatch even at
+# opt-level 0, where every executed instruction grows the host stack until it overflows.
+wasmi = { version = "=2.0.0", default-features = false, features = ["validate", "auto-dispatch", "prefer-btree-collections"] }
+# `LimiterError` (returned by `wasmi::ResourceLimiter`) is not re-exported by wasmi 2.0.0.
+wasmi_core = { version = "=2.0.0", default-features = false }
+
+[dev-dependencies]
+wat = "1.228"

@@ -1,0 +1,11 @@
+[Unit]
+Description=voiced Smart Turn - persistent Pipecat Smart Turn v3 endpointing judge (CV2)
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/sudo -n /usr/bin/podman rm -f agentic-smartturn
+ExecStart=/usr/bin/sudo -n /usr/bin/podman run --rm --name agentic-smartturn --network none --userns=keep-id -e WW_SMARTTURN_DIR=/st -v $HOME/agentic/smartturn:/st -v $HOME/agentic/wakeword:/scripts:ro localhost/voice-snapshot:20261024 /st/venv/bin/python /scripts/smartturn_engine.py
+ExecStop=/usr/bin/sudo -n /usr/bin/podman stop -t 5 agentic-smartturn
+ExecStopPost=-/usr/bin/sudo -n /usr/bin/podman rm -f agentic-smartturn
+TimeoutStopSec=20

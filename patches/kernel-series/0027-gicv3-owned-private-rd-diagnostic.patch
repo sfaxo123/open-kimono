@@ -1,0 +1,71 @@
+From d752e98ff9472d5cf5f201822301fd0a44abd69c Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Mon, 26 Oct 2026 23:51:09 +0000
+Subject: [PATCH] gicv3: preserve private RD diagnostics as owned lookup
+ failure
+
+Keep current affinity capture, Option result and exact wrapper log unchanged.
+Return scalar-owned diagnostic data from a no-log registry lookup helper for
+future guarded adapters. Global IRQ ownership remains unresolved.
+42 source-rooted host tests,120 parity cases,four behavioral controls and
+offline AArch64 check/link pass. No runtime/SMP/phone proof.
+
+Agent: Codex with Perplexity, Cursor, Luna and Spark
+Model: Codex; pplx-5090; Cursor tool default; gpt-6-luna; spark
+Provider: OpenAI; Cursor; local LiteLLM
+Refs: cloud-dispatch-cursor-20261026T234130-105241; ask-20261026T235008-248637
+---
+ src/arch/aarch64/device/irqchip/gicv3.rs | 27 +++++++++++++++++++++---
+ 1 file changed, 24 insertions(+), 3 deletions(-)
+
+diff --git a/src/arch/aarch64/device/irqchip/gicv3.rs b/src/arch/aarch64/device/irqchip/gicv3.rs
+index 44082a90..07e83ac9 100644
+--- a/src/arch/aarch64/device/irqchip/gicv3.rs
++++ b/src/arch/aarch64/device/irqchip/gicv3.rs
+@@ -51,6 +51,27 @@ fn iar_intid(iar: usize) -> u32 {
+     (iar & 0xff_ffff) as u32
+ }
+ 
++/// Owns no references, so it can outlive the registry borrow and be logged
++/// after any lock protecting the registry is released.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++struct MissingRd {
++    intid: u32,
++    affinity: u32,
++}
++
++/// Must not log, allocate or call back, so it stays callable with the
++/// registry locked.
++fn lookup_private_rd(
++    registry: &RdRegistry,
++    intid: u32,
++    affinity: u32,
++) -> core::result::Result<usize, MissingRd> {
++    match registry.lookup(affinity) {
++        Ok(rd) => Ok(rd),
++        Err(_) => Err(MissingRd { intid, affinity }),
++    }
++}
++
+ #[derive(Debug)]
+ pub struct GicV3 {
+     pub gic_dist_if: GicDistIf,
+@@ -103,12 +124,12 @@ impl GicV3 {
+     /// Private INTIDs are banked per CPU; never fall back to the distributor.
+     fn private_rd(&self, intid: u32) -> Option<usize> {
+         let affinity = model::mpidr_affinity(current_mpidr());
+-        match self.rd_registry.lookup(affinity) {
++        match lookup_private_rd(&self.rd_registry, intid, affinity) {
+             Ok(rd) => Some(rd),
+-            Err(_) => {
++            Err(missing) => {
+                 error!(
+                     "gicv3: private INTID {} on affinity {:#x} has no redistributor mapping",
+-                    intid, affinity
++                    missing.intid, missing.affinity
+                 );
+                 None
+             }
+-- 
+2.43.0
+

@@ -1,0 +1,11 @@
+[Unit]
+Description=voiced warm STT - persistent Moonshine (small) engine for voice turns (CV0)
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/sudo -n /usr/bin/podman rm -f agentic-warm-stt
+ExecStart=/usr/bin/sudo -n /usr/bin/podman run --rm --name agentic-warm-stt --network none --userns=keep-id -e MOONSHINE_VOICE_CACHE=/opt/models/moonshine -e STT_ARCH=small -e WW_DIR=/ww -v /opt/models:/opt/models:ro -v $HOME/agentic/warm-stt:/ww -v $HOME/agentic/wakeword:/scripts:ro -v $HOME/.local/bin/voice-listen-app/brainkit/scripts:/bk:ro localhost/voice-snapshot:20261024 /opt/stt/venv/bin/python /scripts/ww_engine.py
+ExecStop=/usr/bin/sudo -n /usr/bin/podman stop -t 5 agentic-warm-stt
+ExecStopPost=-/usr/bin/sudo -n /usr/bin/podman rm -f agentic-warm-stt
+TimeoutStopSec=20

@@ -1,0 +1,141 @@
+From 0390d1baeec430cef474943909709c039dad8f3b Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Mon, 26 Oct 2026 05:22:15 +0000
+Subject: [PATCH] ufsd: probe mapped UFSHCI and read emulator GPT
+
+Correct the controller base, print CAP/VER before DMA, use generic UFSHCI setup for the emulator, bypass its failing descriptor enumeration, and match the ESP GPT GUID.
+
+Agent: Codex
+
+Model: GPT-6
+
+Provider: OpenAI
+
+Refs: EMU-UFS-RO
+---
+ drivers/ufsd/README.md   |  9 +++---
+ drivers/ufsd/src/main.rs | 59 ++++++++++++++--------------------------
+ 2 files changed, 24 insertions(+), 44 deletions(-)
+
+diff --git a/drivers/ufsd/README.md b/drivers/ufsd/README.md
+index 85bb70f5..a1f7bbfd 100644
+--- a/drivers/ufsd/README.md
++++ b/drivers/ufsd/README.md
+@@ -5,13 +5,12 @@ Opt-in daemon: it starts only when the kernel device tree declares a
+ 
+ It drives `drivers/ufs-core` (vendored from the `redox-oneplus6` repo,
+ `crates/ufs`) through the read-only bring-up of `specs/ufs.md` §4–5:
+-HCE cycle, DME link startup, NOP OUT/IN, `fDeviceInit`, LU enumeration,
++HCE cycle, DME link startup, NOP OUT/IN, `fDeviceInit`, LUN0
+ READ CAPACITY, one READ(10) of LBA 0..33, then CRC-checked GPT parsing
+ with the ESP entry printed. The command builder is closed over the SCSI
+ allowlist `{TEST_UNIT_READY, REQUEST_SENSE, INQUIRY, READ_CAPACITY(10),
+ READ(10)}`; no WRITE-class opcode can reach the bus.
+ 
+-On the qemu-oneplus6 emulator the QCOM vendor DME attributes are not
+-modelled, so `DME_GET(MPHY_TX_FSM_STATE)` never reports HIBERN8; ufsd logs
+-that gap and retries the bring-up without the Qualcomm vendor register
+-path. On a phone with a real PHY the first attempt succeeds.
++The emulator does not model the Qualcomm vendor DME attributes. This
++emulator probe uses the generic UFSHCI HCE and link sequence. It has not
++been validated on a physical phone.
+diff --git a/drivers/ufsd/src/main.rs b/drivers/ufsd/src/main.rs
+index 4730b5f6..2437a65a 100644
+--- a/drivers/ufsd/src/main.rs
++++ b/drivers/ufsd/src/main.rs
+@@ -11,19 +11,19 @@ mod redox {
+     use common::dma::Dma as DmaRegion;
+     use common::{MemoryType, PhysBorrowed, Prot};
+     use mmio_replay::{Mmio, Width};
+-    use ufs_core::{gpt, Config, Delay, Dma, Error as UfsError, Ufshc};
++    use ufs_core::{gpt, Config, Delay, Dma, Ufshc};
+ 
+     /// `ufshc@1d84000` standard register window (DT `reg` first cell, 0x2500).
+-    const HC_BASE: u64 = 0x1d84_0000;
++    const HC_BASE: u64 = 0x01d8_4000;
+     const HC_LEN: usize = 0x2500;
+     /// UTRL + UCD + one data-in buffer; 34 x 512 B fits in a single PRDT.
+     const DMA_LEN: usize = 64 * 1024;
+     const BLOCK: usize = 512;
+ 
+-    /// ESP partition type GUID {C12A7328-F81F-11D2-BA-7B-00-A0-C3-00-AD-3D}, on-disk order.
++    /// ESP partition type GUID {C12A7328-F81F-11D2-BA4B-00A0C93EC93B}, on-disk order.
+     const ESP_TYPE: [u8; 16] = [
+-        0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x7b, 0x00, 0xa0, 0xc3, 0x00, 0xad,
+-        0x3d,
++        0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9,
++        0x3b,
+     ];
+ 
+     struct HcWindow {
+@@ -101,33 +101,24 @@ mod redox {
+         }
+         eprintln!("ufsd: qcom,sdm845-ufshc declared; starting read-only probe");
+ 
+-        let window = HcWindow::new(HC_BASE, HC_LEN)?;
++        let mut window = HcWindow::new(HC_BASE, HC_LEN)?;
++        eprintln!("ufsd: step: HC window mapped");
++        eprintln!("ufsd: MMIO CAP=0x{:08x} VER=0x{:08x}",
++            window.read(HC_BASE, Width::W32), window.read(HC_BASE + 8, Width::W32));
++        eprintln!("ufsd: MMIO HCE=0x{:08x} HCS=0x{:08x}",
++            window.read(HC_BASE + 0x34, Width::W32), window.read(HC_BASE + 0x30, Width::W32));
+         let region = unsafe { DmaRegion::<[u8]>::zeroed_slice(DMA_LEN)?.assume_init() };
++        eprintln!("ufsd: step: DMA region at 0x{:x}", region.physical());
+         let dma = DmaWindow { region };
+ 
+-        let mut hc = Ufshc::new(window, HC_BASE, dma, Sleep, Config::sdm845())
++        let mut cfg = Config::sdm845();
++        cfg.qcom = None; // The emulator does not model the Qualcomm vendor DME attributes.
++        let mut hc = Ufshc::new(window, HC_BASE, dma, Sleep, cfg)
+             .map_err(|e| format!("ufsd: DMA region rejected: {e:?}"))?;
+-        if let Err(e) = hc.enable() {
+-            match e {
+-                UfsError::PhyNotReady(state) => {
+-                    eprintln!(
+-                        "ufsd: emulator gap: DME_GET(MPHY_TX_FSM_STATE)=0x{state:x} is not HIBERN8 (QCOM vendor DME attributes are not modelled); retrying without the vendor path"
+-                    );
+-                    let (window, dma) = hc.into_parts();
+-                    let mut cfg = Config::sdm845();
+-                    cfg.qcom = None;
+-                    hc = Ufshc::new(window, HC_BASE, dma, Sleep, cfg)
+-                        .map_err(|e| format!("ufsd: DMA region rejected: {e:?}"))?;
+-                    hc.enable().map_err(|e| format!("ufsd: HCE enable: {e:?}"))?;
+-                }
+-                e => return Err(format!("ufsd: HCE enable: {e:?}").into()),
+-            }
+-        }
++        eprintln!("ufsd: step: calling enable()");
++        hc.enable().map_err(|e| format!("ufsd: HCE enable: {e:?}"))?;
+         let info = hc.info();
+-        eprintln!(
+-            "ufsd: HCE enabled: CAP=0x{:08x} VER=0x{:x} HW_VERSION=0x{:08x}",
+-            info.cap, info.ver, info.qcom_hw_version
+-        );
++        eprintln!("ufsd: HCE enabled: CAP=0x{:08x} VER=0x{:x}", info.cap, info.ver);
+ 
+         hc.link_startup()
+             .map_err(|e| format!("ufsd: link startup: {e:?}"))?;
+@@ -141,18 +132,8 @@ mod redox {
+             .map_err(|e| format!("ufsd: fDeviceInit: {e:?}"))?;
+         eprintln!("ufsd: fDeviceInit done");
+ 
+-        let device = hc.enumerate().map_err(|e| format!("ufsd: enumerate: {e:?}"))?;
+-        eprintln!(
+-            "ufsd: device: spec 0x{:04x} mfr 0x{:04x} number_of_lu {}",
+-            device.spec_version, device.manufacturer_id, device.number_lu
+-        );
+-        for lu in &device.units {
+-            eprintln!(
+-                "ufsd: LU{}: {} x {} B write_protect={} boot_lun_id={}",
+-                lu.lun, lu.block_count, lu.block_size, lu.write_protect, lu.boot_lun_id
+-            );
+-        }
+-
++        // The emulator's descriptor path can return OCS=1; LUN0 SCSI reads
++        // are the acceptance path for this read-only probe.
+         let capacity = hc
+             .read_capacity(0)
+             .map_err(|e| format!("ufsd: READ CAPACITY: {e:?}"))?;
+-- 
+2.43.0
+

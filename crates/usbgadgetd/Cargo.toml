@@ -1,0 +1,47 @@
+[package]
+name = "usbgadgetd"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[features]
+# P5 stage 1: opt-in SMMU CB-bypass establishment path in the
+# payload daemon (src/smmu_cbbypass.rs). Default OFF: without
+# this feature the daemon's behavior is unchanged (log-only
+# probe). Enabling it only allows the Redox entry point to
+# ATTEMPT establishment; every outcome still exits 3 with no
+# DMA, exactly like the baseline NotMatched outcome.
+smmu-cb-bypass = []
+# P5 stage 2: opt-in DWC3 peripheral bring-up (src/stage2.rs,
+# src/redox_stage2.rs). Default OFF. Enabling it lets the Redox
+# entry point proceed past a stage-1 token: DMA legitimacy is
+# composed from the token plus a fresh gate observation, the
+# hardware windows are mapped, and the DWC3 core is initialised
+# and connected for enumeration. Requires the stage-1 path to
+# run first (the entry composes both in one process).
+dwc3-bringup = []
+# P5 stage 3: opt-in CDC-ACM serial shell (src/acm_shell.rs,
+# src/redox_stage3.rs). Default OFF. Enabling it (together with
+# dwc3-bringup) registers a CDC-ACM function on the stage-2
+# device and bridges it to the shell byte stream.
+cdc-acm-shell = []
+
+[dependencies]
+mmio-replay = { path = "../mmio-replay" }
+dwc3-gadget = { path = "../dwc3-gadget" }
+embassy-usb = { version = "0.6.0", default-features = false }
+embassy-futures = "0.1.2"
+
+[[bin]]
+name = "usbgadgetd"
+path = "src/main.rs"
+
+[target.'cfg(target_os = "redox")'.dependencies]
+# V1b part 2: the Redox drivers common crate (physmap/DMA), named as a
+# path dependency on the forks tree this repo builds against (G-W1
+# recipe; stage scripts' REDOX_FORKS default). Not built on host.
+common = { path = "../../../../forks/redox/base-e1/drivers/common" }
+# P5 stage 2: the embassy stack needs a critical-section impl;
+# src/redox_cs.rs provides one for the Redox target (single-core
+# polled daemon, no IRQ path in this stage). Not built on host.
+critical-section = "1.2"

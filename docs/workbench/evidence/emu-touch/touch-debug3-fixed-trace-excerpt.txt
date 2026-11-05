@@ -1,0 +1,12 @@
+# QEMU -trace excerpt, run touch-debug3-fixed (payload 96898e28e7ba6614b36e0090b804277c88832e29cdd9282a8d9cfe4804430bd9, after both kernel fixes)
+# grep -c icc_iar1_read out/emu-op6/touch-debug3-fixed/unimp.log
+2
+# grep -n 'rmi4_s3706_touch\|interrupt 647\|icc_iar1_read' out/emu-op6/touch-debug3-fixed/unimp.log
+1592:rmi4_s3706_touch slot 0 touching 1 x 540 y 1140
+1593:gicv3_dist_set_irq GICv3 distributor interrupt 647 level changed to 1
+1594:gicv3_icc_iar1_read GICv3 ICC_IAR1 read cpu 0x0 value 0x287
+1595:gicv3_dist_set_irq GICv3 distributor interrupt 647 level changed to 0
+1596:rmi4_s3706_touch slot 0 touching 0 x 540 y 1140
+1597:gicv3_dist_set_irq GICv3 distributor interrupt 647 level changed to 1
+1598:gicv3_icc_iar1_read GICv3 ICC_IAR1 read cpu 0x0 value 0x287
+1599:gicv3_dist_set_irq GICv3 distributor interrupt 647 level changed to 0

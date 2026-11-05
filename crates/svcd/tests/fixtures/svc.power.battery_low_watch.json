@@ -1,0 +1,287 @@
+{
+  "ir_version": "1.0.0",
+  "id": "svc.power.battery_low_watch",
+  "version": "1.0.0",
+  "generation": 1,
+  "content_hash": "blake3:1f2e3d4c5b6a79880716253443526170899aabbccddeeff00112233445566778",
+  "title": "Low Battery Watcher (< 20%)",
+  "description": "Standing rule synthesized from 'tell me when battery < 20%'. Uses SPMI/bq27411 fuel-gauge SOC threshold interrupt with 25% hysteresis reset and zero polling.",
+  "author": {
+    "name": "Operator via Voice",
+    "provenance": "user_voice"
+  },
+  "execution_mode": "ephemeral_component",
+  "priority_class": "P4_BACKGROUND_MONITOR",
+  "parameters": [
+    {
+      "key": "threshold_pct",
+      "input_type": "number",
+      "requirement": "required",
+      "description": "Battery percentage threshold that triggers the alert.",
+      "default": 20
+    },
+    {
+      "key": "reset_pct",
+      "input_type": "number",
+      "requirement": "optional",
+      "description": "Hysteresis reset percentage to re-arm the alert after charging.",
+      "default": 25
+    }
+  ],
+  "triggers": [
+    {
+      "id": "trig_battery_below_20",
+      "kind": "sensor_threshold",
+      "entry_action": "act_mark_cycle_notified",
+      "condition_cel": "trigger.payload.charging == false && state.notified_for_cycle == false",
+      "debounce_ms": 5000,
+      "cooldown_ms": 60000,
+      "sensor_threshold": {
+        "scheme_path": "sys:power/battery",
+        "metric": "capacity_pct",
+        "operator": "lt",
+        "threshold": 20.0,
+        "hysteresis_reset": 25.0,
+        "edge_only": true,
+        "poll_or_irq": "spmi_comparator"
+      }
+    },
+    {
+      "id": "trig_battery_rearmed",
+      "kind": "sensor_threshold",
+      "entry_action": "act_rearm_cycle",
+      "condition_cel": "state.notified_for_cycle == true",
+      "sensor_threshold": {
+        "scheme_path": "sys:power/battery",
+        "metric": "capacity_pct",
+        "operator": "gte",
+        "threshold": 25.0,
+        "hysteresis_reset": 20.0,
+        "edge_only": true,
+        "poll_or_irq": "spmi_comparator"
+      }
+    }
+  ],
+  "workflow": [
+    "act_mark_cycle_notified",
+    "act_show_battery_banner",
+    "act_speak_battery_low"
+  ],
+  "actions": {
+    "act_mark_cycle_notified": {
+      "type": "state_mutate",
+      "description": "Latch `notified_for_cycle = true` and record discharge cycle id so further drops below 20% do not spam.",
+      "effect_class": "reversible_staged",
+      "idempotency_key_template": "svc.power.battery_low_watch:cycle_{{state.discharge_cycle_id}}:latch",
+      "read_only": false,
+      "deduplicate_calls": true,
+      "concurrency": "serial",
+      "timeout": { "idle_ms": 50, "total_ms": 100 },
+      "state_patch": [
+        { "op": "replace", "path": "/notified_for_cycle", "value": true },
+        { "op": "replace", "path": "/last_triggered_pct", "value": "$.trigger.payload.capacity_pct" }
+      ],
+      "next": [
+        { "target": "act_show_battery_banner" }
+      ]
+    },
+    "act_show_battery_banner": {
+      "type": "ui_patch",
+      "description": "Update compact toast banner using OpenUI statement patch.",
+      "effect_class": "reversible_staged",
+      "read_only": false,
+      "deduplicate_calls": true,
+      "concurrency": "serial",
+      "timeout": { "idle_ms": 50, "total_ms": 100 },
+      "ui_patch": {
+        "surface_id": "battery-low-banner",
+        "operation": "openui_statements",
+        "openui_statements": [
+          "$root = Card(child = $row)",
+          "$row = Row(children = [$icon, $msg], justify = \"spaceBetween\")",
+          "$icon = Icon(name = \"warning\")",
+          "$msg = Text(text = formatString(\"Battery is at ${/last_triggered_pct}% (below 20%)\"))"
+        ]
+      },
+      "next": [
+        { "target": "act_speak_battery_low" }
+      ]
+    },
+    "act_speak_battery_low": {
+      "type": "dialog",
+      "description": "Announce low battery once per discharge cycle.",
+      "effect_class": "committed_irreversible",
+      "idempotency_key_template": "svc.power.battery_low_watch:cycle_{{state.discharge_cycle_id}}:speak",
+      "read_only": false,
+      "deduplicate_calls": true,
+      "concurrency": "serial",
+      "timeout": { "idle_ms": 1500, "total_ms": 4000 },
+      "dialog": {
+        "speech": "Battery is down to {{state.last_triggered_pct}} percent.",
+        "text": "Battery low: {{state.last_triggered_pct}}% (threshold < 20%).",
+        "priority": "alert"
+      }
+    },
+    "act_rearm_cycle": {
+      "type": "state_mutate",
+      "description": "Reset latch and increment `discharge_cycle_id` once battery charges back to >= 25%.",
+      "effect_class": "reversible_staged",
+      "read_only": false,
+      "deduplicate_calls": true,
+      "concurrency": "serial",
+      "timeout": { "idle_ms": 50, "total_ms": 100 },
+      "state_patch": [
+        { "op": "replace", "path": "/notified_for_cycle", "value": false },
+        { "op": "replace", "path": "/discharge_cycle_id", "value": "{{state.discharge_cycle_id + 1}}" }
+      ]
+    }
+  },
+  "deps": {
+    "schemes": [
+      {
+        "scheme": "sys:power/battery",
+        "access": "event_subscribe",
+        "lifecycle": "always_resident_kernel"
+      },
+      {
+        "scheme": "audio:wyoming/tts",
+        "access": "write",
+        "lifecycle": "demand_per_action"
+      }
+    ],
+    "wasm_components": [],
+    "sub_services": []
+  },
+  "capabilities": [
+    {
+      "cap_id": "cap_batt_read",
+      "capability": "power.battery.read",
+      "scope": { "metric": "capacity_pct", "irq_comparator_only": true },
+      "lifetime": "standing_trigger_watch",
+      "max_duration_sec": 86400,
+      "revocable": true,
+      "audit_reason": "Watch fuel-gauge SOC comparator at 20% / 25% without waking CPU between threshold crossings."
+    },
+    {
+      "cap_id": "cap_batt_tts",
+      "capability": "audio.playback.tts",
+      "scope": { "engine": "local_wyoming" },
+      "lifetime": "per_invocation",
+      "max_duration_sec": 8,
+      "revocable": true,
+      "audit_reason": "Speak low-battery alert when SOC drops below 20%."
+    },
+    {
+      "cap_id": "cap_batt_ui",
+      "capability": "ui.surface.render",
+      "scope": { "surface_id": "battery-low-banner", "slot": "toast_card" },
+      "lifetime": "per_invocation",
+      "max_duration_sec": 30,
+      "revocable": true,
+      "audit_reason": "Display low-battery toast banner."
+    }
+  ],
+  "state_schema": {
+    "namespace": "state:svc.power.battery_low_watch",
+    "durability": "sqlite_wal_durable",
+    "wal_limit_bytes": 262144,
+    "retention_ttl_sec": 604800,
+    "schema": {
+      "type": "object",
+      "required": ["notified_for_cycle", "discharge_cycle_id", "last_triggered_pct"],
+      "properties": {
+        "notified_for_cycle": { "type": "boolean" },
+        "discharge_cycle_id": { "type": "integer", "minimum": 1 },
+        "last_triggered_pct": { "type": "number", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "initial_state": {
+      "notified_for_cycle": false,
+      "discharge_cycle_id": 1,
+      "last_triggered_pct": 100.0
+    },
+    "migrations": []
+  },
+  "ui": {
+    "mode": "openui_stream",
+    "surface_id": "battery-low-banner",
+    "catalog_id": "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+    "send_data_model": false,
+    "openui_statements": [
+      "$root = Card(child = $row)",
+      "$row = Row(children = [$icon, $msg], justify = \"spaceBetween\")",
+      "$icon = Icon(name = \"warning\")",
+      "$msg = Text(text = formatString(\"Battery is at ${/last_triggered_pct}% (below 20%)\"))"
+    ]
+  },
+  "power_budget": {
+    "cpu_cluster_preference": "silver_only",
+    "max_cpu_cores": 1,
+    "cpu_quota_pct": 1,
+    "memory_limit_mb": 2,
+    "wasm_fuel_per_invocation": 5000,
+    "max_wakeups_per_minute": 0.1,
+    "max_wakelock_sec": 5,
+    "network_egress_bytes_max": 0,
+    "allowed_hosts": [],
+    "allowed_ip_name_lookups": [],
+    "allowed_host_loopback_ports": [],
+    "auto_stop_idle_ms": 50,
+    "power_announcement": "Battery Watcher (<20%): armed on PMIC fuel-gauge comparator (0 CPU wakeups until <20%)."
+  },
+  "tests": [
+    {
+      "name": "battery_hysteresis_and_dedup_across_cycles",
+      "description": "Verifies alert fires once at 19%, does NOT re-fire at 18% or 19.5%, re-arms at 26% charging, and fires again on next discharge to 19%.",
+      "initial_env": {
+        "monotonic_ms": 0,
+        "wall_iso": "2026-10-24T19:00:00Z",
+        "battery_pct": 22.0,
+        "charging": false,
+        "network_online": false,
+        "location": { "lat": 45.5152, "lon": -122.6784, "tz": "America/Los_Angeles" }
+      },
+      "events": [
+        {
+          "at_monotonic_ms": 10000,
+          "event_type": "sensor_sample",
+          "payload": { "scheme": "sys:power/battery", "capacity_pct": 19.0, "charging": false }
+        },
+        {
+          "at_monotonic_ms": 80000,
+          "event_type": "sensor_sample",
+          "payload": { "scheme": "sys:power/battery", "capacity_pct": 18.0, "charging": false }
+        },
+        {
+          "at_monotonic_ms": 200000,
+          "event_type": "sensor_sample",
+          "payload": { "scheme": "sys:power/battery", "capacity_pct": 26.0, "charging": true }
+        },
+        {
+          "at_monotonic_ms": 500000,
+          "event_type": "sensor_sample",
+          "payload": { "scheme": "sys:power/battery", "capacity_pct": 19.0, "charging": false }
+        }
+      ],
+      "assertions": {
+        "final_state_subset": {
+          "notified_for_cycle": true,
+          "discharge_cycle_id": 2,
+          "last_triggered_pct": 19.0
+        },
+        "expected_bus_emissions": [
+          { "msg_type": "speak", "data": { "utterance": "Battery is down to 19 percent." } },
+          { "msg_type": "speak", "data": { "utterance": "Battery is down to 19 percent." } }
+        ],
+        "expected_ui_surfaces": [
+          { "surfaceId": "battery-low-banner" }
+        ],
+        "budget_assertions": {
+          "max_memory_mb_used": 2.0,
+          "network_bytes_sent": 0,
+          "active_schemes_after_completion": ["sys:power/battery"]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{"actions":[{"args":{},"id":"run_it","tool":"shell_exec"}],"id":"bad-unknown-tool","inputs":[],"layout":[{"block":"title","text":"Run it"}],"lifetime":{"appears_when":"never","expires_when":"never","max_ttl_minutes":5},"protocol":"1","sample_inputs":{},"trigger":{"context":[],"when":"never"},"user_purpose":"Try to invent a capability the agent does not have."}

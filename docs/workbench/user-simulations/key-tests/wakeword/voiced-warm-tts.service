@@ -1,0 +1,11 @@
+[Unit]
+Description=voiced warm TTS - persistent ptts/Phonon engine for voice turns (CV0)
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/sudo -n /usr/bin/podman rm -f agentic-warm-tts
+ExecStart=/usr/bin/sudo -n /usr/bin/podman run --rm --name agentic-warm-tts --network none --userns=keep-id -e TW_DIR=/tw -v /opt/models:/opt/models:ro -v $HOME/agentic/warm-tts:/tw -v $HOME/agentic/wakeword:/scripts:ro -v $HOME/.local/bin/voice-listen-app/brainkit/scripts:/bk:ro localhost/voice-snapshot:20261024 /opt/tts/venv/bin/python /scripts/warm_tts_engine.py
+ExecStop=/usr/bin/sudo -n /usr/bin/podman stop -t 5 agentic-warm-tts
+ExecStopPost=-/usr/bin/sudo -n /usr/bin/podman rm -f agentic-warm-tts
+TimeoutStopSec=20

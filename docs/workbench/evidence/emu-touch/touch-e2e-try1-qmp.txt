@@ -1,0 +1,5 @@
+greeting {"QMP": {"version": {"qemu": {"micro": 2, "minor": 1, "major": 11}, "package": ""}, "capabilities": ["oob"]}}
+request {"execute": "qmp_capabilities"}
+response {"return": {}}
+request {"execute": "input-send-event", "arguments": {"events": [{"type": "btn", "data": {"button": "left", "down": true}}, {"type": "abs", "data": {"axis": "x", "value": 540}}, {"type": "abs", "data": {"axis": "y", "value": 1140}}]}}
+response {"return": {}}

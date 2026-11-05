@@ -1,0 +1,735 @@
+From 3ece2bfc5723416c2d0b85ba24b12ac05c36d547 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Mon, 26 Oct 2026 00:21:07 +0000
+Subject: [PATCH 14/21] gicv3 redistributor private irqs
+
+---
+ src/arch/aarch64/device/irqchip/gicv3.rs      | 193 ++++++--
+ .../aarch64/device/irqchip/gicv3/model.rs     | 447 ++++++++++++++++++
+ 2 files changed, 604 insertions(+), 36 deletions(-)
+ create mode 100644 src/arch/aarch64/device/irqchip/gicv3/model.rs
+
+diff --git a/src/arch/aarch64/device/irqchip/gicv3.rs b/src/arch/aarch64/device/irqchip/gicv3.rs
+index e9acc7f0..9a9a859d 100644
+--- a/src/arch/aarch64/device/irqchip/gicv3.rs
++++ b/src/arch/aarch64/device/irqchip/gicv3.rs
+@@ -1,6 +1,11 @@
+ use alloc::vec::Vec;
+-use core::arch::asm;
++use core::{
++    arch::asm,
++    ptr::{read_volatile, write_volatile},
++    sync::atomic::{AtomicU32, AtomicUsize, Ordering},
++};
+ 
++use self::model::{Gicv3Error, Mmio, Route};
+ use super::{gic::GicDistIf, InterruptController};
+ use crate::{
+     dtb::{
+@@ -14,8 +19,33 @@ use syscall::{
+     Result,
+ };
+ 
++mod model;
++
+ /// INTIDs 1020..=1023 are special (1023 = spurious) and never map to a virq.
+-const INTID_SPECIAL_FIRST: u32 = 1020;
++const INTID_SPECIAL_FIRST: u32 = model::INTID_SPECIAL_FIRST;
++
++/// Upper bound on GICR_WAKER / GICR_CTLR.RWP polling.
++const GICR_MAX_POLLS: usize = 1_000_000;
++
++struct KernelMmio;
++
++impl Mmio for KernelMmio {
++    fn read32(&self, addr: usize) -> u32 {
++        unsafe { read_volatile(addr as *const u32) }
++    }
++    fn write32(&mut self, addr: usize, value: u32) {
++        unsafe { write_volatile(addr as *mut u32, value) }
++    }
++    fn read64(&self, addr: usize) -> u64 {
++        unsafe { read_volatile(addr as *const u64) }
++    }
++}
++
++fn current_mpidr() -> u64 {
++    let mpidr: u64;
++    unsafe { asm!("mrs {}, mpidr_el1", out(reg) mpidr) };
++    mpidr
++}
+ 
+ /// `ICC_IAR1_EL1.INTID` is bits [23:0]; SDM845 SPIs reach INTID 668.
+ fn iar_intid(iar: usize) -> u32 {
+@@ -26,11 +56,18 @@ fn iar_intid(iar: usize) -> u32 {
+ pub struct GicV3 {
+     pub gic_dist_if: GicDistIf,
+     pub gic_cpu_if: GicV3CpuIf,
++    /// Redistributor regions as (physical address, length).
+     pub gicrs: Vec<(usize, usize)>,
+     //TODO: GICC, GICH, GICV?
+     pub irq_range: (usize, usize),
+ }
+ 
++/// DT `redistributor-stride`; 0 = derive from GICR_TYPER.
++static GICR_STRIDE: AtomicUsize = AtomicUsize::new(0);
++/// Virtual RD_base for the CPU that ran `irq_init`; 0 = no mapping.
++static CURRENT_RD: AtomicUsize = AtomicUsize::new(0);
++static CURRENT_RD_AFFINITY: AtomicU32 = AtomicU32::new(0);
++
+ impl GicV3 {
+     pub fn new() -> Self {
+         GicV3 {
+@@ -41,6 +78,49 @@ impl GicV3 {
+         }
+     }
+ 
++    fn init_current_rd(&mut self) -> core::result::Result<(), Gicv3Error> {
++        CURRENT_RD.store(0, Ordering::Release);
++        let mut mmio = KernelMmio;
++        let mut regions = Vec::with_capacity(self.gicrs.len());
++        for &(phys, len) in &self.gicrs {
++            let virt = crate::PHYS_OFFSET
++                .checked_add(phys)
++                .ok_or(Gicv3Error::BadRegion)?;
++            regions.push((virt, len));
++        }
++        let affinity = model::mpidr_affinity(current_mpidr());
++        let stride = match GICR_STRIDE.load(Ordering::Acquire) {
++            0 => None,
++            stride => Some(stride),
++        };
++        let rd = model::find_redistributor(&mmio, &regions, stride, affinity)?;
++        let gicd_ctlr = mmio.read32(self.gic_dist_if.address);
++        model::init_private(&mut mmio, rd, gicd_ctlr, GICR_MAX_POLLS)?;
++        CURRENT_RD_AFFINITY.store(affinity, Ordering::Release);
++        CURRENT_RD.store(rd, Ordering::Release);
++        info!("gicv3: affinity {:#x} uses redistributor {:#x}", affinity, rd);
++        Ok(())
++    }
++
++    /// Private INTIDs are banked per CPU; never fall back to the distributor.
++    fn private_rd(&self, intid: u32) -> Option<usize> {
++        let rd = CURRENT_RD.load(Ordering::Acquire);
++        if rd == 0 {
++            error!("gicv3: private INTID {} has no redistributor mapping", intid);
++            return None;
++        }
++        let owner = CURRENT_RD_AFFINITY.load(Ordering::Acquire);
++        let affinity = model::mpidr_affinity(current_mpidr());
++        if owner != affinity {
++            error!(
++                "gicv3: private INTID {} on affinity {:#x}, only {:#x} has a redistributor",
++                intid, affinity, owner
++            );
++            return None;
++        }
++        Some(rd)
++    }
++
+     pub fn parse(&mut self, fdt: &Fdt) -> Result<()> {
+         let Some(node) = fdt.all_compatible(&["arm,gic-v3"]).next() else {
+             return Err(Error::new(EINVAL));
+@@ -55,32 +135,31 @@ impl GicV3 {
+         let gicrs = node
+             .raw_property("#redistributor-regions")
+             .and_then(|prop| prop.as_value::<u32>().ok())
+-            .unwrap_or(1);
+-
+-        // Read registers
+-        let chunks = node.reg().unwrap();
+-        if let Some(gicd) = chunks.iter::<usize, usize>().next()
+-            && let Ok(gicd) = gicd
+-            && let Some(addr) = translate_mmio_address(fdt, &node, &gicd)
+-        {
+-            unsafe {
+-                self.gic_dist_if.init(crate::PHYS_OFFSET + addr);
+-            }
+-        }
+-        for _ in 0..gicrs {
+-            if let Some(gicr) = chunks.iter::<usize, usize>().next()
+-                && let Ok(gicr) = gicr
+-            {
+-                self.gicrs
+-                    .push((translate_mmio_address(fdt, &node, &gicr).unwrap(), gicr.len));
+-            }
+-        }
++            .unwrap_or(1) as usize;
++        let stride = node
++            .raw_property("redistributor-stride")
++            .and_then(|prop| prop.as_value::<u64>().ok())
++            .map_or(0, |stride| stride as usize);
++        GICR_STRIDE.store(stride, Ordering::Release);
+ 
+-        if self.gic_dist_if.address == 0 || self.gicrs.is_empty() {
+-            Err(Error::new(EINVAL))
+-        } else {
+-            Ok(())
++        // Read registers: <GICD> then one tuple per redistributor region.
++        let chunks = node.reg().ok_or_else(|| Error::new(EINVAL))?;
++        let mut entries = Vec::new();
++        for chunk in chunks.iter::<usize, usize>().take(gicrs.saturating_add(1)) {
++            let chunk = chunk.map_err(|_| Error::new(EINVAL))?;
++            let addr =
++                translate_mmio_address(fdt, &node, &chunk).ok_or_else(|| Error::new(EINVAL))?;
++            entries.push((addr, chunk.len));
+         }
++        let ((gicd, _), rds) = model::split_regions(&entries, gicrs).map_err(|err| {
++            error!("gicv3: bad reg property: {:?}", err);
++            Error::new(EINVAL)
++        })?;
++        self.gicrs.extend_from_slice(rds);
++        unsafe {
++            self.gic_dist_if.init(crate::PHYS_OFFSET + gicd);
++        }
++        Ok(())
+     }
+ }
+ 
+@@ -101,6 +180,11 @@ impl InterruptController for GicV3 {
+         }
+         info!("{:X?}", self);
+ 
++        // SPIs stay usable without a redistributor; private INTIDs then fail
++        // loudly on enable instead of being written to GICD.
++        if let Err(err) = self.init_current_rd() {
++            error!("gicv3: current CPU redistributor unavailable: {:?}", err);
++        }
+         unsafe {
+             self.gic_cpu_if.init();
+         }
+@@ -133,18 +217,54 @@ impl InterruptController for GicV3 {
+         unsafe { self.gic_cpu_if.irq_eoi(irq_num) }
+     }
+     fn irq_enable(&mut self, irq_num: u32) {
+-        unsafe { self.gic_dist_if.irq_enable(irq_num) }
++        match model::route(irq_num, self.gic_dist_if.nirqs) {
++            Ok(Route::Private(intid)) => {
++                if let Some(rd) = self.private_rd(intid)
++                    && let Err(err) = model::private_enable(&mut KernelMmio, rd, intid)
++                {
++                    error!("gicv3: enable INTID {} failed: {:?}", intid, err);
++                }
++            }
++            Ok(Route::Shared(intid)) => unsafe { self.gic_dist_if.irq_enable(intid) },
++            Err(err) => {
++                error!("gicv3: enable rejected: {:?}", err);
++            }
++        }
+     }
+     fn irq_disable(&mut self, irq_num: u32) {
+-        unsafe { self.gic_dist_if.irq_disable(irq_num) }
++        match model::route(irq_num, self.gic_dist_if.nirqs) {
++            Ok(Route::Private(intid)) => {
++                if let Some(rd) = self.private_rd(intid)
++                    && let Err(err) =
++                        model::private_disable(&mut KernelMmio, rd, intid, GICR_MAX_POLLS)
++                {
++                    error!("gicv3: disable INTID {} failed: {:?}", intid, err);
++                }
++            }
++            Ok(Route::Shared(intid)) => unsafe { self.gic_dist_if.irq_disable(intid) },
++            Err(err) => {
++                error!("gicv3: disable rejected: {:?}", err);
++            }
++        }
+     }
+     fn irq_configure(&mut self, irq_data: IrqCell) -> Result<()> {
+-        let (irq, flags) = match irq_data {
+-            IrqCell::L3(0, irq, flags) => (irq, flags), // SPI
+-            _ => return Err(Error::new(EINVAL)),
+-        };
+-        let hwirq = irq.checked_add(32).ok_or_else(|| Error::new(EINVAL))?;
+-        unsafe { self.gic_dist_if.irq_configure(hwirq, flags) }
++        match irq_data {
++            IrqCell::L3(0, irq, flags) => {
++                // SPI
++                let hwirq = irq.checked_add(32).ok_or_else(|| Error::new(EINVAL))?;
++                unsafe { self.gic_dist_if.irq_configure(hwirq, flags) }
++            }
++            IrqCell::L3(1, irq, flags) => {
++                // PPI
++                let intid = irq.checked_add(16).ok_or_else(|| Error::new(EINVAL))?;
++                let rd = self.private_rd(intid).ok_or_else(|| Error::new(EINVAL))?;
++                model::ppi_configure(&mut KernelMmio, rd, intid, flags).map_err(|err| {
++                    error!("gicv3: configure INTID {} failed: {:?}", intid, err);
++                    Error::new(EINVAL)
++                })
++            }
++            _ => Err(Error::new(EINVAL)),
++        }
+     }
+     fn irq_xlate(&self, irq_data: IrqCell) -> Result<usize> {
+         let off = match irq_data {
+@@ -175,7 +295,8 @@ impl GicV3CpuIf {
+             // Enable system register access
+             {
+                 let value = 1_usize;
+-                asm!("msr icc_sre_el1, {}", in(reg) value);
++                // Synchronize system-register interface enable before other ICC accesses.
++                asm!("msr icc_sre_el1, {}", "isb", in(reg) value);
+             }
+             // Set control register
+             {
+@@ -190,7 +311,7 @@ impl GicV3CpuIf {
+             // Set CPU0's Interrupt Priority Mask
+             {
+                 let value = 0xFF_usize;
+-                asm!("msr icc_pmr_el1, {}", in(reg) value);
++                asm!("msr icc_pmr_el1, {}", "isb", in(reg) value);
+             }
+         }
+     }
+diff --git a/src/arch/aarch64/device/irqchip/gicv3/model.rs b/src/arch/aarch64/device/irqchip/gicv3/model.rs
+new file mode 100644
+index 00000000..b08b7a6e
+--- /dev/null
++++ b/src/arch/aarch64/device/irqchip/gicv3/model.rs
+@@ -0,0 +1,447 @@
++//! Portable GICv3 redistributor helpers. Everything touching hardware goes
++//! through [`Mmio`] so the same code runs against a host mock in tests.
++
++pub const INTID_PRIVATE_END: u32 = 32;
++pub const INTID_SPECIAL_FIRST: u32 = 1020;
++
++pub const GICD_CTLR_DS: u32 = 1 << 6;
++
++pub const GICR_CTLR: usize = 0x0000;
++pub const GICR_CTLR_RWP: u32 = 1 << 3;
++pub const GICR_TYPER: usize = 0x0008;
++pub const GICR_TYPER_VLPIS: u64 = 1 << 1;
++pub const GICR_TYPER_LAST: u64 = 1 << 4;
++pub const GICR_WAKER: usize = 0x0014;
++pub const GICR_WAKER_PROCESSOR_SLEEP: u32 = 1 << 1;
++pub const GICR_WAKER_CHILDREN_ASLEEP: u32 = 1 << 2;
++
++pub const GICR_SGI_BASE: usize = 0x1_0000;
++pub const GICR_IGROUPR0: usize = GICR_SGI_BASE + 0x0080;
++pub const GICR_ISENABLER0: usize = GICR_SGI_BASE + 0x0100;
++pub const GICR_ICENABLER0: usize = GICR_SGI_BASE + 0x0180;
++pub const GICR_IPRIORITYR: usize = GICR_SGI_BASE + 0x0400;
++pub const GICR_ICFGR1: usize = GICR_SGI_BASE + 0x0C04;
++pub const GICR_IGRPMODR0: usize = GICR_SGI_BASE + 0x0D00;
++
++/// RD_base + SGI_base frames; GICv4 (VLPIS) adds VLPI + reserved frames.
++const GICR_FRAMES_V3: usize = 0x2_0000;
++const GICR_FRAMES_V4: usize = 0x4_0000;
++
++pub const DEFAULT_PRIORITY: u8 = 0xa0;
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Gicv3Error {
++    MissingDistributor,
++    MissingRedistributor,
++    BadRegion,
++    NoRedistributorForCpu(u32),
++    WakeTimeout,
++    RwpTimeout,
++    InvalidIntid(u32),
++    UnsupportedTrigger(u32),
++}
++
++pub trait Mmio {
++    fn read32(&self, addr: usize) -> u32;
++    fn write32(&mut self, addr: usize, value: u32);
++    fn read64(&self, addr: usize) -> u64;
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Route {
++    /// SGI/PPI: banked per CPU, lives in the current CPU's redistributor.
++    Private(u32),
++    /// SPI: shared, lives in the distributor.
++    Shared(u32),
++}
++
++pub fn route(intid: u32, nirqs: u32) -> Result<Route, Gicv3Error> {
++    if intid >= INTID_SPECIAL_FIRST || intid >= nirqs {
++        Err(Gicv3Error::InvalidIntid(intid))
++    } else if intid < INTID_PRIVATE_END {
++        Ok(Route::Private(intid))
++    } else {
++        Ok(Route::Shared(intid))
++    }
++}
++
++/// `reg` = <GICD> then `#redistributor-regions` GICR tuples, in order.
++pub fn split_regions(
++    entries: &[(usize, usize)],
++    rd_regions: usize,
++) -> Result<((usize, usize), &[(usize, usize)]), Gicv3Error> {
++    let (&gicd, rest) = entries
++        .split_first()
++        .ok_or(Gicv3Error::MissingDistributor)?;
++    if rd_regions == 0 || rest.len() < rd_regions {
++        return Err(Gicv3Error::MissingRedistributor);
++    }
++    Ok((gicd, &rest[..rd_regions]))
++}
++
++/// GICR_TYPER[63:32] layout: Aff3:Aff2:Aff1:Aff0. U, MT and RES bits dropped.
++pub fn mpidr_affinity(mpidr: u64) -> u32 {
++    ((((mpidr >> 32) & 0xff) as u32) << 24) | (mpidr & 0x00ff_ffff) as u32
++}
++
++/// Walk each redistributor region (virtual base, length) frame by frame.
++pub fn find_redistributor<M: Mmio>(
++    mmio: &M,
++    regions: &[(usize, usize)],
++    stride: Option<usize>,
++    affinity: u32,
++) -> Result<usize, Gicv3Error> {
++    if stride.is_some_and(|step| step < GICR_FRAMES_V3 || step % GICR_SGI_BASE != 0) {
++        return Err(Gicv3Error::BadRegion);
++    }
++    for &(base, len) in regions {
++        if base % GICR_SGI_BASE != 0 {
++            return Err(Gicv3Error::BadRegion);
++        }
++        base.checked_add(len).ok_or(Gicv3Error::BadRegion)?;
++        let mut offset = 0usize;
++        loop {
++            let frame_end = offset
++                .checked_add(GICR_FRAMES_V3)
++                .ok_or(Gicv3Error::BadRegion)?;
++            if frame_end > len {
++                break;
++            }
++            let rd = base + offset;
++            let typer = mmio.read64(rd + GICR_TYPER);
++            if (typer >> 32) as u32 == affinity {
++                return Ok(rd);
++            }
++            if typer & GICR_TYPER_LAST != 0 {
++                break;
++            }
++            let step = stride.unwrap_or(if typer & GICR_TYPER_VLPIS != 0 {
++                GICR_FRAMES_V4
++            } else {
++                GICR_FRAMES_V3
++            });
++            offset = match offset.checked_add(step) {
++                Some(next) => next,
++                None => break,
++            };
++        }
++    }
++    Err(Gicv3Error::NoRedistributorForCpu(affinity))
++}
++
++pub fn wake<M: Mmio>(mmio: &mut M, rd: usize, max_polls: usize) -> Result<(), Gicv3Error> {
++    let waker = mmio.read32(rd + GICR_WAKER);
++    mmio.write32(rd + GICR_WAKER, waker & !GICR_WAKER_PROCESSOR_SLEEP);
++    for _ in 0..max_polls {
++        if mmio.read32(rd + GICR_WAKER) & GICR_WAKER_CHILDREN_ASLEEP == 0 {
++            return Ok(());
++        }
++        core::hint::spin_loop();
++    }
++    Err(Gicv3Error::WakeTimeout)
++}
++
++pub fn wait_rwp<M: Mmio>(mmio: &M, rd: usize, max_polls: usize) -> Result<(), Gicv3Error> {
++    for _ in 0..max_polls {
++        if mmio.read32(rd + GICR_CTLR) & GICR_CTLR_RWP == 0 {
++            return Ok(());
++        }
++        core::hint::spin_loop();
++    }
++    Err(Gicv3Error::RwpTimeout)
++}
++
++/// Bring the current CPU's SGIs/PPIs to a known disabled, Group 1 NS state.
++/// Group registers are only programmed when the GIC has a single security
++/// state (GICD_CTLR.DS); otherwise secure firmware owns them.
++pub fn init_private<M: Mmio>(
++    mmio: &mut M,
++    rd: usize,
++    gicd_ctlr: u32,
++    max_polls: usize,
++) -> Result<(), Gicv3Error> {
++    wake(mmio, rd, max_polls)?;
++    mmio.write32(rd + GICR_ICENABLER0, 0xffff_ffff);
++    wait_rwp(mmio, rd, max_polls)?;
++    if gicd_ctlr & GICD_CTLR_DS != 0 {
++        mmio.write32(rd + GICR_IGROUPR0, 0xffff_ffff);
++        mmio.write32(rd + GICR_IGRPMODR0, 0);
++    }
++    let prio = u32::from(DEFAULT_PRIORITY) * 0x0101_0101;
++    for word in 0..(INTID_PRIVATE_END as usize / 4) {
++        mmio.write32(rd + GICR_IPRIORITYR + word * 4, prio);
++    }
++    Ok(())
++}
++
++pub fn private_enable<M: Mmio>(mmio: &mut M, rd: usize, intid: u32) -> Result<(), Gicv3Error> {
++    if intid >= INTID_PRIVATE_END {
++        return Err(Gicv3Error::InvalidIntid(intid));
++    }
++    mmio.write32(rd + GICR_ISENABLER0, 1 << intid);
++    Ok(())
++}
++
++pub fn private_disable<M: Mmio>(
++    mmio: &mut M,
++    rd: usize,
++    intid: u32,
++    max_polls: usize,
++) -> Result<(), Gicv3Error> {
++    if intid >= INTID_PRIVATE_END {
++        return Err(Gicv3Error::InvalidIntid(intid));
++    }
++    mmio.write32(rd + GICR_ICENABLER0, 1 << intid);
++    wait_rwp(mmio, rd, max_polls)
++}
++
++/// PPI trigger mode (GICR_ICFGR1). SGI configuration is fixed by hardware.
++pub fn ppi_configure<M: Mmio>(
++    mmio: &mut M,
++    rd: usize,
++    intid: u32,
++    flags: u32,
++) -> Result<(), Gicv3Error> {
++    if !(16..INTID_PRIVATE_END).contains(&intid) {
++        return Err(Gicv3Error::InvalidIntid(intid));
++    }
++    let edge = match flags & 0xf {
++        1 => true,
++        4 => false,
++        other => return Err(Gicv3Error::UnsupportedTrigger(other)),
++    };
++    let shift = (intid - 16) * 2;
++    let mut value = mmio.read32(rd + GICR_ICFGR1);
++    value &= !(0b11 << shift);
++    if edge {
++        value |= 0b10 << shift;
++    }
++    mmio.write32(rd + GICR_ICFGR1, value);
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    extern crate std;
++    use super::*;
++    use std::{vec, vec::Vec};
++
++    const GICD: usize = 0x0800_0000;
++    const RD0: usize = 0x080a_0000;
++
++    #[derive(Default)]
++    struct MockMmio {
++        regs: Vec<(usize, u64)>,
++        writes: Vec<(usize, u32)>,
++        reads: core::cell::Cell<usize>,
++        stuck_asleep: bool,
++        stuck_rwp: bool,
++    }
++
++    impl MockMmio {
++        fn get(&self, addr: usize) -> u64 {
++            self.reads.set(self.reads.get() + 1);
++            self.regs
++                .iter()
++                .find(|(a, _)| *a == addr)
++                .map_or(0, |(_, v)| *v)
++        }
++        fn set(&mut self, addr: usize, value: u64) {
++            match self.regs.iter_mut().find(|(a, _)| *a == addr) {
++                Some(slot) => slot.1 = value,
++                None => self.regs.push((addr, value)),
++            }
++        }
++        fn with_rds(rds: &[(usize, u32, bool)]) -> Self {
++            let mut m = MockMmio::default();
++            for &(rd, aff, last) in rds {
++                let typer = (u64::from(aff) << 32) | if last { GICR_TYPER_LAST } else { 0 };
++                m.set(rd + GICR_TYPER, typer);
++                m.set(
++                    rd + GICR_WAKER,
++                    u64::from(GICR_WAKER_PROCESSOR_SLEEP | GICR_WAKER_CHILDREN_ASLEEP),
++                );
++            }
++            m
++        }
++    }
++
++    impl Mmio for MockMmio {
++        fn read32(&self, addr: usize) -> u32 {
++            if self.stuck_rwp && addr & 0xffff == GICR_CTLR && addr & GICR_SGI_BASE == 0 {
++                return GICR_CTLR_RWP;
++            }
++            self.get(addr) as u32
++        }
++        fn write32(&mut self, addr: usize, value: u32) {
++            self.writes.push((addr, value));
++            if addr & 0x1_ffff == GICR_WAKER {
++                let mut v = value;
++                if v & GICR_WAKER_PROCESSOR_SLEEP == 0 && !self.stuck_asleep {
++                    v &= !GICR_WAKER_CHILDREN_ASLEEP;
++                }
++                self.set(addr, u64::from(v));
++            } else {
++                self.set(addr, u64::from(value));
++            }
++        }
++        fn read64(&self, addr: usize) -> u64 {
++            self.get(addr)
++        }
++    }
++
++    #[test]
++    fn tuple0_is_distributor_tuple1_is_redistributor() {
++        let reg = [(GICD, 0x1_0000), (RD0, 0xf6_0000), (0x0900_0000, 0x1000)];
++        let (gicd, rds) = split_regions(&reg, 1).unwrap();
++        assert_eq!(gicd, (GICD, 0x1_0000));
++        assert_eq!(rds, &[(RD0, 0xf6_0000)]);
++        let (_, two) = split_regions(&reg, 2).unwrap();
++        assert_eq!(two[1].0, 0x0900_0000);
++    }
++
++    #[test]
++    fn missing_tuples_fail() {
++        assert_eq!(split_regions(&[], 1), Err(Gicv3Error::MissingDistributor));
++        assert_eq!(
++            split_regions(&[(GICD, 0x1_0000)], 1),
++            Err(Gicv3Error::MissingRedistributor)
++        );
++        assert_eq!(
++            split_regions(&[(GICD, 0x1_0000), (RD0, 0x2_0000)], 0),
++            Err(Gicv3Error::MissingRedistributor)
++        );
++    }
++
++    #[test]
++    fn affinity_packing_drops_u_mt_and_reserved_bits() {
++        // Aff3=0x12, U (bit30), MT (bit24), RES1 (bit31), Aff2=3 Aff1=2 Aff0=1.
++        let mpidr = (0x12u64 << 32) | (1 << 31) | (1 << 30) | (1 << 24) | 0x03_0201;
++        assert_eq!(mpidr_affinity(mpidr), 0x1203_0201);
++        assert_eq!(mpidr_affinity(0x8000_0000), 0);
++    }
++
++    #[test]
++    fn finds_second_rd_and_nonzero_aff3() {
++        let aff_a = mpidr_affinity(0x8000_0000);
++        let aff_b = mpidr_affinity((0x7u64 << 32) | 0x0001);
++        let rd1 = RD0 + 0x2_0000;
++        let m = MockMmio::with_rds(&[(RD0, aff_a, false), (rd1, aff_b, true)]);
++        let regions = [(RD0, 0xf6_0000)];
++        assert_eq!(find_redistributor(&m, &regions, None, aff_a), Ok(RD0));
++        assert_eq!(find_redistributor(&m, &regions, None, aff_b), Ok(rd1));
++        // Only Aff3 differs: low-byte/CPU0 matching would wrongly accept this.
++        assert_eq!(
++            find_redistributor(&m, &regions, None, 0x0000_0001),
++            Err(Gicv3Error::NoRedistributorForCpu(1))
++        );
++    }
++
++    #[test]
++    fn scan_honors_explicit_stride_and_second_region() {
++        let rd_b = 0x0a00_0000;
++        let m = MockMmio::with_rds(&[(RD0, 0, false), (RD0 + 0x4_0000, 5, true), (rd_b, 9, true)]);
++        let regions = [(RD0, 0x8_0000), (rd_b, 0x2_0000)];
++        assert_eq!(find_redistributor(&m, &regions, Some(0x4_0000), 5), Ok(RD0 + 0x4_0000));
++        assert_eq!(find_redistributor(&m, &regions, Some(0x4_0000), 9), Ok(rd_b));
++        assert_eq!(find_redistributor(&m, &regions, Some(0), 9), Err(Gicv3Error::BadRegion));
++    }
++
++    #[test]
++    fn malformed_stride_and_base_fail_before_mmio() {
++        let m = MockMmio::default();
++        for step in [0, 1, GICR_SGI_BASE, GICR_FRAMES_V3 + 8] {
++            assert_eq!(find_redistributor(&m, &[(RD0, 0xf6_0000)], Some(step), 1),
++                       Err(Gicv3Error::BadRegion));
++        }
++        assert_eq!(find_redistributor(&m, &[(RD0 + 1, 0x2_0000)], None, 1),
++                   Err(Gicv3Error::BadRegion));
++        assert_eq!(m.reads.get(), 0);
++    }
++
++    #[test]
++    fn scan_stays_inside_region_and_rejects_overflow() {
++        // No LAST bit anywhere: walking must stop at the region length.
++        let m = MockMmio::with_rds(&[(RD0, 0, false)]);
++        assert_eq!(
++            find_redistributor(&m, &[(RD0, 0x2_0000)], None, 1),
++            Err(Gicv3Error::NoRedistributorForCpu(1))
++        );
++        assert!(m.reads.get() <= 1);
++        // Region too small for a single RD+SGI frame pair is never read.
++        let m = MockMmio::with_rds(&[(RD0, 1, true)]);
++        assert_eq!(
++            find_redistributor(&m, &[(RD0, 0x1_0000)], None, 1),
++            Err(Gicv3Error::NoRedistributorForCpu(1))
++        );
++        assert_eq!(
++            find_redistributor(&m, &[(usize::MAX - 0x100, 0x2_0000)], None, 1),
++            Err(Gicv3Error::BadRegion)
++        );
++    }
++
++    #[test]
++    fn route_splits_private_shared_and_invalid() {
++        assert_eq!(route(30, 288), Ok(Route::Private(30)));
++        assert_eq!(route(37, 288), Ok(Route::Shared(37)));
++        assert_eq!(route(668, 1020), Ok(Route::Shared(668)));
++        assert_eq!(route(288, 288), Err(Gicv3Error::InvalidIntid(288)));
++        for special in 1020..=1023 {
++            assert_eq!(route(special, 2048), Err(Gicv3Error::InvalidIntid(special)));
++        }
++    }
++
++    #[test]
++    fn ppi30_enable_disable_hits_current_cpu_sgi_frame() {
++        let rd1 = RD0 + 0x2_0000;
++        let mut m = MockMmio::with_rds(&[(RD0, 0, false), (rd1, 1, true)]);
++        let rd = find_redistributor(&m, &[(RD0, 0xf6_0000)], None, 1).unwrap();
++        private_enable(&mut m, rd, 30).unwrap();
++        private_disable(&mut m, rd, 30, 8).unwrap();
++        assert_eq!(
++            m.writes,
++            vec![(rd1 + GICR_ISENABLER0, 1 << 30), (rd1 + GICR_ICENABLER0, 1 << 30)]
++        );
++        assert!(m.writes.iter().all(|&(a, _)| a >= rd1 && a < rd1 + 0x2_0000));
++        assert_eq!(private_enable(&mut m, rd, 37), Err(Gicv3Error::InvalidIntid(37)));
++    }
++
++    #[test]
++    fn ppi30_configure_sets_icfgr1_field() {
++        let mut m = MockMmio::with_rds(&[(RD0, 0, true)]);
++        m.set(RD0 + GICR_ICFGR1, 0xffff_ffff);
++        ppi_configure(&mut m, RD0, 30, 4).unwrap();
++        assert_eq!(m.get(RD0 + GICR_ICFGR1) as u32, 0xcfff_ffff);
++        ppi_configure(&mut m, RD0, 30, 1).unwrap();
++        assert_eq!(m.get(RD0 + GICR_ICFGR1) as u32, 0xefff_ffff);
++        assert_eq!(ppi_configure(&mut m, RD0, 3, 4), Err(Gicv3Error::InvalidIntid(3)));
++        assert_eq!(ppi_configure(&mut m, RD0, 30, 8), Err(Gicv3Error::UnsupportedTrigger(8)));
++    }
++
++    #[test]
++    fn init_private_wakes_disables_and_groups_when_ds() {
++        let mut m = MockMmio::with_rds(&[(RD0, 0, true)]);
++        init_private(&mut m, RD0, GICD_CTLR_DS, 8).unwrap();
++        assert_eq!(m.read32(RD0 + GICR_WAKER) & GICR_WAKER_PROCESSOR_SLEEP, 0);
++        assert_eq!(m.get(RD0 + GICR_IGROUPR0) as u32, 0xffff_ffff);
++        assert_eq!(m.get(RD0 + GICR_IGRPMODR0) as u32, 0);
++        assert_eq!(m.get(RD0 + GICR_IPRIORITYR + 28) as u32, 0xa0a0_a0a0);
++
++        let mut m = MockMmio::with_rds(&[(RD0, 0, true)]);
++        init_private(&mut m, RD0, 0, 8).unwrap();
++        assert!(m.writes.iter().all(|&(a, _)| a != RD0 + GICR_IGROUPR0));
++    }
++
++    #[test]
++    fn stuck_wake_and_rwp_are_bounded_errors() {
++        let mut m = MockMmio::with_rds(&[(RD0, 0, true)]);
++        m.stuck_asleep = true;
++        assert_eq!(wake(&mut m, RD0, 16), Err(Gicv3Error::WakeTimeout));
++        assert!(m.reads.get() <= 17);
++
++        let mut m = MockMmio::with_rds(&[(RD0, 0, true)]);
++        m.stuck_rwp = true;
++        assert_eq!(private_disable(&mut m, RD0, 30, 16), Err(Gicv3Error::RwpTimeout));
++        assert_eq!(init_private(&mut m, RD0, 0, 16), Err(Gicv3Error::RwpTimeout));
++    }
++}

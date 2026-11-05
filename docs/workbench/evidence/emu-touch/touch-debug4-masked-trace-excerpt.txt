@@ -1,0 +1,14 @@
+# QEMU -trace excerpt, run touch-debug4-masked (payload 3d68d64efc5a61d29f3b203e7eb7c566aba321a7ba02083160b0ae903cf3a63a, all three kernel patches; tree uncommitted at build, identical source to 0003)
+# grep -E 'dist_write' out/emu-op6/touch-debug4-masked/unimp.log | grep -E 'offset 0x1[0-7][0-9a-f] '   (GICD_ISENABLER writes)
+gicv3_dist_write GICv3 distributor write: offset 0x11c data 0x10000 size 4 secure 0
+gicv3_dist_write GICv3 distributor write: offset 0x100 data 0x40000 size 4 secure 0
+gicv3_dist_write GICv3 distributor write: offset 0x130 data 0x4 size 4 secure 0
+gicv3_dist_write GICv3 distributor write: offset 0x150 data 0x80 size 4 secure 0
+# grep -c icc_iar1_read out/emu-op6/touch-debug4-masked/unimp.log
+2
+# grep -a 'stays masked' serial.log
+kernel::dtb::irqchip:INFO -- irq chip 0xfe has no driver; its summary interrupt L3(0, 33, 4) stays masked
+kernel::dtb::irqchip:INFO -- irq chip 0xfd has no driver; its summary interrupt L3(0, 32, 4) stays masked
+kernel::dtb::irqchip:INFO -- irq chip 0xd7 has no driver; its summary interrupt L3(0, 83, 4) stays masked
+kernel::dtb::irqchip:INFO -- irq chip 0x1f7 has no driver; its summary interrupt L3(0, 481, 4) stays masked
+kernel::dtb::irqchip:INFO -- irq chip 0xc0 has no driver; its summary interrupt L2(54, 4) stays masked

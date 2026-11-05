@@ -1,0 +1,382 @@
+{
+  "ir_version": "1.0.0",
+  "id": "svc.time.countdown_timer",
+  "version": "1.0.0",
+  "generation": 1,
+  "content_hash": "blake3:7c9e1a3b5d7f9e0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a",
+  "title": "Countdown Timer",
+  "description": "Hardware-monotonic countdown timer with zero-LLM voice start/pause/cancel and A2UI live surface.",
+  "author": {
+    "name": "Redox Core Builtin",
+    "provenance": "system_builtin"
+  },
+  "execution_mode": "ephemeral_component",
+  "priority_class": "P2_INTERACTIVE_VOICE_UI",
+  "parameters": [
+    { "key": "hours", "input_type": "number", "requirement": "optional", "description": "Hours", "default": 0 },
+    { "key": "minutes", "input_type": "number", "requirement": "optional", "description": "Minutes", "default": 0 },
+    { "key": "seconds", "input_type": "number", "requirement": "optional", "description": "Seconds", "default": 0 },
+    { "key": "name", "input_type": "string", "requirement": "optional", "description": "Timer label", "default": "Timer" }
+  ],
+  "triggers": [
+    {
+      "id": "trig_hass_start_timer",
+      "kind": "voice_intent",
+      "entry_action": "act_arm_timer",
+      "voice_intent": {
+        "domain": "homeassistant",
+        "intent_name": "HassStartTimer",
+        "lang": "en-US",
+        "method": "template",
+        "speech_to_phrase": true,
+        "sentences": [
+          "set a timer for {minutes} minute[s]",
+          "timer for {minutes} minute[s]",
+          "set a {minutes} minute[s] timer [named {name}]",
+          "set a timer for {hours} hour[s] [and] {minutes} minute[s] [and] {seconds} second[s]"
+        ],
+        "slots": {
+          "hours": { "type": "integer", "required": false, "default": 0 },
+          "minutes": { "type": "integer", "required": false, "default": 0 },
+          "seconds": { "type": "integer", "required": false, "default": 0 },
+          "name": { "type": "string", "required": false, "default": "Timer" }
+        }
+      }
+    },
+    {
+      "id": "trig_monotonic_expiry",
+      "kind": "timer_schedule",
+      "entry_action": "act_fire_alarm",
+      "condition_cel": "state.armed == true",
+      "timer_schedule": {
+        "mode": "countdown_monotonic",
+        "duration_sec_expr": "$.state.total_duration_sec",
+        "catchup_policy": "fire_once_within_grace",
+        "grace_window_sec": 120,
+        "wake_from_suspend": true
+      }
+    },
+    {
+      "id": "trig_ui_cancel_timer",
+      "kind": "ui_action",
+      "entry_action": "act_cancel_timer",
+      "ui_action": {
+        "surface_id": "countdown-timer-surface",
+        "action_name": "cancel_timer",
+        "source_component_id": "btn_cancel"
+      }
+    }
+  ],
+  "workflow": [
+    "act_arm_timer",
+    "act_update_timer_surface",
+    "act_confirm_timer_voice"
+  ],
+  "actions": {
+    "act_arm_timer": {
+      "type": "state_mutate",
+      "description": "Compute target monotonic deadline and persist armed timer state.",
+      "effect_class": "reversible_compensated",
+      "idempotency_key_template": "svc.time.countdown_timer:{{utterance_id}}:arm",
+      "read_only": false,
+      "deduplicate_calls": true,
+      "concurrency": "serial",
+      "timeout": { "idle_ms": 50, "total_ms": 100 },
+      "state_patch": [
+        { "op": "replace", "path": "/armed", "value": true },
+        { "op": "replace", "path": "/status", "value": "running" },
+        { "op": "replace", "path": "/eventName", "value": "{{params.name}}" },
+        { "op": "replace", "path": "/hours", "value": "{{params.hours}}" },
+        { "op": "replace", "path": "/minutes", "value": "{{params.minutes}}" },
+        { "op": "replace", "path": "/seconds", "value": "{{params.seconds}}" },
+        { "op": "replace", "path": "/total_duration_sec", "value": "{{params.hours * 3600 + params.minutes * 60 + params.seconds}}" }
+      ],
+      "compensating_action": "act_cancel_timer",
+      "next": [
+        { "target": "act_update_timer_surface" }
+      ]
+    },
+    "act_update_timer_surface": {
+      "type": "ui_patch",
+      "description": "Sync timer countdown model onto the A2UI countdown card.",
+      "effect_class": "reversible_staged",
+      "read_only": false,
+      "deduplicate_calls": false,
+      "concurrency": "serial",
+      "timeout": { "idle_ms": 50, "total_ms": 100 },
+      "ui_patch": {
+        "surface_id": "countdown-timer-surface",
+        "operation": "update_data_model",
+        "data_model_path": "/",
+        "data_model_value": "$.state"
+      },
+      "next": [
+        { "when_cel": "state.status == 'running'", "target": "act_confirm_timer_voice" }
+      ]
+    },
+    "act_confirm_timer_voice": {
+      "type": "dialog",
+      "description": "Confirm timer creation via spoken response.",
+      "effect_class": "committed_irreversible",
+      "idempotency_key_template": "svc.time.countdown_timer:{{utterance_id}}:confirm_voice",
+      "read_only": true,
+      "deduplicate_calls": true,
+      "concurrency": "serial",
+      "timeout": { "idle_ms": 1000, "total_ms": 3000 },
+      "dialog": {
+        "speech": "{{params.name}} set for {{params.minutes}} minutes.",
+        "text": "{{params.name}}: {{params.hours}}h {{params.minutes}}m {{params.seconds}}s running.",
+        "priority": "normal"
+      }
+    },
+    "act_fire_alarm": {
+      "type": "dialog",
+      "description": "Mark timer expired, acquire brief 15s wake lock, and play critical alarm announcement.",
+      "effect_class": "committed_irreversible",
+      "idempotency_key_template": "svc.time.countdown_timer:{{execution_id}}:fire_alarm",
+      "read_only": false,
+      "deduplicate_calls": true,
+      "concurrency": "serial",
+      "timeout": { "idle_ms": 2000, "total_ms": 15000 },
+      "dialog": {
+        "speech": "Time is up for {{state.eventName}}.",
+        "text": "DONE: {{state.eventName}} (00:00)",
+        "priority": "critical"
+      },
+      "next": [
+        { "target": "act_cancel_timer" }
+      ]
+    },
+    "act_cancel_timer": {
+      "type": "state_mutate",
+      "description": "Disarm monotonic timer and clear running status.",
+      "effect_class": "reversible_staged",
+      "read_only": false,
+      "deduplicate_calls": true,
+      "concurrency": "serial",
+      "timeout": { "idle_ms": 50, "total_ms": 100 },
+      "state_patch": [
+        { "op": "replace", "path": "/armed", "value": false },
+        { "op": "replace", "path": "/status", "value": "idle" },
+        { "op": "replace", "path": "/total_duration_sec", "value": 0 }
+      ]
+    }
+  },
+  "deps": {
+    "schemes": [
+      {
+        "scheme": "time:monotonic",
+        "access": "event_subscribe",
+        "lifecycle": "while_grant_alive"
+      },
+      {
+        "scheme": "audio:wyoming/tts",
+        "access": "write",
+        "lifecycle": "demand_per_action"
+      }
+    ],
+    "wasm_components": [],
+    "sub_services": []
+  },
+  "capabilities": [
+    {
+      "cap_id": "cap_timer_sched",
+      "capability": "timer.monotonic.schedule",
+      "scope": { "wake_from_suspend": true },
+      "lifetime": "until_deadline",
+      "max_duration_sec": 86400,
+      "revocable": true,
+      "audit_reason": "Program kernel monotonic alarm timer so CPU can sleep until expiry."
+    },
+    {
+      "cap_id": "cap_timer_wake",
+      "capability": "power.request_wake",
+      "scope": { "reason": "timer_alarm_ringing" },
+      "lifetime": "per_invocation",
+      "max_duration_sec": 15,
+      "revocable": true,
+      "audit_reason": "Hold 15s wake lock when timer expires so alarm is audible."
+    },
+    {
+      "cap_id": "cap_timer_ui",
+      "capability": "ui.surface.render",
+      "scope": { "surface_id": "countdown-timer-surface", "slot": "overlay_banner" },
+      "lifetime": "while_visible",
+      "max_duration_sec": 86400,
+      "revocable": true,
+      "audit_reason": "Render live countdown timer card."
+    },
+    {
+      "cap_id": "cap_timer_alarm_tts",
+      "capability": "audio.playback.alarm",
+      "scope": { "duck_others": true },
+      "lifetime": "per_invocation",
+      "max_duration_sec": 15,
+      "revocable": true,
+      "audit_reason": "Announce timer completion at alarm priority."
+    }
+  ],
+  "state_schema": {
+    "namespace": "state:svc.time.countdown_timer",
+    "durability": "sqlite_wal_durable",
+    "wal_limit_bytes": 524288,
+    "retention_ttl_sec": 86400,
+    "schema": {
+      "type": "object",
+      "required": ["armed", "status", "eventName", "hours", "minutes", "seconds", "total_duration_sec"],
+      "properties": {
+        "armed": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["idle", "running", "expired"] },
+        "eventName": { "type": "string" },
+        "hours": { "type": "integer", "minimum": 0 },
+        "minutes": { "type": "integer", "minimum": 0 },
+        "seconds": { "type": "integer", "minimum": 0 },
+        "total_duration_sec": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "initial_state": {
+      "armed": false,
+      "status": "idle",
+      "eventName": "Timer",
+      "hours": 0,
+      "minutes": 0,
+      "seconds": 0,
+      "total_duration_sec": 0
+    },
+    "migrations": []
+  },
+  "ui": {
+    "mode": "a2ui_v1",
+    "surface_id": "countdown-timer-surface",
+    "catalog_id": "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+    "send_data_model": true,
+    "initial_messages": [
+      {
+        "version": "v1.0",
+        "createSurface": {
+          "surfaceId": "countdown-timer-surface",
+          "catalogId": "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+          "sendDataModel": true
+        }
+      },
+      {
+        "version": "v1.0",
+        "updateComponents": {
+          "surfaceId": "countdown-timer-surface",
+          "components": [
+            { "id": "root", "component": "Card", "child": "main_column" },
+            {
+              "id": "main_column",
+              "component": "Column",
+              "children": ["event_name", "countdown_row", "btn_cancel"],
+              "align": "center"
+            },
+            {
+              "id": "event_name",
+              "component": "Text",
+              "text": { "@path": "/eventName" }
+            },
+            {
+              "id": "countdown_row",
+              "component": "Row",
+              "children": ["hours_col", "minutes_col", "seconds_col"],
+              "justify": "spaceAround"
+            },
+            {
+              "id": "hours_col",
+              "component": "Column",
+              "children": ["hours_value", "hours_label"],
+              "align": "center"
+            },
+            { "id": "hours_value", "component": "Text", "text": { "@path": "/hours" } },
+            { "id": "hours_label", "component": "Text", "text": "Hours", "variant": "caption" },
+            {
+              "id": "minutes_col",
+              "component": "Column",
+              "children": ["minutes_value", "minutes_label"],
+              "align": "center"
+            },
+            { "id": "minutes_value", "component": "Text", "text": { "@path": "/minutes" } },
+            { "id": "minutes_label", "component": "Text", "text": "Minutes", "variant": "caption" },
+            {
+              "id": "seconds_col",
+              "component": "Column",
+              "children": ["seconds_value", "seconds_label"],
+              "align": "center"
+            },
+            { "id": "seconds_value", "component": "Text", "text": { "@path": "/seconds" } },
+            { "id": "seconds_label", "component": "Text", "text": "Seconds", "variant": "caption" },
+            {
+              "id": "btn_cancel",
+              "component": "Button",
+              "label": "Cancel",
+              "action": { "event": { "name": "cancel_timer", "context": {} } }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "power_budget": {
+    "cpu_cluster_preference": "silver_only",
+    "max_cpu_cores": 1,
+    "cpu_quota_pct": 2,
+    "memory_limit_mb": 4,
+    "wasm_fuel_per_invocation": 10000,
+    "max_wakeups_per_minute": 1,
+    "max_wakelock_sec": 15,
+    "network_egress_bytes_max": 0,
+    "allowed_hosts": [],
+    "allowed_ip_name_lookups": [],
+    "allowed_host_loopback_ports": [],
+    "auto_stop_idle_ms": 100,
+    "power_announcement": "Countdown Timer: kernel monotonic alarm armed; CPU sleeping until expiry (0 polling)."
+  },
+  "tests": [
+    {
+      "name": "five_minute_timer_lifecycle",
+      "description": "Matches 'timer for 5 minutes' (ha-intents test fixture), sleeps 300,000 ms on virtual clock, fires alarm, and disarms.",
+      "initial_env": {
+        "monotonic_ms": 0,
+        "wall_iso": "2026-10-24T18:00:00Z",
+        "battery_pct": 65.0,
+        "charging": false,
+        "network_online": false,
+        "location": { "lat": 45.5152, "lon": -122.6784, "tz": "America/Los_Angeles" }
+      },
+      "events": [
+        {
+          "at_monotonic_ms": 0,
+          "event_type": "utterance",
+          "payload": { "text": "timer for 5 minutes" }
+        },
+        {
+          "at_monotonic_ms": 300000,
+          "event_type": "advance_clock",
+          "payload": { "monotonic_ms": 300000 }
+        }
+      ],
+      "assertions": {
+        "final_state_subset": {
+          "armed": false,
+          "status": "idle",
+          "total_duration_sec": 0
+        },
+        "expected_bus_emissions": [
+          { "msg_type": "ovos.intent.handler.start" },
+          { "msg_type": "speak", "data": { "utterance": "Timer set for 5 minutes." } },
+          { "msg_type": "speak", "data": { "utterance": "Time is up for Timer." } },
+          { "msg_type": "ovos.intent.handler.complete" }
+        ],
+        "expected_ui_surfaces": [
+          { "surfaceId": "countdown-timer-surface" }
+        ],
+        "budget_assertions": {
+          "max_memory_mb_used": 4.0,
+          "network_bytes_sent": 0,
+          "active_schemes_after_completion": []
+        }
+      }
+    }
+  ]
+}

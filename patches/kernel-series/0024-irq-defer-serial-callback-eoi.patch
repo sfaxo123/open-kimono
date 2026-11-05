@@ -1,0 +1,88 @@
+From 09d0774ea3d6bfbae9c180c214cc7a6466750227 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Mon, 26 Oct 2026 17:33:27 +0000
+Subject: [PATCH] irq: defer serial callback EOI until after handler borrow
+
+Agent: Codex with Cursor and Luna
+
+Model: gpt-6-sol
+
+Provider: OpenAI
+
+Refs: OnePlus6 UART callback ownership review
+---
+ src/arch/aarch64/device/serial.rs | 15 ++++++++-------
+ src/dtb/irqchip.rs                | 12 ++++++++++++
+ 2 files changed, 20 insertions(+), 7 deletions(-)
+
+diff --git a/src/arch/aarch64/device/serial.rs b/src/arch/aarch64/device/serial.rs
+index 841166e6..13b204bc 100644
+--- a/src/arch/aarch64/device/serial.rs
++++ b/src/arch/aarch64/device/serial.rs
+@@ -17,15 +17,16 @@ pub struct Com1Irq {}
+ impl InterruptHandler for Com1Irq {
+     fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken) {
+         COM1.lock().receive(token);
+-        unsafe {
+-            // FIXME add_irq accepts a u8 as irq number
+-            // PercpuBlock::current().stats.add_irq(irq);
+-            if let Ok(irq) = u16::try_from(irq) {
+-                irq_trigger(irq, token);
+-            }
+-            IRQ_CHIP.irq_eoi(irq);
++        // FIXME add_irq accepts a u8 as irq number
++        // PercpuBlock::current().stats.add_irq(irq);
++        if let Ok(irq) = u16::try_from(irq) {
++            irq_trigger(irq, token);
+         }
+     }
++
++    fn irq_eoi_after_handler(&self) -> bool {
++        true
++    }
+ }
+ 
+ pub unsafe fn init(fdt: &Fdt<'_>) {
+diff --git a/src/dtb/irqchip.rs b/src/dtb/irqchip.rs
+index fc7a7317..80f962bf 100644
+--- a/src/dtb/irqchip.rs
++++ b/src/dtb/irqchip.rs
+@@ -12,6 +12,13 @@ use syscall::{Error, Result, EINVAL};
+ 
+ pub trait InterruptHandler {
+     fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken);
++
++    /// Handlers run while the irq core is mutably borrowed, so they must not
++    /// EOI through it themselves. A handler that needs its virq EOIed returns
++    /// true here and the core EOIs it right after `irq_handler` returns.
++    fn irq_eoi_after_handler(&self) -> bool {
++        false
++    }
+ }
+ 
+ #[derive(Debug, Copy, Clone)]
+@@ -605,9 +612,11 @@ impl IrqChipCore {
+     pub fn trigger_virq(&mut self, virq: u32, token: &mut CleanLockToken) {
+         if virq < 2048 {
+             let desc = &mut self.irq_desc[virq as usize];
++            let mut eoi_after = false;
+             match &mut desc.handler {
+                 Some(handler) => {
+                     handler.irq_handler(virq, token);
++                    eoi_after = handler.irq_eoi_after_handler();
+                 }
+                 _ => {
+                     if let Some(ic_idx) = desc.basic.child_ic_idx {
+@@ -617,6 +626,9 @@ impl IrqChipCore {
+                     }
+                 }
+             }
++            if eoi_after {
++                self.irq_eoi(virq);
++            }
+         }
+     }
+ 
+-- 
+2.43.0
+

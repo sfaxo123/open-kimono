@@ -1,0 +1,35 @@
+//! Host seam for the ACTUAL tlmm.rs items (extracted verbatim by ../extract.py).
+//! `old` = ff56c966 handler, `new` = working-tree handler + step helper.
+//! Fake MMIO is a modeled register file, not hardware.
+#![allow(dead_code, unused_imports)]
+
+#[path = "__QCOM_SOURCE__"]
+pub mod qcom_irq;
+
+pub mod shim;
+
+pub mod old {
+    use crate::qcom_irq;
+    use crate::shim::*;
+    include!(concat!(env!("TLMM_GEN_DIR"), "/old.rs"));
+    pub fn make(base: usize, virq_base: usize, enabled: [bool; GPIO_COUNT], probe_only: bool) -> Tlmm {
+        Tlmm { base, virq_base, enabled, probe_only }
+    }
+}
+
+pub mod new {
+    use crate::qcom_irq;
+    use crate::shim::*;
+    include!(concat!(env!("TLMM_GEN_DIR"), "/new.rs"));
+    // Child module so tests reach the private helper/method without widening source visibility.
+    #[cfg(all(test, tlmm_step))]
+    mod step_tests {
+        include!("step_tests.rs");
+    }
+    pub fn make(base: usize, virq_base: usize, enabled: [bool; GPIO_COUNT], probe_only: bool) -> Tlmm {
+        Tlmm { base, virq_base, enabled, probe_only }
+    }
+}
+
+#[cfg(test)]
+mod tests;

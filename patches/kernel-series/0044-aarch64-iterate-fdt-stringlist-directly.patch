@@ -1,0 +1,45 @@
+From: Remy <remy@localhost>
+Subject: [PATCH] aarch64: iterate fdt StringList directly in the qcom_pon/qcom_wdt probes
+
+Build fix caught by the first kernel build of the full
+0040-0043 series (r1-p3fix worktree, 2026-11-01): in the
+pinned fdt crate (0.1.5), StringList IS the iterator - there
+is no .iter() method. Both new probes (0040's qcom_pon
+reg-names read, kept by 0041; 0043's qcom_wdt compatible
+read) called list.iter() in their #[cfg(not(test))] glue,
+which the host suites exclude - the exact blind spot the
+0041 notes flagged. Iterate the list directly, matching the
+in-tree precedent (src/dtb/serial.rs, riscv64 cpu). Two
+one-line changes; no logic change.
+
+Agent: Remy (root of record)
+Model: Muse Wonder (muse-wonder-1.0)
+Provider: Meta
+
+---
+diff --git a/src/arch/aarch64/device/qcom_pon.rs b/src/arch/aarch64/device/qcom_pon.rs
+index 770aec99..1fdeab7f 100644
+--- a/src/arch/aarch64/device/qcom_pon.rs
++++ b/src/arch/aarch64/device/qcom_pon.rs
+@@ -559,7 +559,7 @@ fn probe(fdt: &crate::dtb::Fdt<'_>) -> Option<([usize; 4], [usize; 4], u32, u32)
+     let names: alloc::vec::Vec<alloc::string::String> = arb
+         .raw_property("reg-names")
+         .and_then(|prop| prop.as_value::<StringList>().ok())
+-        .map(|list| list.iter().map(alloc::string::ToString::to_string).collect())
++        .map(|list| list.map(alloc::string::ToString::to_string).collect())
+         .unwrap_or_default();
+     // Keep each region's span next to its translated base (`ranges`
+     // translation preserves lengths, so the FDT length is the span of
+diff --git a/src/arch/aarch64/device/qcom_wdt.rs b/src/arch/aarch64/device/qcom_wdt.rs
+index 3070c0f6..22192c12 100644
+--- a/src/arch/aarch64/device/qcom_wdt.rs
++++ b/src/arch/aarch64/device/qcom_wdt.rs
+@@ -281,7 +281,7 @@ fn probe(fdt: &crate::dtb::Fdt<'_>) -> Option<usize> {
+         let compatibles: alloc::vec::Vec<alloc::string::String> = node
+             .raw_property("compatible")
+             .and_then(|prop| prop.as_value::<StringList>().ok())
+-            .map(|list| list.iter().map(alloc::string::ToString::to_string).collect())
++            .map(|list| list.map(alloc::string::ToString::to_string).collect())
+             .unwrap_or_default();
+         let refs: alloc::vec::Vec<&str> =
+             compatibles.iter().map(alloc::string::String::as_str).collect();

@@ -1,0 +1,52 @@
+From: Remy <remy@localhost>
+Subject: [PATCH] aarch64: hold 5 s after the SCM result print in kreset (panel capture window)
+
+REVIEW-20261031-1930 F-1: the SCM download-mode result line
+prints microseconds before PSCI SYSTEM_RESET, so no panel
+capture can ever read it - and a boot cycle PASS cannot
+distinguish a clean TTL reset from an early crash that also
+returns to pmOS. kreset now busy-waits ~5 s on the generic
+counter (cntvct_el0 / cntfrq_el0, the same registers StallWatch
+polls) between the result print and the reset, so the R-3
+webcam burst has a window that contains the line.
+
+Gated on the same qcom-dload-mode-clear feature as the print:
+builds without the feature are untouched. Deliberately NOT in
+emergency_reset: that path must reset immediately. A zero
+counter frequency degenerates to no hold.
+
+---
+diff --git a/src/arch/aarch64/stop.rs b/src/arch/aarch64/stop.rs
+--- a/src/arch/aarch64/stop.rs
++++ b/src/arch/aarch64/stop.rs
+@@ -10,12 +10,30 @@ fn halt_after_failed_psci(operation: &str, error: psci::CallError) -> ! {
+     }
+ }
+ 
++/// Hold the framebuffer console for ~5 s after the SCM download-mode
++/// result is printed, so a panel capture can actually read the line
++/// before the reset fires (REVIEW-20261031-1930 F-1). Timer-based busy
++/// wait on the generic counter, the same registers StallWatch polls;
++/// a zero counter frequency degenerates to no hold.
++#[cfg(feature = "qcom-dload-mode-clear")]
++fn panel_capture_hold() {
++    use crate::arch::device::cpu::registers::control_regs;
++    println!("kreset: holding 5 s before SYSTEM_RESET (panel capture window)");
++    let started = unsafe { control_regs::cntvct_el0() };
++    let limit = u64::from(unsafe { control_regs::cntfrq_el0() }).saturating_mul(5);
++    while unsafe { control_regs::cntvct_el0() }.wrapping_sub(started) < limit {
++        core::hint::spin_loop();
++    }
++}
++
+ pub unsafe fn kreset() -> ! {
+     #[cfg(feature = "qcom-dload-mode-clear")]
+     match crate::arch::device::qcom_scm::clear_download_mode() {
+         Ok(()) => { info!("qcom SCM: download-mode cleared"); }
+         Err(reason) => { warn!("Qualcomm SCM download-mode clear failed: {}", reason); }
+     }
++    #[cfg(feature = "qcom-dload-mode-clear")]
++    panel_capture_hold();
+     println!("kreset: PSCI SYSTEM_RESET (0x84000009)");
+     match psci::system_reset() {
+         Ok(()) => unreachable!(),

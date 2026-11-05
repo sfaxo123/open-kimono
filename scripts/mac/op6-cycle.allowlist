@@ -1,0 +1,16 @@
+# op6-cycle allowlist: <sha256> <basename> <ttl_seconds> <gate_evidence_ref>
+# An image may be cycled unattended only with a recorded 8 GiB emulator
+# gate AND a device-proven (or gate-proven) self-reset TTL.
+86152e438c30025891cd5eb6b0cc98da012757b2a417f8b2b3d09008047d0932 op6-redox-r1-hr120.img 120 gate:8GiB-reboot-repro-RESULT.json(serial:09e1166c)+R1-DEVICE-20261031(device-pass)
+eed4d1e56f9702ab1ebb587d4d260bdbcdf0c92eb6a3583cc5536045e5b3b064 op6-redox-r1-t60.img 60 gate:8GiB-ttl+reboot-PASS:root-p2-t60(serials:8acb0de4,e73bdc08)+kernel0038
+95317c8941913b16efabf736234c64ef7088fafb3a97852c051d7161bd734393 op6-redox-r1-t60h.img 60 gate:8GiB-reboot-PASS:root-p2-t60h-reboot(serial:e38cae48)+ttl-emu-bound-x2+kernel0039
+912cc9a6b972c150c8b2b7cf0b9aee4ad4ec78003b1f1002c5c12aa6b1bebd3f op6-redox-p3-fix60.img 60 gate:8GiB-reboot+ttl-PASS:root-p3fix3-fix60-reboot+root-p3fix3-fix60-ttl ATTENDED-ONLY
+02d2756f78d89f204a1e7413de97a031330fbc382fe38a9617d8739fe8fbb4a9 op6-redox-p3-fixstall.img 3600 gate:8GiB-reboot-PASS:root-p3fix3-fixstall-reboot+wdt-leave ATTENDED-ONLY
+b60a94681396015f34edf6b35fa1629b52c0048461431eefc4d2f242123b7386 op6-redox-f7-fix60.img 60 gate:8GiB-reboot+ttl-PASS:root-f7-f7fix60-reboot+root-f7-f7fix60-ttl+uboot-smc-clear ATTENDED-ONLY
+c82bc10c43c3ba4d8559111367c3efee112654330b246c7ddec5e1d535e2c972 op6-redox-f7-fixstall.img 3600 gate:8GiB-reboot-PASS:root-f7-f7fixstall-reboot+uboot-smc-clear+wdt-leave ATTENDED-ONLY
+0f3bdb253246b30e9a4e87ec7ae06f5db6152976ee658612090b4d309db87075 op6-redox-p4-pon60.img 60 gate:8GiB-reboot+ttl-PASS:root-p4c-p4pon60-reboot+root-p4c-p4pon60-ttl+PON-byte-0x04-written-verified-in-ttl-serial ATTENDED-ONLY
+dfbaa46a04b6ed62b4c30d67ab2152cb83cd09f437765c31d116920202479679 op6-redox-f7tcsr-fix60.img 60 gate:8GiB-reboot+ttl-PASS:root-f7t-f7tcsr60-reboot+root-f7t-f7tcsr60-ttl+tcsr-iowrite ATTENDED-ONLY
+e42593f4cfa6e8c6eeede323f382016a0b23f09599dc3e03b9ab5c378b33c617 op6-redox-f7tcsr-fixstall.img 3600 gate:8GiB-reboot-PASS:root-f7t-f7tcsrstall-reboot+tcsr-iowrite+wdt-leave ATTENDED-ONLY
+b6b3c09bbda605a1b14a3c469cf8be059c22d7dcbe5c27a6f753926adb5fa3d0 op6-redox-p5s1.img 60 gate:8GiB-reboot+ttl-PASS:root-p5s1v3-p5s1v3-reboot+root-p5s1v3-p5s1v3-ttl+verdict-lines+fault-block-corrected ATTENDED-ONLY
+2cd6c86b7c326610d4a16edb4fd750410deea6942a14403e5c9267ecb4c051eb op6-redox-p5s2.img 60 gate:8GiB-reboot+ttl-PASS:root-p5s2-p5s2-reboot+root-p5s2-p5s2-ttl+fail-closed-chain-in-serial ATTENDED-ONLY
+a98f2159cfff5ceca29a3a02efbd7fa283befbc9f7c1f5f5051f2dd30e92e387 op6-redox-p5s3.img 60 gate:8GiB-reboot+ttl-PASS:root-p5s3-p5s3-reboot+root-p5s3-p5s3-ttl+fail-closed-chain-in-serial ATTENDED-ONLY

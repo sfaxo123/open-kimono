@@ -1,0 +1,76 @@
+{
+  "inputs": {
+    "follow_up_window": "closed",
+    "pending": "none",
+    "session_id": "sess-capture-1",
+    "turn_count": 2
+  },
+  "manifest": {
+    "actions": [],
+    "id": "session-card",
+    "inputs": [
+      {
+        "name": "session_id",
+        "required": true,
+        "source": "context",
+        "type": "string"
+      },
+      {
+        "name": "turn_count",
+        "required": true,
+        "source": "agent",
+        "type": "number"
+      },
+      {
+        "name": "follow_up_window",
+        "required": true,
+        "source": "agent",
+        "type": "string"
+      },
+      {
+        "name": "pending",
+        "required": true,
+        "source": "agent",
+        "type": "string"
+      }
+    ],
+    "layout": [
+      {
+        "block": "title",
+        "text": "session_id"
+      },
+      {
+        "block": "big_number",
+        "caption": "turns",
+        "unit": "turns",
+        "value": "turn_count"
+      },
+      {
+        "block": "rows",
+        "items": [
+          {
+            "label": "Follow-up window",
+            "value": "follow_up_window"
+          },
+          {
+            "label": "Pending",
+            "value": "pending"
+          }
+        ]
+      }
+    ],
+    "lifetime": {
+      "appears_when": "a conversation session starts",
+      "expires_when": "the session expires",
+      "max_ttl_minutes": 120
+    },
+    "protocol": "1",
+    "trigger": {
+      "context": [
+        "session"
+      ],
+      "when": "session_active"
+    },
+    "user_purpose": "Show the user the current conversation session state at a glance."
+  }
+}

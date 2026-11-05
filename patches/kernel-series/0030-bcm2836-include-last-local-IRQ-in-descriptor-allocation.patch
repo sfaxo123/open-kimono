@@ -1,0 +1,31 @@
+From e5e62f7ff1ed0b6d49ebd1679f1460e8b7b9723e Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Tue, 27 Oct 2026 04:18:50 +0000
+Subject: [PATCH] bcm2836: include last local IRQ in descriptor allocation
+
+LOCAL_IRQ_LAST is inclusive in irq_to_virq; allocate its descriptor and advance the next domain beyond it. Preserve descriptor cap and root stores.
+
+Agent: Codex
+Model: gpt-6-sol
+Provider: OpenAI
+Refs: perplexity-redox-hourly-safety-check
+---
+ src/arch/aarch64/device/irqchip/irq_bcm2836.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/aarch64/device/irqchip/irq_bcm2836.rs b/src/arch/aarch64/device/irqchip/irq_bcm2836.rs
+index 27e25ae5..8a738f1a 100644
+--- a/src/arch/aarch64/device/irqchip/irq_bcm2836.rs
++++ b/src/arch/aarch64/device/irqchip/irq_bcm2836.rs
+@@ -146,7 +146,7 @@ impl InterruptController for Bcm2836ArmInterruptController {
+ 
+             self.init();
+             let idx = *irq_idx;
+-            let cnt = LOCAL_IRQ_LAST as usize;
++            let cnt = LOCAL_IRQ_LAST as usize + 1;
+             let mut i: usize = 0;
+             //only support linear irq map now.
+             while i < cnt && (idx + i < 1024) {
+-- 
+2.43.0
+

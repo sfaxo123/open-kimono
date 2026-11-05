@@ -1,0 +1,16 @@
+{
+  "service": "timer",
+  "gen": 1,
+  "engine": "tinywasm",
+  "kind": "wasm",
+  "cores": 1,
+  "ram_kb": 8192,
+  "wake": "2s",
+  "on_time": "5m",
+  "relay": null,
+  "uses": [
+    { "cap": "time.wake", "scope": "advance=250ms, max=5m", "budget": "5m", "window": "while-active" },
+    { "cap": "time.alarm", "budget": "2s" },
+    { "cap": "notify.post" }
+  ]
+}

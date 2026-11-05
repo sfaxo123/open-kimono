@@ -1,0 +1,562 @@
+From acf31abd7f9442b401a863c208d049e2b8c86a11 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:10:35 +0000
+Subject: [PATCH 04/10] simplefb: discover device tree simple-framebuffer nodes
+
+Parse the first enabled simple-framebuffer child of /chosen, resolving the
+base through memory-region (falling back to reg), converting the DT's byte
+stride to the pixel stride used by FRAMEBUFFER_STRIDE, and rejecting
+formats other than a8r8g8b8/x8r8g8b8, short strides, undersized regions
+and unaligned bases. Host tests build FDTs in-process; an optional test
+checks a DTB compiled from Linux sdm845-oneplus-enchilada.dts.
+
+Co-Authored-By: Cursor <noreply@cursor.com>
+---
+ Cargo.lock                             |   7 +
+ Cargo.toml                             |   1 +
+ drivers/graphics/simplefb/Cargo.toml   |  11 +
+ drivers/graphics/simplefb/src/lib.rs   | 168 ++++++++++++++
+ drivers/graphics/simplefb/src/tests.rs | 308 +++++++++++++++++++++++++
+ 5 files changed, 495 insertions(+)
+ create mode 100644 drivers/graphics/simplefb/Cargo.toml
+ create mode 100644 drivers/graphics/simplefb/src/lib.rs
+ create mode 100644 drivers/graphics/simplefb/src/tests.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 0432734c..7580a127 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2433,6 +2433,13 @@ dependencies = [
+  "libc",
+ ]
+ 
++[[package]]
++name = "simplefb"
++version = "0.1.0"
++dependencies = [
++ "fdt 0.1.5",
++]
++
+ [[package]]
+ name = "slab"
+ version = "0.4.12"
+diff --git a/Cargo.toml b/Cargo.toml
+index e13c7835..5cfd3303 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -45,6 +45,7 @@ members = [
+     "drivers/graphics/fbcond",
+     "drivers/graphics/graphics-ipc",
+     "drivers/graphics/ihdgd",
++    "drivers/graphics/simplefb",
+     "drivers/graphics/vesad",
+     "drivers/graphics/virtio-gpud",
+ 
+diff --git a/drivers/graphics/simplefb/Cargo.toml b/drivers/graphics/simplefb/Cargo.toml
+new file mode 100644
+index 00000000..19f1ed06
+--- /dev/null
++++ b/drivers/graphics/simplefb/Cargo.toml
+@@ -0,0 +1,11 @@
++[package]
++name = "simplefb"
++description = "Device tree simple-framebuffer discovery"
++version = "0.1.0"
++edition = "2021"
++
++[dependencies]
++fdt.workspace = true
++
++[lints]
++workspace = true
+diff --git a/drivers/graphics/simplefb/src/lib.rs b/drivers/graphics/simplefb/src/lib.rs
+new file mode 100644
+index 00000000..adaa5d88
+--- /dev/null
++++ b/drivers/graphics/simplefb/src/lib.rs
+@@ -0,0 +1,168 @@
++//! Discovery of a firmware-initialized framebuffer described by a device tree
++//! `simple-framebuffer` node (binding: `display/simple-framebuffer.yaml`).
++//!
++//! The node is looked up among the children of `/chosen`, where Linux, U-Boot
++//! and the OnePlus 6 device tree place it. The framebuffer base comes from the
++//! first `memory-region` phandle if present, otherwise from `reg`.
++
++use std::fmt;
++
++use fdt::node::FdtNode;
++use fdt::Fdt;
++
++/// Mapping granularity of `/scheme/memory/physical`.
++const PAGE_SIZE: usize = 4096;
++
++/// Pixel formats that match the BGRA32 layout vesad and its clients assume.
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub enum Format {
++    A8R8G8B8,
++    X8R8G8B8,
++}
++
++impl Format {
++    fn from_dt(name: &str) -> Option<Self> {
++        match name {
++            "a8r8g8b8" => Some(Self::A8R8G8B8),
++            "x8r8g8b8" => Some(Self::X8R8G8B8),
++            _ => None,
++        }
++    }
++}
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub struct SimpleFb {
++    pub phys: usize,
++    pub width: usize,
++    pub height: usize,
++    /// Pixels per scanline (the unit of `FRAMEBUFFER_STRIDE`), not the DT's bytes.
++    pub stride: usize,
++    pub format: Format,
++}
++
++impl SimpleFb {
++    /// Bytes of the visible framebuffer, which may be smaller than its region.
++    pub fn size(&self) -> usize {
++        self.stride * self.height * 4
++    }
++}
++
++#[derive(Debug, Eq, PartialEq)]
++pub enum Error {
++    InvalidDtb,
++    MissingProperty(&'static str),
++    UnsupportedFormat(String),
++    BadMemoryRegion,
++    BadGeometry,
++    RegionTooSmall { needed: usize, region: usize },
++    Unaligned(usize),
++}
++
++impl fmt::Display for Error {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        match self {
++            Self::InvalidDtb => write!(f, "invalid device tree blob"),
++            Self::MissingProperty(name) => write!(f, "missing property '{name}'"),
++            Self::UnsupportedFormat(name) => write!(f, "unsupported format '{name}'"),
++            Self::BadMemoryRegion => write!(f, "memory-region does not resolve to a reg"),
++            Self::BadGeometry => write!(f, "inconsistent width/height/stride"),
++            Self::RegionTooSmall { needed, region } => {
++                write!(f, "needs {needed:#x} bytes but region is {region:#x}")
++            }
++            Self::Unaligned(phys) => write!(f, "base {phys:#x} is not page aligned"),
++        }
++    }
++}
++
++impl std::error::Error for Error {}
++
++/// Returns `Ok(None)` when the tree has no enabled `simple-framebuffer` under `/chosen`.
++pub fn find(dtb: &[u8]) -> Result<Option<SimpleFb>, Error> {
++    let dt = Fdt::new(dtb).map_err(|_| Error::InvalidDtb)?;
++    let Some(chosen) = dt.find_node("/chosen") else {
++        return Ok(None);
++    };
++    let Some(node) = chosen
++        .children()
++        .find(|node| is_simplefb(node) && is_available(node))
++    else {
++        return Ok(None);
++    };
++    parse_node(&dt, node).map(Some)
++}
++
++fn is_simplefb(node: &FdtNode) -> bool {
++    node.compatible()
++        .is_some_and(|compat| compat.all().any(|c| c == "simple-framebuffer"))
++}
++
++fn is_available(node: &FdtNode) -> bool {
++    match node.property("status").and_then(|p| p.as_str()) {
++        None => true,
++        Some(status) => status == "okay" || status == "ok",
++    }
++}
++
++fn u32_prop(node: &FdtNode, name: &'static str) -> Result<usize, Error> {
++    node.property(name)
++        .filter(|p| p.value.len() == 4)
++        .and_then(|p| p.as_usize())
++        .ok_or(Error::MissingProperty(name))
++}
++
++fn first_reg(node: &FdtNode) -> Option<(usize, Option<usize>)> {
++    let region = node.reg()?.next()?;
++    Some((region.starting_address as usize, region.size))
++}
++
++fn parse_node(dt: &Fdt, node: FdtNode) -> Result<SimpleFb, Error> {
++    let width = u32_prop(&node, "width")?;
++    let height = u32_prop(&node, "height")?;
++    let stride_bytes = u32_prop(&node, "stride")?;
++    let format_name = node
++        .property("format")
++        .and_then(|p| p.as_str())
++        .ok_or(Error::MissingProperty("format"))?;
++    let format = Format::from_dt(format_name)
++        .ok_or_else(|| Error::UnsupportedFormat(format_name.to_owned()))?;
++
++    let (phys, region_size) = match node.property("memory-region") {
++        Some(prop) => {
++            let phandle = prop
++                .value
++                .get(..4)
++                .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
++                .ok_or(Error::BadMemoryRegion)?;
++            dt.find_phandle(phandle)
++                .and_then(|region| first_reg(&region))
++                .ok_or(Error::BadMemoryRegion)?
++        }
++        None => first_reg(&node).ok_or(Error::MissingProperty("reg"))?,
++    };
++
++    if width == 0 || height == 0 || !stride_bytes.is_multiple_of(4) || stride_bytes < width * 4 {
++        return Err(Error::BadGeometry);
++    }
++    let fb = SimpleFb {
++        phys,
++        width,
++        height,
++        stride: stride_bytes / 4,
++        format,
++    };
++    if let Some(region) = region_size {
++        if fb.size() > region {
++            return Err(Error::RegionTooSmall {
++                needed: fb.size(),
++                region,
++            });
++        }
++    }
++    if !phys.is_multiple_of(PAGE_SIZE) {
++        return Err(Error::Unaligned(phys));
++    }
++    Ok(fb)
++}
++
++#[cfg(test)]
++mod tests;
+diff --git a/drivers/graphics/simplefb/src/tests.rs b/drivers/graphics/simplefb/src/tests.rs
+new file mode 100644
+index 00000000..ea5357e2
+--- /dev/null
++++ b/drivers/graphics/simplefb/src/tests.rs
+@@ -0,0 +1,308 @@
++use super::*;
++
++/// Minimal flattened device tree writer (DT spec v17 layout).
++#[derive(Default)]
++struct Builder {
++    structs: Vec<u8>,
++    strings: Vec<u8>,
++}
++
++impl Builder {
++    fn word(&mut self, v: u32) {
++        self.structs.extend_from_slice(&v.to_be_bytes());
++    }
++
++    fn pad(&mut self) {
++        while !self.structs.len().is_multiple_of(4) {
++            self.structs.push(0);
++        }
++    }
++
++    fn begin(&mut self, name: &str) -> &mut Self {
++        self.word(1);
++        self.structs.extend_from_slice(name.as_bytes());
++        self.structs.push(0);
++        self.pad();
++        self
++    }
++
++    fn end(&mut self) -> &mut Self {
++        self.word(2);
++        self
++    }
++
++    fn prop(&mut self, name: &str, value: &[u8]) -> &mut Self {
++        let nameoff = self.strings.len() as u32;
++        self.strings.extend_from_slice(name.as_bytes());
++        self.strings.push(0);
++        self.word(3);
++        self.word(value.len() as u32);
++        self.word(nameoff);
++        self.structs.extend_from_slice(value);
++        self.pad();
++        self
++    }
++
++    fn cells(&mut self, name: &str, cells: &[u32]) -> &mut Self {
++        let value: Vec<u8> = cells.iter().flat_map(|c| c.to_be_bytes()).collect();
++        self.prop(name, &value)
++    }
++
++    fn string(&mut self, name: &str, s: &str) -> &mut Self {
++        let mut value = s.as_bytes().to_vec();
++        value.push(0);
++        self.prop(name, &value)
++    }
++
++    fn finish(mut self) -> Vec<u8> {
++        self.word(9);
++        let rsvmap = 40;
++        let off_struct = rsvmap + 16;
++        let off_strings = off_struct + self.structs.len();
++        let total = off_strings + self.strings.len();
++        let header = [
++            0xd00d_feed,
++            total as u32,
++            off_struct as u32,
++            off_strings as u32,
++            rsvmap as u32,
++            17,
++            16,
++            0,
++            self.strings.len() as u32,
++            self.structs.len() as u32,
++        ];
++        let mut out: Vec<u8> = header.iter().flat_map(|w| w.to_be_bytes()).collect();
++        out.extend_from_slice(&[0; 16]);
++        out.extend_from_slice(&self.structs);
++        out.extend_from_slice(&self.strings);
++        out
++    }
++}
++
++const SPLASH_BASE: u32 = 0x9d40_0000;
++const SPLASH_SIZE: u32 = 0x0240_0000;
++
++/// The OnePlus 6 layout: framebuffer in `/chosen`, base via `memory-region`.
++fn tree(splash_size: u32, fb: impl FnOnce(&mut Builder)) -> Vec<u8> {
++    let mut b = Builder::default();
++    b.begin("")
++        .cells("#address-cells", &[2])
++        .cells("#size-cells", &[2]);
++    b.begin("chosen")
++        .cells("#address-cells", &[2])
++        .cells("#size-cells", &[2])
++        .prop("ranges", &[]);
++    b.begin("framebuffer");
++    fb(&mut b);
++    b.end().end();
++    b.begin("reserved-memory")
++        .cells("#address-cells", &[2])
++        .cells("#size-cells", &[2])
++        .prop("ranges", &[]);
++    b.begin("splash@9d400000")
++        .cells("reg", &[0, SPLASH_BASE, 0, splash_size])
++        .prop("no-map", &[])
++        .cells("phandle", &[1]);
++    b.end().end().end();
++    b.finish()
++}
++
++fn op6_props(b: &mut Builder) {
++    b.string("compatible", "simple-framebuffer")
++        .cells("memory-region", &[1])
++        .string("format", "a8r8g8b8")
++        .cells("stride", &[1080 * 4])
++        .cells("width", &[1080])
++        .cells("height", &[2280]);
++}
++
++const OP6: SimpleFb = SimpleFb {
++    phys: 0x9d40_0000,
++    width: 1080,
++    height: 2280,
++    stride: 1080,
++    format: Format::A8R8G8B8,
++};
++
++#[test]
++fn op6_memory_region() {
++    let fb = find(&tree(SPLASH_SIZE, op6_props)).unwrap().unwrap();
++    assert_eq!(fb, OP6);
++    assert_eq!(fb.size(), 1080 * 2280 * 4);
++}
++
++#[test]
++fn reg_without_memory_region() {
++    let dtb = tree(SPLASH_SIZE, |b| {
++        b.string("compatible", "simple-framebuffer")
++            .cells("reg", &[0, 0x5e00_0000, 0, 0x30_0000])
++            .string("format", "x8r8g8b8")
++            .cells("stride", &[1024 * 4])
++            .cells("width", &[1024])
++            .cells("height", &[768]);
++    });
++    let fb = find(&dtb).unwrap().unwrap();
++    assert_eq!(
++        fb,
++        SimpleFb {
++            phys: 0x5e00_0000,
++            width: 1024,
++            height: 768,
++            stride: 1024,
++            format: Format::X8R8G8B8,
++        }
++    );
++}
++
++#[test]
++fn memory_region_overrides_reg() {
++    let dtb = tree(SPLASH_SIZE, |b| {
++        op6_props(b);
++        b.cells("reg", &[0, 0x5e00_0000, 0, 0x30_0000]);
++    });
++    assert_eq!(find(&dtb).unwrap().unwrap().phys, 0x9d40_0000);
++}
++
++#[test]
++fn padded_stride_is_kept() {
++    let dtb = tree(SPLASH_SIZE, |b| {
++        b.string("compatible", "simple-framebuffer")
++            .cells("memory-region", &[1])
++            .string("format", "a8r8g8b8")
++            .cells("stride", &[1088 * 4])
++            .cells("width", &[1080])
++            .cells("height", &[2280]);
++    });
++    let fb = find(&dtb).unwrap().unwrap();
++    assert_eq!((fb.width, fb.stride), (1080, 1088));
++}
++
++#[test]
++fn okay_status_is_used() {
++    let dtb = tree(SPLASH_SIZE, |b| {
++        op6_props(b);
++        b.string("status", "okay");
++    });
++    assert_eq!(find(&dtb).unwrap(), Some(OP6));
++}
++
++#[test]
++fn disabled_node_is_ignored() {
++    let dtb = tree(SPLASH_SIZE, |b| {
++        op6_props(b);
++        b.string("status", "disabled");
++    });
++    assert_eq!(find(&dtb).unwrap(), None);
++}
++
++#[test]
++fn other_compatible_is_ignored() {
++    let dtb = tree(SPLASH_SIZE, |b| {
++        b.string("compatible", "vendor,not-a-framebuffer");
++    });
++    assert_eq!(find(&dtb).unwrap(), None);
++}
++
++#[test]
++fn no_chosen_node() {
++    let mut b = Builder::default();
++    b.begin("").cells("#address-cells", &[2]).end();
++    assert_eq!(find(&b.finish()).unwrap(), None);
++}
++
++#[test]
++fn unsupported_format() {
++    let dtb = tree(SPLASH_SIZE, |b| {
++        b.string("compatible", "simple-framebuffer")
++            .cells("memory-region", &[1])
++            .string("format", "r5g6b5")
++            .cells("stride", &[1080 * 2])
++            .cells("width", &[1080])
++            .cells("height", &[2280]);
++    });
++    assert_eq!(
++        find(&dtb),
++        Err(Error::UnsupportedFormat("r5g6b5".to_owned()))
++    );
++}
++
++#[test]
++fn stride_smaller_than_row() {
++    let dtb = tree(SPLASH_SIZE, |b| {
++        b.string("compatible", "simple-framebuffer")
++            .cells("memory-region", &[1])
++            .string("format", "a8r8g8b8")
++            .cells("stride", &[1080])
++            .cells("width", &[1080])
++            .cells("height", &[2280]);
++    });
++    assert_eq!(find(&dtb), Err(Error::BadGeometry));
++}
++
++#[test]
++fn region_too_small() {
++    let dtb = tree(0x10_0000, op6_props);
++    assert_eq!(
++        find(&dtb),
++        Err(Error::RegionTooSmall {
++            needed: 1080 * 2280 * 4,
++            region: 0x10_0000,
++        })
++    );
++}
++
++#[test]
++fn unaligned_base() {
++    let dtb = tree(SPLASH_SIZE, |b| {
++        b.string("compatible", "simple-framebuffer")
++            .cells("reg", &[0, 0x5e00_0100, 0, 0x30_0000])
++            .string("format", "a8r8g8b8")
++            .cells("stride", &[1024 * 4])
++            .cells("width", &[1024])
++            .cells("height", &[768]);
++    });
++    assert_eq!(find(&dtb), Err(Error::Unaligned(0x5e00_0100)));
++}
++
++#[test]
++fn dangling_memory_region() {
++    let dtb = tree(SPLASH_SIZE, |b| {
++        b.string("compatible", "simple-framebuffer")
++            .cells("memory-region", &[7])
++            .string("format", "a8r8g8b8")
++            .cells("stride", &[1080 * 4])
++            .cells("width", &[1080])
++            .cells("height", &[2280]);
++    });
++    assert_eq!(find(&dtb), Err(Error::BadMemoryRegion));
++}
++
++#[test]
++fn missing_height() {
++    let dtb = tree(SPLASH_SIZE, |b| {
++        b.string("compatible", "simple-framebuffer")
++            .cells("memory-region", &[1])
++            .string("format", "a8r8g8b8")
++            .cells("stride", &[1080 * 4])
++            .cells("width", &[1080]);
++    });
++    assert_eq!(find(&dtb), Err(Error::MissingProperty("height")));
++}
++
++#[test]
++fn not_a_dtb() {
++    assert_eq!(find(b"not a device tree"), Err(Error::InvalidDtb));
++}
++
++/// Set `SIMPLEFB_ENCHILADA_DTB` to a DTB compiled from Linux
++/// `arch/arm64/boot/dts/qcom/sdm845-oneplus-enchilada.dts`.
++#[test]
++fn enchilada_dtb_from_env() {
++    let Ok(path) = std::env::var("SIMPLEFB_ENCHILADA_DTB") else {
++        eprintln!("SIMPLEFB_ENCHILADA_DTB not set; skipping");
++        return;
++    };
++    let dtb = std::fs::read(path).unwrap();
++    assert_eq!(find(&dtb).unwrap(), Some(OP6));
++}
+-- 
+2.43.0
+

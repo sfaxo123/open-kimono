@@ -1,0 +1,91 @@
+From 36faf9cfac07d5c2552f1dc03be79245cdf11f64 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Mon, 26 Oct 2026 22:54:11 +0000
+Subject: [PATCH] tlmm: yield one cleared pending pin before scheme delivery
+
+Behavior-preserving source preparation: scan one enabled pending pin, clear it, return owned step; existing handler delivers event then resumes. Actual old/new handler trace parity and negative controls pass with fake MMIO, plus offline A64 check/link. Does not fix the outer IRQ_CHIP mutable borrow or prove runtime/SMP/hardware behavior.
+
+Agent: Codex with Perplexity, Cursor and Luna
+Model: Cursor tool default; pplx-5090; gpt-6-luna; Codex
+Provider: Cursor; OpenAI; local LiteLLM
+Refs: cloud-dispatch-cursor-20261026T224402-3364059
+---
+ src/arch/aarch64/device/irqchip/tlmm.rs | 55 +++++++++++++++++++++----
+ 1 file changed, 46 insertions(+), 9 deletions(-)
+
+diff --git a/src/arch/aarch64/device/irqchip/tlmm.rs b/src/arch/aarch64/device/irqchip/tlmm.rs
+index 6d357630..f54ff8a8 100644
+--- a/src/arch/aarch64/device/irqchip/tlmm.rs
++++ b/src/arch/aarch64/device/irqchip/tlmm.rs
+@@ -39,6 +39,48 @@ impl Tlmm {
+     fn write(&self, offset: usize, value: u32) {
+         unsafe { write_volatile((self.base + offset) as *mut u32, value) }
+     }
++    fn pending_step(&self, from: usize) -> Option<TlmmStep> {
++        tlmm_pending_step(
++            &self.enabled,
++            from,
++            self.virq_base,
++            |offset| self.read(offset),
++            |offset, value| self.write(offset, value),
++        )
++    }
++}
++
++/// One cleared pending pin; `next` is where the scan resumes.
++pub struct TlmmStep {
++    pub pin: usize,
++    pub virq: u16,
++    pub next: usize,
++}
++
++/// Finds the first enabled pending pin at or after `from` and clears it
++/// before returning, so the caller's event always follows the clear.
++fn tlmm_pending_step(
++    enabled: &[bool; GPIO_COUNT],
++    from: usize,
++    virq_base: usize,
++    mut read: impl FnMut(usize) -> u32,
++    mut write: impl FnMut(usize, u32),
++) -> Option<TlmmStep> {
++    for pin in from..GPIO_COUNT {
++        if !enabled[pin] {
++            continue;
++        }
++        let status = qcom_irq::tlmm_pin_offset(pin as u32, 0xc).unwrap();
++        if read(status) & 1 != 0 {
++            write(status, 1);
++            return Some(TlmmStep {
++                pin,
++                virq: (virq_base + pin) as u16,
++                next: pin + 1,
++            });
++        }
++    }
++    None
+ }
+ 
+ impl InterruptHandler for Tlmm {
+@@ -46,15 +88,10 @@ impl InterruptHandler for Tlmm {
+         if self.probe_only {
+             return;
+         }
+-        for pin in 0..GPIO_COUNT {
+-            if !self.enabled[pin] {
+-                continue;
+-            }
+-            let status = qcom_irq::tlmm_pin_offset(pin as u32, 0xc).unwrap();
+-            if self.read(status) & 1 != 0 {
+-                self.write(status, 1);
+-                irq_trigger((self.virq_base + pin) as u16, token);
+-            }
++        let mut cursor = 0;
++        while let Some(step) = self.pending_step(cursor) {
++            irq_trigger(step.virq, token);
++            cursor = step.next;
+         }
+     }
+ }
+-- 
+2.43.0
+

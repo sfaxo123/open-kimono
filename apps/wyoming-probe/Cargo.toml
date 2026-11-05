@@ -1,0 +1,13 @@
+[package]
+name = "wyoming-probe"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "E1 Wyoming probe: minimal native Wyoming client (crates/wyoming) that exchanges describe/info frames and a framed nonce ping-pong with a local service; host-interop smoke against the pinned Python reference, then cross-built for aarch64-unknown-redox."
+
+[[bin]]
+name = "wyoming-probe"
+path = "src/main.rs"
+
+[dependencies]
+wyoming = { path = "../../crates/wyoming" }

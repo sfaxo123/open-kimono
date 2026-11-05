@@ -1,0 +1,124 @@
+From 8e23fc0735d2e50634425c6c299e20946dd1701d Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursor-agent@localhost>
+Date: Mon, 26 Oct 2026 00:03:24 +0000
+Subject: [PATCH 17/21] gicv3: put shared interrupts in Group 1
+
+The GICv3 path reused the GICv2 distributor setup, which leaves every SPI
+in Group 0. With the system-register CPU interface Group 0 is signalled as
+FIQ and only Group 1 is enabled, so no SPI was ever taken: on qemu-oneplus6
+the touch attention line raised INTID 647 at the distributor while the CPU
+never read ICC_IAR1. Assign all SPIs to Group 1, as Linux gic_dist_init
+does; secure firmware keeps its own assignment because the registers are
+RAZ/WI to the kernel there.
+
+Agent: Cursor agent (EMU-TOUCH)
+Model: Auto
+Provider: Cursor
+---
+ src/arch/aarch64/device/irqchip/gic.rs        | 12 +++++
+ src/arch/aarch64/device/irqchip/gic_groups.rs | 47 +++++++++++++++++++
+ src/arch/aarch64/device/irqchip/gicv3.rs      |  1 +
+ src/arch/aarch64/device/irqchip/mod.rs        |  1 +
+ 4 files changed, 61 insertions(+)
+ create mode 100644 src/arch/aarch64/device/irqchip/gic_groups.rs
+
+diff --git a/src/arch/aarch64/device/irqchip/gic.rs b/src/arch/aarch64/device/irqchip/gic.rs
+index 2098061b..7672d333 100644
+--- a/src/arch/aarch64/device/irqchip/gic.rs
++++ b/src/arch/aarch64/device/irqchip/gic.rs
+@@ -359,6 +359,18 @@ impl GicDistIf {
+         }
+     }
+ 
++    /// GICv3 only: put every SPI in Group 1 while distribution is off.
++    pub unsafe fn set_spis_group1(&mut self) {
++        unsafe {
++            let ctlr = self.read(GICD_CTLR);
++            self.write(GICD_CTLR, 0);
++            for (offset, bits) in super::gic_groups::spi_group1_writes(self.nirqs) {
++                self.write(offset, bits);
++            }
++            self.write(GICD_CTLR, ctlr);
++        }
++    }
++
+     pub unsafe fn irq_enable(&mut self, irq: u32) {
+         unsafe {
+             let offset = GICD_ISENABLER + (4 * (irq / 32));
+diff --git a/src/arch/aarch64/device/irqchip/gic_groups.rs b/src/arch/aarch64/device/irqchip/gic_groups.rs
+new file mode 100644
+index 00000000..602fe059
+--- /dev/null
++++ b/src/arch/aarch64/device/irqchip/gic_groups.rs
+@@ -0,0 +1,47 @@
++// SPDX-License-Identifier: MIT
++//! GICv3 SPI group assignment.
++//!
++//! Host test: `rustc --edition=2024 --test src/arch/aarch64/device/irqchip/gic_groups.rs -o /tmp/gic-groups && /tmp/gic-groups`
++
++/// `GICD_IGROUPR<n>`: one bit per INTID; 1 selects Group 1.
++pub const GICD_IGROUPR: u32 = 0x080;
++
++/// Distributor writes that place every SPI in Group 1.
++///
++/// With the GICv3 system-register CPU interface, Group 0 is always signalled
++/// as FIQ, and the kernel enables only Group 1 (`ICC_IGRPEN1_EL1`), so a
++/// Group 0 SPI is never taken. When secure firmware owns the GIC these
++/// registers are RAZ/WI to the kernel and firmware's assignment stays.
++/// SGIs and PPIs are grouped in the redistributor instead.
++pub fn spi_group1_writes(nirqs: u32) -> impl Iterator<Item = (u32, u32)> {
++    (32..nirqs)
++        .step_by(32)
++        .map(|irq| (GICD_IGROUPR + irq / 32 * 4, u32::MAX))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// `-M oneplus6` reports 672 interrupt IDs; the touch attention wake
++    /// route ends at PDC pin 100 -> SPI 615 -> INTID 647.
++    #[test]
++    fn every_sdm845_spi_is_group1() {
++        let writes: Vec<_> = spi_group1_writes(672).collect();
++        assert_eq!(writes.len(), 20);
++        assert_eq!(writes.first(), Some(&(0x084, u32::MAX)));
++        assert_eq!(writes.last(), Some(&(0x0d0, u32::MAX)));
++        let intid = 647;
++        let (_, bits) = writes
++            .iter()
++            .find(|(offset, _)| *offset == GICD_IGROUPR + intid / 32 * 4)
++            .unwrap();
++        assert_ne!(bits & (1 << (intid % 32)), 0);
++    }
++
++    #[test]
++    fn private_interrupts_are_left_alone() {
++        assert_eq!(spi_group1_writes(32).count(), 0);
++        assert!(spi_group1_writes(1020).all(|(offset, _)| offset != GICD_IGROUPR));
++    }
++}
+diff --git a/src/arch/aarch64/device/irqchip/gicv3.rs b/src/arch/aarch64/device/irqchip/gicv3.rs
+index 925353f4..44082a90 100644
+--- a/src/arch/aarch64/device/irqchip/gicv3.rs
++++ b/src/arch/aarch64/device/irqchip/gicv3.rs
+@@ -156,6 +156,7 @@ impl GicV3 {
+         self.gicrs.extend_from_slice(rds);
+         unsafe {
+             self.gic_dist_if.init(crate::PHYS_OFFSET + gicd);
++            self.gic_dist_if.set_spis_group1();
+         }
+         Ok(())
+     }
+diff --git a/src/arch/aarch64/device/irqchip/mod.rs b/src/arch/aarch64/device/irqchip/mod.rs
+index 9b309aff..f8948254 100644
+--- a/src/arch/aarch64/device/irqchip/mod.rs
++++ b/src/arch/aarch64/device/irqchip/mod.rs
+@@ -5,6 +5,7 @@ use crate::dtb::{
+ use alloc::boxed::Box;
+ 
+ pub(crate) mod gic;
++mod gic_groups;
+ pub(crate) mod gicv3;
+ mod irq_bcm2835;
+ mod irq_bcm2836;

@@ -1,0 +1,9 @@
+[package]
+name = "ufs-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Read-only UFS host controller core (UFSHCI 2.x + qcom,sdm845-ufshc vendor bits) behind the mmio-replay Mmio trait (Redox-on-OnePlus-6, task K10)."
+
+[dependencies]
+mmio-replay = { path = "../mmio-replay" }

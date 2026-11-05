@@ -1,0 +1,317 @@
+From 19dd2e5008bf8dfd01769c767f17ff115c45c124 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:13:48 +0000
+Subject: [PATCH] Embed kernel and initfs for drive-free aarch64 boot
+
+Co-Authored-By: Codex <noreply@openai.com>
+---
+ Cargo.toml                   |  1 +
+ docs/PROVENANCE.md           | 10 ++++
+ docs/workbench/K3-RAMBOOT.md | 75 ++++++++++++++++++++++++++++
+ mk/aarch64-unknown-uefi.mk   |  8 +++
+ src/main.rs                  | 96 ++++++++++++++++++++++++------------
+ 5 files changed, 159 insertions(+), 31 deletions(-)
+ create mode 100644 docs/PROVENANCE.md
+ create mode 100644 docs/workbench/K3-RAMBOOT.md
+
+diff --git a/Cargo.toml b/Cargo.toml
+index a23d52f..9216a58 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -49,4 +49,5 @@ fdt = { git = "https://github.com/repnop/fdt.git", rev = "2fb1409edd1877c714a0aa
+ default = []
+ live = []
+ serial_debug = []
++ramboot = []
+ 
+diff --git a/docs/PROVENANCE.md b/docs/PROVENANCE.md
+new file mode 100644
+index 0000000..dc84303
+--- /dev/null
++++ b/docs/PROVENANCE.md
+@@ -0,0 +1,10 @@
++# K3 provenance
++
++The following upstream MIT files were adapted in this branch. Their existing
++copyright and license notices remain in `LICENSE`.
++
++| Upstream URL and commit | Path | SPDX | Use |
++| --- | --- | --- | --- |
++| https://gitlab.redox-os.org/redox-os/bootloader.git @ `cc922ec0bb3f9dd31cce589bb513ab2f15ac9746` | `Cargo.toml`, `mk/aarch64-unknown-uefi.mk`, `src/main.rs` | MIT | Adapted for embedded kernel/initfs boot |
++
++The RAM boot path is original K3 MIT code. No donor file was copied.
+diff --git a/docs/workbench/K3-RAMBOOT.md b/docs/workbench/K3-RAMBOOT.md
+new file mode 100644
+index 0000000..e624cec
+--- /dev/null
++++ b/docs/workbench/K3-RAMBOOT.md
+@@ -0,0 +1,75 @@
++# K3: QEMU boot without a drive
++
++The aarch64 UEFI bootloader's `ramboot` feature embeds a kernel and initfs in
++one EFI program. UEFI PXE/TFTP supplies that program to QEMU; the Redox kernel
++receives `REDOX_RAMBOOT=1`, so `init` starts the serial rescue shell without
++mounting RedoxFS or switching to `/usr`. The OS does not start a network or
++storage driver. The QEMU network device is used by firmware to fetch the EFI
++program and is idle after handoff.
++
++## Build
++
++The Redox build checkout is
++`$HOME/Developer/forks/redox/redox`. The patched DT kernel artifact is
++`$HOME/Developer/forks/redox/kernel/build/aarch64/kernel`. Neither
++checkout is modified by these commands. Build outputs stay in the K3
++worktrees. The Redox Podman image, cross toolchain, and `cookbook_redoxer`
++were prepared by W0.
++
++```sh
++BASE_K3=$HOME/Developer/forks/redox/base-k3
++BOOT_K3=$HOME/Developer/forks/redox/bootloader-k3
++REDOX_BUILD=$HOME/Developer/forks/redox/redox
++
++cd "$BASE_K3"
++podman run --rm --workdir /mnt/base-k3 --pids-limit=1024 \
++  --volume "$REDOX_BUILD":/mnt/redox \
++  --volume "$REDOX_BUILD/build/podman":/root \
++  --volume "$BASE_K3":/mnt/base-k3 \
++  --env PATH=/root/.cargo/bin:/mnt/redox/prefix/aarch64-unknown-redox/sysroot/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
++  --env TARGET=aarch64-unknown-redox \
++  --env COOKBOOK_TOOLCHAIN=/mnt/redox/prefix/aarch64-unknown-redox/sysroot \
++  --env COOKBOOK_SYSROOT=/mnt/redox/prefix/aarch64-unknown-redox/sysroot \
++  redox-base make ramboot-initfs TARGET=aarch64-unknown-redox \
++  BUILD_DIR=/mnt/base-k3/build/aarch64 LINKER=aarch64-unknown-redox-ld \
++  CARGO=/mnt/redox/target/release/cookbook_redoxer
++
++cd "$BOOT_K3"
++mkdir -p build/tftp
++RAMBOOT_KERNEL=$HOME/Developer/forks/redox/kernel/build/aarch64/kernel \
++RAMBOOT_INITFS="$BASE_K3/build/aarch64/ramboot-initfs.img" \
++  make -C build -f ../Makefile TARGET=aarch64-unknown-uefi \
++  "$BOOT_K3/build/bootloader-ramboot.efi"
++cp build/bootloader-ramboot.efi build/tftp/bootaa64.efi
++```
++
++If either input path changes to an older timestamp, remove the ignored
++`build/bootloader-ramboot.efi` before rebuilding so Make cannot reuse the
++previous embedded payload.
++
++## QEMU acceptance
++
++Run this from `bootloader-k3` in a PTY, then at `ram:~$` type
++`echo K3_FINAL_RAM_SHELL_OK`. No QEMU drive, block backend, or CD-ROM is
++attached.
++
++```sh
++timeout --signal=TERM 70 script -q -f -c \
++  'qemu-system-aarch64 -machine virt,acpi=off,gic-version=3 -cpu max -smp 1 -m 2048 -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd -boot order=n -nic user,model=virtio-net-pci,tftp=$HOME/Developer/forks/redox/bootloader-k3/build/tftp,bootfile=bootaa64.efi -display none -serial stdio -monitor none' \
++  docs/workbench/k3-qemu-final.log
++```
++
++`k3-qemu-final.log` records PXE download of the 8,554,496-byte EFI program,
++`REDOX_RAMBOOT=1`, `init: RAM boot shell ... no rootfs mounted`, the `ram:~$`
++prompt, `K3_FINAL_RAM_SHELL_OK`, and `ls` showing `lib` and `bin`. The normal
++bootloader configuration also passed `cargo check`. Other evidence:
++
++- `base-k3/docs/workbench/k3-base-check.log`: Redox target check of `init` and `ramsh`.
++- `base-k3/docs/workbench/k3-minimal-initfs-build.log`: dedicated initfs build.
++- `bootloader-k3/docs/workbench/k3-bootloader-minimal-build.log`: embedded EFI build.
++- `bootloader-k3/docs/workbench/k3-normal-bootloader-check.log`: normal-path check.
++
++The initfs is 7,016,712 bytes. The shell provides `help`, `echo`, `pwd`,
++`ls`, `cat`, and `exit`; it is a small rescue shell rather than Ion. QEMU
++proves the DT-only, no-drive path. Booting the same EFI payload through
++OnePlus 6 fastboot/U-Boot and panel or UART access remains untested.
+diff --git a/mk/aarch64-unknown-uefi.mk b/mk/aarch64-unknown-uefi.mk
+index 2dfca9d..02f9846 100644
+--- a/mk/aarch64-unknown-uefi.mk
++++ b/mk/aarch64-unknown-uefi.mk
+@@ -24,6 +24,14 @@ $(BUILD)/bootloader-live.efi: $(SOURCE)/Cargo.toml $(SOURCE)/Cargo.lock $(shell
+ 		-- \
+ 		--emit link="$@"
+ 
++# RAMBOOT_KERNEL and RAMBOOT_INITFS are absolute paths to build-system artifacts.
++$(BUILD)/bootloader-ramboot.efi: $(SOURCE)/Cargo.toml $(SOURCE)/Cargo.lock $(shell find $(SOURCE)/src -type f) $(RAMBOOT_KERNEL) $(RAMBOOT_INITFS)
++	test -f "$(RAMBOOT_KERNEL)" && test -f "$(RAMBOOT_INITFS)"
++	mkdir -p "$(BUILD)"
++	env RAMBOOT_KERNEL="$(RAMBOOT_KERNEL)" RAMBOOT_INITFS="$(RAMBOOT_INITFS)" RUSTFLAGS="--cfg aes_force_soft -Zunstable-options" \
++		cargo rustc --manifest-path="$(SOURCE)/Cargo.toml" $(CARGO_ARGS) --bin bootloader \
++		--features ramboot -- --emit link="$@"
++
+ $(BUILD)/esp.bin: $(BUILD)/bootloader.efi
+ 	rm -f "$@.partial"
+ 	fallocate -l 64MiB "$@.partial"
+diff --git a/src/main.rs b/src/main.rs
+index 489a7fe..0b4ee2b 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -29,6 +29,11 @@ mod serial_16550;
+ const KIBI: usize = 1024;
+ const MIBI: usize = KIBI * KIBI;
+ 
++#[cfg(feature = "ramboot")]
++static RAMBOOT_KERNEL: &[u8] = include_bytes!(env!("RAMBOOT_KERNEL"));
++#[cfg(feature = "ramboot")]
++static RAMBOOT_INITFS: &[u8] = include_bytes!(env!("RAMBOOT_INITFS"));
++
+ //TODO: allocate this in a more reasonable manner
+ static mut AREAS: [OsMemoryEntry; 1024] = [OsMemoryEntry {
+     base: 0,
+@@ -156,7 +161,9 @@ fn select_mode(
+     println!();
+ 
+     println!("Arrow keys and enter select mode");
++    #[cfg(not(feature = "ramboot"))]
+     let live_mode = os.get_text_position();
++    #[cfg(not(feature = "ramboot"))]
+     if *live {
+         println!("Press l to disable live mode");
+     } else {
+@@ -248,6 +255,7 @@ fn select_mode(
+                 }
+                 break;
+             }
++            #[cfg(not(feature = "ramboot"))]
+             OsKey::Char('l') => {
+                 *live = !*live;
+                 os.set_text_position(live_mode.0, live_mode.1);
+@@ -413,6 +421,16 @@ fn load_to_memory<O: Os>(
+     })
+ }
+ 
++#[cfg(feature = "ramboot")]
++fn embedded_to_memory<O: Os>(os: &O, data: &[u8], magic: &[u8]) -> &'static mut [u8] {
++    assert!(data.starts_with(magic), "invalid embedded boot image");
++    let ptr = os.alloc_zeroed_page_aligned(data.len());
++    assert!(!ptr.is_null(), "failed to allocate embedded boot image");
++    let memory = unsafe { slice::from_raw_parts_mut(ptr, data.len()) };
++    memory.copy_from_slice(data);
++    memory
++}
++
+ fn elf_entry(data: &[u8]) -> (u64, bool) {
+     match (data[4], data[5]) {
+         // 32-bit, little endian
+@@ -464,21 +482,25 @@ fn main(os: &impl Os) -> (usize, u64, KernelArgs) {
+         OsHwDesc::NotFound => (0, 0),
+     };
+ 
++    #[cfg(not(feature = "ramboot"))]
+     let (mut fs, password_opt) = redoxfs(os);
+ 
+-    print!("RedoxFS ");
+-    for i in 0..fs.header.uuid().len() {
+-        if i == 4 || i == 6 || i == 8 || i == 10 {
+-            print!("-");
+-        }
++    #[cfg(not(feature = "ramboot"))]
++    {
++        print!("RedoxFS ");
++        for i in 0..fs.header.uuid().len() {
++            if i == 4 || i == 6 || i == 8 || i == 10 {
++                print!("-");
++            }
+ 
+-        print!("{:>02x}", fs.header.uuid()[i]);
++            print!("{:>02x}", fs.header.uuid()[i]);
++        }
++        println!(": {} MiB", fs.header.size() / MIBI as u64);
++        println!();
+     }
+-    println!(": {} MiB", fs.header.size() / MIBI as u64);
+-    println!();
+ 
+     let mut mode_opts = Vec::new();
+-    let mut live = cfg!(feature = "live");
++    let mut live = cfg!(all(feature = "live", not(feature = "ramboot")));
+     let mut edit_env = false;
+     for output_i in 0..os.video_outputs() {
+         if output_i > 0 {
+@@ -493,6 +515,7 @@ fn main(os: &impl Os) -> (usize, u64, KernelArgs) {
+         panic!("Failed to allocate memory for stack");
+     }
+ 
++    #[cfg(not(feature = "ramboot"))]
+     let live_opt = if live {
+         let size = fs.header.size();
+ 
+@@ -533,6 +556,9 @@ fn main(os: &impl Os) -> (usize, u64, KernelArgs) {
+     };
+ 
+     let (kernel, kernel_entry) = {
++        #[cfg(feature = "ramboot")]
++        let kernel = embedded_to_memory(os, RAMBOOT_KERNEL, b"\x7FELF");
++        #[cfg(not(feature = "ramboot"))]
+         let kernel = load_to_memory(os, &mut fs, "usr/lib/boot/kernel", Filetype::Elf);
+         let (kernel_entry, kernel_64bit) = elf_entry(kernel);
+         unsafe {
+@@ -542,6 +568,9 @@ fn main(os: &impl Os) -> (usize, u64, KernelArgs) {
+     };
+ 
+     let (bootstrap_size, bootstrap_base) = {
++        #[cfg(feature = "ramboot")]
++        let initfs_slice = embedded_to_memory(os, RAMBOOT_INITFS, b"RedoxFtw");
++        #[cfg(not(feature = "ramboot"))]
+         let initfs_slice = load_to_memory(os, &mut fs, "usr/lib/boot/initfs", Filetype::Initfs);
+ 
+         let memory = unsafe {
+@@ -592,30 +621,35 @@ fn main(os: &impl Os) -> (usize, u64, KernelArgs) {
+             OsHwDesc::NotFound => {}
+         }
+ 
+-        if let Some(live) = live_opt {
+-            writeln!(w, "DISK_LIVE_ADDR={:016x}", live.as_ptr() as usize).unwrap();
+-            writeln!(w, "DISK_LIVE_SIZE={:016x}", live.len()).unwrap();
+-            writeln!(w, "REDOXFS_BLOCK={:016x}", 0).unwrap();
+-        } else {
+-            writeln!(w, "REDOXFS_BLOCK={:016x}", fs.block).unwrap();
+-        }
+-        write!(w, "REDOXFS_UUID=").unwrap();
+-        for i in 0..fs.header.uuid().len() {
+-            if i == 4 || i == 6 || i == 8 || i == 10 {
+-                write!(w, "-").unwrap();
++        #[cfg(feature = "ramboot")]
++        writeln!(w, "REDOX_RAMBOOT=1").unwrap();
++        #[cfg(not(feature = "ramboot"))]
++        {
++            if let Some(live) = live_opt {
++                writeln!(w, "DISK_LIVE_ADDR={:016x}", live.as_ptr() as usize).unwrap();
++                writeln!(w, "DISK_LIVE_SIZE={:016x}", live.len()).unwrap();
++                writeln!(w, "REDOXFS_BLOCK={:016x}", 0).unwrap();
++            } else {
++                writeln!(w, "REDOXFS_BLOCK={:016x}", fs.block).unwrap();
+             }
++            write!(w, "REDOXFS_UUID=").unwrap();
++            for i in 0..fs.header.uuid().len() {
++                if i == 4 || i == 6 || i == 8 || i == 10 {
++                    write!(w, "-").unwrap();
++                }
+ 
+-            write!(w, "{:>02x}", fs.header.uuid()[i]).unwrap();
+-        }
+-        writeln!(w).unwrap();
+-        if let Some(password) = password_opt {
+-            writeln!(
+-                w,
+-                "REDOXFS_PASSWORD_ADDR={:016x}",
+-                password.as_ptr() as usize
+-            )
+-            .unwrap();
+-            writeln!(w, "REDOXFS_PASSWORD_SIZE={:016x}", password.len()).unwrap();
++                write!(w, "{:>02x}", fs.header.uuid()[i]).unwrap();
++            }
++            writeln!(w).unwrap();
++            if let Some(password) = password_opt {
++                writeln!(
++                    w,
++                    "REDOXFS_PASSWORD_ADDR={:016x}",
++                    password.as_ptr() as usize
++                )
++                .unwrap();
++                writeln!(w, "REDOXFS_PASSWORD_SIZE={:016x}", password.len()).unwrap();
++            }
+         }
+ 
+         #[cfg(target_arch = "riscv64")]
+-- 
+2.43.0
+

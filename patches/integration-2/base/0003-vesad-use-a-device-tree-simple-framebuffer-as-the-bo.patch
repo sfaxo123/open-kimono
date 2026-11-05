@@ -1,0 +1,118 @@
+From 22e5daa5714cd60b9925b2b96534dd02642cdce4 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:28:24 +0000
+Subject: [PATCH 3/7] vesad: use a device tree simple-framebuffer as the boot
+ framebuffer
+
+Read /scheme/kernel.dtb and, when /chosen holds an enabled
+simple-framebuffer, drive display.vesa from it. As on Linux the device
+tree record takes precedence over the bootloader's GOP FRAMEBUFFER_* env;
+a mismatch is logged, and an invalid node falls back to the env. This is
+the discovery path for phones whose firmware leaves a splash scanout but
+no GOP. Verified in QEMU virt (acpi=off) with ramfb and with a 1080x2280
+a8r8g8b8 carve-out at 0x9d400000 and no display device.
+
+Co-Authored-By: Cursor <noreply@cursor.com>
+---
+ Cargo.lock                         |  1 +
+ drivers/graphics/vesad/Cargo.toml  |  1 +
+ drivers/graphics/vesad/src/main.rs | 49 +++++++++++++++++++++++++++---
+ 3 files changed, 46 insertions(+), 5 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 7580a127..3cfe9c2c 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2815,6 +2815,7 @@ dependencies = [
+  "libredox",
+  "redox_event",
+  "redox_syscall 0.9.5",
++ "simplefb",
+ ]
+ 
+ [[package]]
+diff --git a/drivers/graphics/vesad/Cargo.toml b/drivers/graphics/vesad/Cargo.toml
+index d9b1f16c..e4c861fb 100644
+--- a/drivers/graphics/vesad/Cargo.toml
++++ b/drivers/graphics/vesad/Cargo.toml
+@@ -11,6 +11,7 @@ redox_event.workspace = true
+ common = { path = "../../common" }
+ daemon = { path = "../../../daemon" }
+ driver-graphics = { path = "../driver-graphics" }
++simplefb = { path = "../simplefb" }
+ libredox.workspace = true
+ 
+ [features]
+diff --git a/drivers/graphics/vesad/src/main.rs b/drivers/graphics/vesad/src/main.rs
+index 9c6ea963..733b2596 100644
+--- a/drivers/graphics/vesad/src/main.rs
++++ b/drivers/graphics/vesad/src/main.rs
+@@ -12,11 +12,12 @@ fn main() {
+     common::init();
+     daemon::Daemon::new(daemon);
+ }
+-fn daemon(daemon: daemon::Daemon) -> ! {
++/// `(phys, width, height, stride in pixels)`
++type BootFb = (usize, usize, usize, usize);
++
++fn env_framebuffer() -> Option<BootFb> {
+     if env::var("FRAMEBUFFER_WIDTH").is_err() {
+-        println!("vesad: No boot framebuffer");
+-        daemon.ready();
+-        std::process::exit(0);
++        return None;
+     }
+ 
+     let width = usize::from_str_radix(
+@@ -47,9 +48,47 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ 
+     if phys == 0 {
+         println!("vesad: Boot framebuffer at address 0");
++        return None;
++    }
++
++    Some((phys, width, height, stride))
++}
++
++fn dt_framebuffer() -> Option<BootFb> {
++    // Absent on ACPI-only systems.
++    let dtb = std::fs::read("/scheme/kernel.dtb").ok()?;
++    match simplefb::find(&dtb) {
++        Ok(Some(fb)) => {
++            println!(
++                "vesad: simplefb {}x{} stride {} {:?} at 0x{:X} from device tree",
++                fb.width, fb.height, fb.stride, fb.format, fb.phys
++            );
++            Some((fb.phys, fb.width, fb.height, fb.stride))
++        }
++        Ok(None) => None,
++        Err(err) => {
++            eprintln!("vesad: ignoring device tree simple-framebuffer: {}", err);
++            None
++        }
++    }
++}
++
++fn daemon(daemon: daemon::Daemon) -> ! {
++    let env_fb = env_framebuffer();
++    // Like Linux, a device tree simple-framebuffer takes precedence over the
++    // firmware (GOP) handoff; both normally describe the same buffer.
++    let boot_fb = match (dt_framebuffer(), env_fb) {
++        (Some(dt_fb), Some(env_fb)) if dt_fb != env_fb => {
++            println!("vesad: bootloader framebuffer differs from device tree; using device tree");
++            Some(dt_fb)
++        }
++        (dt_fb, env_fb) => dt_fb.or(env_fb),
++    };
++    let Some((phys, width, height, stride)) = boot_fb else {
++        println!("vesad: No boot framebuffer");
+         daemon.ready();
+         std::process::exit(0);
+-    }
++    };
+ 
+     let mut framebuffers = vec![unsafe { FrameBuffer::new(phys, width, height, stride) }];
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,816 @@
+{
+  "baseline_commit": "566de2445daebd22fba50ace6db7044e5aadff08",
+  "scope": {
+    "operator_decision": "operator confirmed all upstream QEMU and U-Boot platforms and features plus every built feature are in scope",
+    "full_upstream_feature_coverage": "pending semantic inventory; path enumeration is not feature coverage"
+  },
+  "script_inventory": [
+    {
+      "path": "apps/wyoming-probe/interop.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "apps/wyoming-probe/negatives.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "crates/wyoming/tests/check_from_rust.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "crates/wyoming/tests/gen_golden.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "crates/wyoming/tests/pyinterop_fault_server.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "crates/wyoming/tests/pyinterop_server.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "patches/experimental-irq-owned-dispatch/test_irq_ownership.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/e1-live.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/e1-qemu.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/emu-op6/run.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/emu-op6/tests.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/emu-op6/touch-e2e.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/integrate.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/bcm-step/run.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/bcm2836-range/run.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/geni-rx/run.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/gicv3-rd/gen.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/gicv3-rd/run.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/gicv3-rd/run_all.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/loader-highram/run.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/loader-noinput/run.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/plic-address/extract.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/plic-address/run.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/ramboot-shell/run.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/snapshot.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/test_verify_source_packet.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/tlmm-step/extract.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/tlmm-step/run.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/trace/capture.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/trace/convert.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/trace/remote.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/trace/tests/test_convert.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/oracle/verify_source_packet.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/phone/build-embedded-efi.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/phone/capture-recovery.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/phone/return-runbook.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/phone/tests.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/boot.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/build.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/check-digest.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-intx-classifier-fixtures.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-intx-swap.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-net-exchange.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-net-native-from-image.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-net-native-probe-pcap.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-net-native-probe-tests.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-net-native-probe.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-net-serial-handshake-tests.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-net-serial-handshake.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-staging-check.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-wy-guest-harness-fixture.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-wy-guest-harness-offset-tests.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-wy-guest-harness-pcap.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-wy-guest-harness-tests.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-wy-guest-harness.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-wyoming-stage-tests.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/e1-wyoming-stage.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/evidence.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/gic-dist-w1-tests.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/stage.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/tests.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/qemu-demo/validate.sh",
+      "language": "shell",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/test_irq_callback_eoi.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "scripts/test_irq_save_guard.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    },
+    {
+      "path": "tools/kernel-wake-regression/check.py",
+      "language": "python",
+      "semantic_review": "pending; filename and extension do not establish complete behavior"
+    }
+  ],
+  "extensionless_scripts": [],
+  "patch_surfaces": [
+    {
+      "path": "patches/base-simplefb/0001-simplefb-discover-device-tree-simple-framebuffer-nod.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/base-simplefb/0002-simplefb-find-chosen-when-the-DTB-contains-FDT_NOP-t.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/base-simplefb/0003-vesad-use-a-device-tree-simple-framebuffer-as-the-bo.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/base-spmid/0001-K7-add-read-only-SPMI-PMIC-button-daemon.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/base-touch/0001-drivers-add-opt-in-GENI-I2C-and-RMI4-touch-workers.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/base-traced/0001-traced-add-Redox-trace-scheme-daemon-and-boot-wiring.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/base/0001-Add-minimal-initfs-only-serial-rescue-shell.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/bootloader/0001-Embed-kernel-and-initfs-for-drive-free-aarch64-boot.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/bootloader/0002-Select-RAMBOOT-video-mode-without-keyboard.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/bootloader/0003-Cover-OnePlus-high-RAM-during-EFI-handoff.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/e1/base/0001-ramboot-publish-E1-timeline-fixture-to-trace-scheme.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/e1/bootloader/0001-uefi-auto-select-GOP-mode-for-live-demo-boots.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/experimental-irq-owned-dispatch/prototype.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration-2/base/0001-simplefb-discover-device-tree-simple-framebuffer-nod.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration-2/base/0002-simplefb-find-chosen-when-the-DTB-contains-FDT_NOP-t.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration-2/base/0003-vesad-use-a-device-tree-simple-framebuffer-as-the-bo.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration-2/base/0004-drivers-add-opt-in-GENI-I2C-and-RMI4-touch-workers.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration-2/base/0005-ramboot-include-vesad-for-simplefb-discovery.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration-2/base/0006-ramboot-package-idle-touch-diagnostics.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration-2/base/0007-ramboot-start-inputd-before-vesad.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration-2/bootloader/0001-ramboot-auto-select-preferred-GOP-mode.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/base/0001-Add-minimal-initfs-only-serial-rescue-shell.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/base/0002-K7-add-read-only-SPMI-PMIC-button-daemon.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/base/0003-Start-spmid-from-RAM-initfs-only-when-DT-declares-SP.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/base/0004-simplefb-discover-device-tree-simple-framebuffer-nod.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/base/0005-simplefb-find-chosen-when-the-DTB-contains-FDT_NOP-t.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/base/0006-vesad-use-a-device-tree-simple-framebuffer-as-the-bo.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/base/0007-drivers-add-opt-in-GENI-I2C-and-RMI4-touch-workers.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/base/0008-ramboot-include-vesad-for-simplefb-discovery.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/base/0009-ramboot-package-idle-touch-diagnostics.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/base/0010-ramboot-start-inputd-before-vesad.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/base/0011-spmid-handle-sparse-v5-and-probe-errors.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/base/0012-spmid-log-delivered-button-events.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/base/0013-spmid-pm8998-power-bit.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/base/0014-drivers-add-opt-in-read-only-ufsd-probe.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/base/0015-ufsd-probe-mapped-controller-and-emulator-gpt.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/bootloader/0001-Embed-kernel-and-initfs-for-drive-free-aarch64-boot.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/integration/bootloader/0002-ramboot-auto-select-preferred-GOP-mode.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0001-Fix-inherited-devicetree-interrupt-domains-on-aarch6.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0002-Add-tested-SDM845-PDC-specifier-decoder.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0003-Wire-SDM845-PDC-and-TLMM-interrupt-domains.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0004-context-pass-a-Kstack-in-scheduler-test-helpers.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0005-devices-add-polled-Qualcomm-GENI-debug-UART-driver.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0006-dtb-select-the-GENI-debug-UART-for-qcom-geni-debug-u.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0007-irq-carry-IRQ-numbers-wider-than-u8-through-the-irq-.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0008-gicv3-keep-the-full-INTID-when-acknowledging-an-inte.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0009-devices-deliver-GENI-debug-UART-RX-through-the-SE-in.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0010-dtb-discover-a-simple-framebuffer-for-the-boot-conso.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0011-graphical_debug-scrolling-scaled-coloured-boot-conso.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0012-aarch64-boot-console-on-a-device-tree-simple-framebu.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0013-dtb-treat-a-self-parented-interrupt-controller-as-a-.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0014-gicv3-redistributor-private-irqs.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0015-reject-malformed-dt-stride.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0016-per-controller-cpu-affinity-registry.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0017-gicv3-put-shared-interrupts-in-Group-1.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0018-irqchip-keep-summary-interrupts-of-driverless-contro.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0019-aarch64-log-first-architected-timer-PPI-for-emulator.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0020-context-retain-due-timers-when-a-context-lock-is-bus.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0021-kernel-add-opt-in-bounded-sleep-IRQ-diagnostics.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0022-gicv3-affinity-routing-encoders.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0023-gic-write-one-interrupt-mask.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0024-irq-defer-serial-callback-eoi.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0025-sync-preparatory-irq-save-mutex.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0026-tlmm-one-pending-pin-step.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0027-gicv3-owned-private-rd-diagnostic.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0028-plic-scalar-mmio-addresses.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0029-bcm2835-extract-owned-pending-and-claim-steps.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0030-bcm2836-include-last-local-IRQ-in-descriptor-allocation.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/kernel-series/0031-geni-configure-four-byte-RX-FIFO-packing.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/touch-e2e/base/0001-rmi4d-discover-the-DT-touch-node-and-wait-on-its-att.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/touch-e2e/base/0002-inputd-opt-in-pointer-event-trace.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/touch-e2e/base/0003-ramboot-opt-in-emulator-touch-services.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/u-boot/0001-qcom-add-OnePlus-6-fastboot-first-phone-environment.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    },
+    {
+      "path": "patches/u-boot/0002-doc-record-OnePlus-6-headless-build-and-emulator-pro.patch",
+      "semantic_review": "pending; payload must be classified from patch contents"
+    }
+  ],
+  "native_patch_targets": [],
+  "patch_inline_assembly_refs": [
+    "patches/kernel-series/0008-gicv3-keep-the-full-INTID-when-acknowledging-an-inte.patch:66",
+    "patches/kernel-series/0014-gicv3-redistributor-private-irqs.patch:58",
+    "patches/kernel-series/0014-gicv3-redistributor-private-irqs.patch:270",
+    "patches/kernel-series/0014-gicv3-redistributor-private-irqs.patch:279",
+    "patches/kernel-series/0025-sync-preparatory-irq-save-mutex.patch:147",
+    "patches/kernel-series/0025-sync-preparatory-irq-save-mutex.patch:164",
+    "patches/kernel-series/0025-sync-preparatory-irq-save-mutex.patch:166",
+    "patches/kernel-series/0025-sync-preparatory-irq-save-mutex.patch:179",
+    "patches/kernel-series/0025-sync-preparatory-irq-save-mutex.patch:195",
+    "patches/kernel-series/0025-sync-preparatory-irq-save-mutex.patch:197"
+  ],
+  "generator_signals": [
+    {
+      "source_ref": "scripts/phone/build-embedded-efi.py:155",
+      "source_marker": "write_text(CMD_C)",
+      "signal": "generates cmd/op6efi.c from embedded CMD_C source"
+    },
+    {
+      "source_ref": "scripts/phone/build-embedded-efi.py:158",
+      "source_marker": ".write_text(f",
+      "signal": "generates cmd/op6efi-payload.S with .section/.global/.incbin assembly"
+    }
+  ],
+  "rust_native_signals": [
+    {
+      "source_ref": "tools/efi-diag/src/main.rs:183",
+      "signal": "inline architecture assembly"
+    },
+    {
+      "source_ref": "tools/efi-diag/src/main.rs:247",
+      "signal": "C ABI export"
+    },
+    {
+      "source_ref": "crates/sandbox/guests/hello-rs/src/lib.rs:13",
+      "signal": "C ABI import block"
+    },
+    {
+      "source_ref": "crates/sandbox/guests/hello-rs/src/lib.rs:61",
+      "signal": "C ABI export"
+    },
+    {
+      "source_ref": "crates/sandbox/guests/hello-rs/src/lib.rs:72",
+      "signal": "C ABI export"
+    },
+    {
+      "source_ref": "crates/sandbox/guests/hello-rs/src/lib.rs:77",
+      "signal": "C ABI export"
+    },
+    {
+      "source_ref": "scripts/oracle/bcm2836-range/baseline.rs:144",
+      "signal": "inline AArch64 system-register assembly in oracle harness"
+    },
+    {
+      "source_ref": "scripts/oracle/bcm2836-range/baseline.rs:176",
+      "signal": "inline AArch64 system-register assembly in oracle harness"
+    },
+    {
+      "source_ref": "scripts/oracle/bcm2836-range/baseline.rs:190",
+      "signal": "inline AArch64 system-register assembly in oracle harness"
+    },
+    {
+      "source_ref": "scripts/oracle/bcm2836-range/baseline.rs:209",
+      "signal": "inline AArch64 system-register assembly in oracle harness"
+    },
+    {
+      "source_ref": "scripts/oracle/gicv3-rd/before.rs:45",
+      "signal": "inline AArch64 system-register assembly in oracle harness"
+    },
+    {
+      "source_ref": "scripts/oracle/gicv3-rd/before.rs:298",
+      "signal": "inline AArch64 system-register assembly in oracle harness"
+    },
+    {
+      "source_ref": "scripts/oracle/gicv3-rd/before.rs:303",
+      "signal": "inline AArch64 system-register assembly in oracle harness"
+    },
+    {
+      "source_ref": "scripts/oracle/gicv3-rd/before.rs:308",
+      "signal": "inline AArch64 system-register assembly in oracle harness"
+    },
+    {
+      "source_ref": "scripts/oracle/gicv3-rd/before.rs:313",
+      "signal": "inline AArch64 system-register assembly in oracle harness"
+    },
+    {
+      "source_ref": "scripts/oracle/gicv3-rd/before.rs:323",
+      "signal": "inline AArch64 system-register assembly in oracle harness"
+    },
+    {
+      "source_ref": "scripts/oracle/gicv3-rd/before.rs:330",
+      "signal": "inline AArch64 system-register assembly in oracle harness"
+    }
+  ],
+  "external_references": [
+    {
+      "component": "U-Boot",
+      "source_ref": "docs/workbench/RUST-MIGRATION.md:7",
+      "local_snapshot_commit": "3e15c2819caa7e14e1e4b2ff758a41cbc58a7311",
+      "upstream": "source.denx.de/u-boot",
+      "upstream_commit": "8649a54d301a4d0ac526324c7a7ad2574939ff27",
+      "full_upstream_coverage": "required; every platform and feature remains to be semantically inventoried"
+    },
+    {
+      "component": "QEMU downstream",
+      "source_ref": "docs/workbench/RUST-MIGRATION.md:9",
+      "local_snapshot_commit": "c51d86c7c5d6a0e980a3e96050ec68229b5cbe1e",
+      "upstream": "QEMU",
+      "upstream_import_commit": "b5de3fe",
+      "upstream_commit": "4fc49f46dc95d4a27de2509e7fceb2931e91faeb",
+      "provenance_note": "source-record claim, not a newly fetched upstream comparison",
+      "full_upstream_coverage": "required; all machines, architectures and features remain to be semantically inventoried"
+    },
+    {
+      "component": "U-Boot downstream patch record",
+      "source_ref": "patches/u-boot/README.md:1-6",
+      "local_snapshot_commit": "3e15c2819caa7e14e1e4b2ff758a41cbc58a7311",
+      "upstream_commit": "8649a54d301a4d0ac526324c7a7ad2574939ff27",
+      "full_upstream_coverage": "board patch evidence only; full upstream feature coverage pending"
+    },
+    {
+      "component": "QEMU OnePlus 6 checkout path",
+      "source_ref": "scripts/emu-op6/run.sh:22",
+      "local_snapshot_commit": "c51d86c7c5d6a0e980a3e96050ec68229b5cbe1e",
+      "external_checkout": "~/Developer/forks/qemu-oneplus6",
+      "full_upstream_coverage": "board path only; full upstream feature coverage pending"
+    },
+    {
+      "component": "QEMU emulator evidence",
+      "source_ref": "patches/u-boot/0002-doc-record-OnePlus-6-headless-build-and-emulator-pro.patch:103-120",
+      "local_snapshot_commit": "c51d86c7c5d6a0e980a3e96050ec68229b5cbe1e",
+      "full_upstream_coverage": "board evidence only; full upstream feature coverage pending"
+    }
+  ],
+  "detector_code_excluded_from_rust_native_scan": [
+    {
+      "path": "tools/rust-migration/tests/inventory_contract/scan.rs",
+      "reason": "the native-boundary scanner contains marker literals; exclude detector implementation to prevent self-reported runtime ABI signals"
+    }
+  ],
+  "rust_sources_added_after_baseline": [
+    {
+      "path": "tools/rust-migration/src/values.rs",
+      "role": "Native Rust signed ASCII trace-value modular parser and regression tests"
+    },
+    {
+      "path": "crates/lfm3-brain/src/lib.rs",
+      "role": "Single initial brain identity and independent feature modules"
+    },
+    {
+      "path": "crates/lfm3-brain/src/service.rs",
+      "role": "Native Rust bounded service contract; no inference backend yet"
+    },
+    {
+      "path": "crates/lfm3-brain/src/service_tests.rs",
+      "role": "Rust service-boundary fixtures, not pretrained generation proof"
+    },
+    {
+      "path": "tools/rust-migration/tests/path_parity.rs",
+      "role": "Rust CLI path and same-file protection regression tests"
+    },
+    {
+      "path": "tools/rust-migration/src/main.rs",
+      "role": "Rust CLI candidate; current migration implementation"
+    },
+    {
+      "path": "tools/rust-migration/tests/python_parity.rs",
+      "role": "Rust differential tests; Python invoked as test oracle only"
+    },
+    {
+      "path": "tools/rust-migration/tests/inventory_contract.rs",
+      "role": "Rust inventory contract test entrypoint"
+    },
+    {
+      "path": "tools/rust-migration/tests/inventory_contract/scan.rs",
+      "role": "Rust inventory detector; excluded from self-scanned native marker set"
+    },
+    {
+      "path": "tools/rust-migration/tests/inventory_contract/validate.rs",
+      "role": "Rust inventory contract validation"
+    }
+  ]
+}

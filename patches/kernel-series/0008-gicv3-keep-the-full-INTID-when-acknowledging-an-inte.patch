@@ -1,0 +1,112 @@
+From dad47994e54fd429294f8e365646b42ee84c6071 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:28:05 +0000
+Subject: [PATCH 08/21] gicv3: keep the full INTID when acknowledging an
+ interrupt
+
+irq_ack masked ICC_IAR1_EL1 with 0x1ff, so any INTID above 511 aliased a
+lower one. SDM845 direct SPIs reach 608 and PDC-routed SPIs reach 636
+(INTID 668). The same mask turned the spurious INTID 1023 into 511, which
+was then EOI'd as a real interrupt; the 1023 panic below it was dead code.
+
+Take INTID bits [23:0] and return special INTIDs 1020..=1023 unchanged.
+irq_to_virq never maps them, so the dispatcher's existing no-EOI path for
+special IDs handles a spurious interrupt instead of a panic.
+
+Co-Authored-By: Cursor <noreply@cursor.com>
+Co-Authored-By: Codex <noreply@openai.com>
+---
+ src/arch/aarch64/device/irqchip/gicv3.rs | 60 ++++++++++++++++++++----
+ 1 file changed, 52 insertions(+), 8 deletions(-)
+
+diff --git a/src/arch/aarch64/device/irqchip/gicv3.rs b/src/arch/aarch64/device/irqchip/gicv3.rs
+index 5cb1a437..e9acc7f0 100644
+--- a/src/arch/aarch64/device/irqchip/gicv3.rs
++++ b/src/arch/aarch64/device/irqchip/gicv3.rs
+@@ -14,6 +14,14 @@ use syscall::{
+     Result,
+ };
+ 
++/// INTIDs 1020..=1023 are special (1023 = spurious) and never map to a virq.
++const INTID_SPECIAL_FIRST: u32 = 1020;
++
++/// `ICC_IAR1_EL1.INTID` is bits [23:0]; SDM845 SPIs reach INTID 668.
++fn iar_intid(iar: usize) -> u32 {
++    (iar & 0xff_ffff) as u32
++}
++
+ #[derive(Debug)]
+ pub struct GicV3 {
+     pub gic_dist_if: GicDistIf,
+@@ -150,7 +158,7 @@ impl InterruptController for GicV3 {
+         Ok(off + self.irq_range.0)
+     }
+     fn irq_to_virq(&self, hwirq: u32) -> Option<usize> {
+-        if hwirq >= self.gic_dist_if.nirqs {
++        if hwirq >= INTID_SPECIAL_FIRST || hwirq >= self.gic_dist_if.nirqs {
+             None
+         } else {
+             Some(self.irq_range.0 + hwirq as usize)
+@@ -187,15 +195,13 @@ impl GicV3CpuIf {
+         }
+     }
+ 
++    /// Returns the acknowledged INTID; 1020..=1023 (spurious) are passed on
++    /// so the dispatcher can skip the EOI.
+     unsafe fn irq_ack(&mut self) -> u32 {
+         unsafe {
+-            let mut irq: usize;
+-            asm!("mrs {}, icc_iar1_el1", out(reg) irq);
+-            irq &= 0x1ff;
+-            if irq == 1023 {
+-                panic!("irq_ack: got ID 1023!!!");
+-            }
+-            irq as u32
++            let iar: usize;
++            asm!("mrs {}, icc_iar1_el1", out(reg) iar);
++            iar_intid(iar)
+         }
+     }
+ 
+@@ -205,3 +211,41 @@ impl GicV3CpuIf {
+         }
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn gicv3(nirqs: u32) -> GicV3 {
++        let mut gic = GicV3::new();
++        gic.gic_dist_if.nirqs = nirqs;
++        gic.irq_range = (0, nirqs as usize);
++        gic
++    }
++
++    #[test]
++    fn iar_keeps_intids_above_511() {
++        // SDM845 PDC maps pins onto SPIs up to 636, i.e. INTID 668.
++        assert_eq!(iar_intid(668), 668);
++        assert_eq!(iar_intid(386), 386);
++        assert_eq!(iar_intid(0xff00_0000_03ff), 1023);
++    }
++
++    #[test]
++    fn spi_354_round_trips_through_virq_386() {
++        let gic = gicv3(1024);
++        let virq = gic.irq_xlate(IrqCell::L3(0, 354, 4)).unwrap();
++        assert_eq!(virq, 386);
++        assert_eq!(gic.irq_to_virq(iar_intid(386)), Some(virq));
++    }
++
++    #[test]
++    fn special_intids_never_map_to_a_virq() {
++        let gic = gicv3(1024);
++        for intid in 1020..=1023 {
++            assert_eq!(gic.irq_to_virq(intid), None);
++        }
++        assert_eq!(gicv3(640).irq_to_virq(640), None);
++        assert_eq!(gicv3(640).irq_to_virq(639), Some(639));
++    }
++}

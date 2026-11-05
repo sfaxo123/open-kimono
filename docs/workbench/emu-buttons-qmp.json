@@ -1,0 +1,11 @@
+{
+  "marker": "spmid: PMIC type 0x51",
+  "commands": [
+    {"execute": "qom-set", "arguments": {"path": "/machine/spmi", "property": "vol-down[0]", "value": 1}},
+    {"execute": "qom-set", "arguments": {"path": "/machine/spmi", "property": "vol-down[0]", "value": 0}, "delay_ms": 250},
+    {"execute": "qom-set", "arguments": {"path": "/machine/spmi", "property": "vol-up[0]", "value": 1}, "delay_ms": 250},
+    {"execute": "qom-set", "arguments": {"path": "/machine/spmi", "property": "vol-up[0]", "value": 0}, "delay_ms": 250},
+    {"execute": "qom-set", "arguments": {"path": "/machine/spmi", "property": "pwrkey[0]", "value": 1}, "delay_ms": 250},
+    {"execute": "qom-set", "arguments": {"path": "/machine/spmi", "property": "pwrkey[0]", "value": 0}, "delay_ms": 250}
+  ]
+}

@@ -1,0 +1,103 @@
+From: Remy <remy@localhost>
+Subject: [PATCH] aarch64: run the watchdog handoff from kmain after BOOTSTRAP install
+
+Second gate catch (P3-fix gate round 2, 2026-11-01): the
+0045 placement in arch start() STILL panicked with
+"BOOTSTRAP was not set". args.bootstrap() only builds the
+Bootstrap value; the BOOTSTRAP spin::Once is installed by
+BOOTSTRAP.call_once() inside kmain (src/startup/mod.rs),
+after secondary-CPU init and scheme globals. So the first
+point init_env() may legally be read is inside kmain,
+immediately after that call_once - which is where the
+handoff now runs (cfg target_arch=aarch64 + feature).
+Userspace has not started; the healthy-point argument is
+unchanged. 0045's start() call is removed; the pointer
+comments in device/mod.rs and the qcom_wdt module doc are
+corrected to the kmain placement. Recorded plainly: root's
+0045 evidence summary misstated where the Once installs,
+and the Muse Wonder consult (spark-out/
+wonder-p3fix-consult.md) repeated the same assumption from
+that summary while agreeing with the root cause - the
+emulator gate is the ground truth and outranked both.
+
+Agent: Remy (root of record)
+Model: Muse Wonder (muse-wonder-1.0)
+Provider: Meta
+
+---
+diff --git a/src/arch/aarch64/device/mod.rs b/src/arch/aarch64/device/mod.rs
+index 57ee7eea..5a8ef016 100644
+--- a/src/arch/aarch64/device/mod.rs
++++ b/src/arch/aarch64/device/mod.rs
+@@ -65,10 +65,10 @@ pub unsafe fn init_devicetree(fdt: &Fdt) {
+         info!("RTC INIT");
+         rtc::init(fdt);
+         // The APSS watchdog handoff (qcom_wdt::handoff, patch 0043)
+-        // runs from arch start() right after args.bootstrap(): it
+-        // reads REDOX_WDT_MODE via crate::startup::init_env(), which
+-        // panics before the bootstrap environment is installed
+-        // (patch 0045; the first 0043 gate run panicked here).
++        // runs from kmain() immediately after BOOTSTRAP is
++        // installed: it reads REDOX_WDT_MODE via
++        // crate::startup::init_env(), which panics anywhere earlier
++        // (patches 0045/0046; the first 0043 gate run panicked here).
+     }
+ }
+ 
+diff --git a/src/arch/aarch64/device/qcom_wdt.rs b/src/arch/aarch64/device/qcom_wdt.rs
+index 9c6fb6b5..d41a242a 100644
+--- a/src/arch/aarch64/device/qcom_wdt.rs
++++ b/src/arch/aarch64/device/qcom_wdt.rs
+@@ -8,8 +8,8 @@
+ //! servicing stops at handoff, so an armed watchdog bites ~32 s into
+ //! the boot unless the kernel takes ownership (REVIEW-20261031-2230
+ //! F-4). This module is that handoff. Once device init is complete
+-//! and the bootstrap environment exists (arch start(), just before
+-//! kmain; patch 0045) it either DISARMS the watchdog (normal images; the TTL/reset
++//! and the bootstrap environment exists (kmain(), immediately after
++//! BOOTSTRAP is installed; patches 0045/0046) it either DISARMS the watchdog (normal images; the TTL/reset
+ //! machinery owns the timeline from there) or deliberately LEAVES it
+ //! armed (stall-test images, whose bite must land in the installed
+ //! system — the early download-mode cookie clear, patch 0042, makes
+diff --git a/src/arch/aarch64/start.rs b/src/arch/aarch64/start.rs
+index ab35f6da..5cd0b32d 100644
+--- a/src/arch/aarch64/start.rs
++++ b/src/arch/aarch64/start.rs
+@@ -136,15 +136,6 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
+             args.bootstrap()
+         };
+ 
+-        // P3 F-4 (REVIEW-20261031-2230): take ownership of the
+-        // bootloader-armed APSS watchdog. Device init is complete
+-        // and the bootstrap environment now exists - the earliest
+-        // point qcom_wdt::handoff() may read REDOX_WDT_MODE via
+-        // crate::startup::init_env() (it panics before
+-        // args.bootstrap() installs it; patch 0045). Still before
+-        // kmain/userspace: the healthy point for this phase.
+-        #[cfg(feature = "qcom-wdt-handoff")]
+-        device::qcom_wdt::handoff();
+ 
+         // TODO: use stack
+         crate::startup::kmain(bootstrap, Kstack::new().expect("failed to allocate stack"));
+diff --git a/src/startup/mod.rs b/src/startup/mod.rs
+index 4ab58897..d3c20969 100644
+--- a/src/startup/mod.rs
++++ b/src/startup/mod.rs
+@@ -191,6 +191,17 @@ pub(crate) fn kmain(bootstrap: Bootstrap, kmain_kstack: Kstack) -> ! {
+ 
+     BOOTSTRAP.call_once(|| bootstrap);
+ 
++    // P3 F-4 (REVIEW-20261031-2230): take ownership of the
++    // bootloader-armed APSS watchdog. This is the first point
++    // crate::startup::init_env() may be read - the BOOTSTRAP
++    // Once is installed immediately above - and userspace has
++    // not started: the healthy point for this phase. (0043 put
++    // the call at the end of device init and 0045 in arch
++    // start(); both panic on the unset Once - the environment
++    // exists only from here on.)
++    #[cfg(all(target_arch = "aarch64", feature = "qcom-wdt-handoff"))]
++    crate::arch::device::qcom_wdt::handoff();
++
+     profiling::ready_for_profiling();
+ 
+     let owner = None; // kmain not owned by any fd

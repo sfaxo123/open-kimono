@@ -1,0 +1,2041 @@
+From 13819765acae91565961ec7eb02e3c9de6c6d9b8 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:28:31 +0000
+Subject: [PATCH 02/10] K7: add read-only SPMI PMIC button daemon
+
+Co-Authored-By: Codex <noreply@openai.com>
+---
+ Cargo.lock                          |  22 ++
+ Cargo.toml                          |   3 +
+ drivers/mmio-replay/Cargo.toml      |   8 +
+ drivers/mmio-replay/src/lib.rs      |  71 ++++
+ drivers/mmio-replay/src/mmio.rs     | 239 ++++++++++++++
+ drivers/mmio-replay/src/recorder.rs | 134 ++++++++
+ drivers/mmio-replay/src/replayer.rs | 495 ++++++++++++++++++++++++++++
+ drivers/mmio-replay/src/trace.rs    | 455 +++++++++++++++++++++++++
+ drivers/spmid-core/Cargo.toml       |   8 +
+ drivers/spmid-core/src/lib.rs       | 153 +++++++++
+ drivers/spmid-core/tests/arbiter.rs | 159 +++++++++
+ drivers/spmid/Cargo.toml            |  22 ++
+ drivers/spmid/README.md             |   7 +
+ drivers/spmid/src/main.rs           | 126 +++++++
+ 14 files changed, 1902 insertions(+)
+ create mode 100644 drivers/mmio-replay/Cargo.toml
+ create mode 100644 drivers/mmio-replay/src/lib.rs
+ create mode 100644 drivers/mmio-replay/src/mmio.rs
+ create mode 100644 drivers/mmio-replay/src/recorder.rs
+ create mode 100644 drivers/mmio-replay/src/replayer.rs
+ create mode 100644 drivers/mmio-replay/src/trace.rs
+ create mode 100644 drivers/spmid-core/Cargo.toml
+ create mode 100644 drivers/spmid-core/src/lib.rs
+ create mode 100644 drivers/spmid-core/tests/arbiter.rs
+ create mode 100644 drivers/spmid/Cargo.toml
+ create mode 100644 drivers/spmid/README.md
+ create mode 100644 drivers/spmid/src/main.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index aea570ed..d82e3e9a 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1486,6 +1486,10 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "mmio-replay"
++version = "0.1.0"
++
+ [[package]]
+ name = "nb"
+ version = "0.1.3"
+@@ -2486,6 +2490,24 @@ dependencies = [
+  "lock_api",
+ ]
+ 
++[[package]]
++name = "spmid"
++version = "0.1.0"
++dependencies = [
++ "common",
++ "inputd",
++ "mmio-replay",
++ "orbclient",
++ "spmid-core",
++]
++
++[[package]]
++name = "spmid-core"
++version = "0.1.0"
++dependencies = [
++ "mmio-replay",
++]
++
+ [[package]]
+ name = "stable_deref_trait"
+ version = "1.2.1"
+diff --git a/Cargo.toml b/Cargo.toml
+index b301a082..e13c7835 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -29,6 +29,9 @@ members = [
+     "drivers/rtcd",
+     "drivers/vboxd",
+     "drivers/inputd",
++    "drivers/mmio-replay",
++    "drivers/spmid-core",
++    "drivers/spmid",
+     "drivers/virtio-core",
+ 
+     "drivers/audio/ac97d",
+diff --git a/drivers/mmio-replay/Cargo.toml b/drivers/mmio-replay/Cargo.toml
+new file mode 100644
+index 00000000..54abf26c
+--- /dev/null
++++ b/drivers/mmio-replay/Cargo.toml
+@@ -0,0 +1,8 @@
++[package]
++name = "mmio-replay"
++version = "0.1.0"
++edition = "2021"
++license = "MIT"
++description = "MMIO access trait plus recorder/replayer of register traces (JSONL) so phone drivers are host-testable against replayed register models (Redox-on-OnePlus-6, task C1)."
++
++[dependencies]
+diff --git a/drivers/mmio-replay/src/lib.rs b/drivers/mmio-replay/src/lib.rs
+new file mode 100644
+index 00000000..91286fc3
+--- /dev/null
++++ b/drivers/mmio-replay/src/lib.rs
+@@ -0,0 +1,71 @@
++//! `mmio-replay` — MMIO trait + recorder/replayer of register traces.
++//!
++//! Part of the Redox-on-OnePlus-6 "emulator first" rule (docs/PLAN.md,
++//! VISION "Emulator first"): the OnePlus 6's peripherals are not modelled by
++//! QEMU, so drivers are developed against **register traces replayed from the
++//! real phone** (recorded later by the pmOS oracle, `scripts/oracle/`).
++//!
++//! A driver takes a `&mut impl [`Mmio`]` instead of touching pointers:
++//!
++//! - production: the real register window;
++//! - host test: a [`MemModel`] register model, a [`Recorder`] wrapping one
++//!   (to capture a trace), or a [`Replayer`] feeding a recorded trace back to
++//!   the driver and comparing every transaction against it.
++//!
++//! Traces are JSONL — one flat JSON object per transaction:
++//!
++//! ```text
++//! {"op":"w","width":32,"addr":"0xa84010","value":"0x2","delay_us":0}
++//! {"op":"r","width":32,"addr":"0xa84018","value":"0x40000000","delay_us":12}
++//! ```
++//!
++//! `op` is `"r"`/`"w"`, `width` is 8/16/32/64, `addr`/`value` are hex
++//! strings (decimal numbers are also accepted), `delay_us` is the time since
++//! the previous event and is optional.
++//!
++//! Compare modes on the [`Replayer`]:
++//!
++//! - [`Compare::Strict`]: every transaction must match the next recorded
++//!   event exactly (op, width, address, and written value); the first
++//!   deviation fails the replay.
++//! - [`Compare::Lenient`]: structure must match — a driver may write values
++//!   that differ from the recording (logged as warnings) and may skip
++//!   recorded events, but touching a register that is not in the trace fails.
++//!
++//! ```
++//! use mmio_replay::{Compare, MemModel, Mmio, Recorder, Replayer};
++//!
++//! // Record a reference run against a register model…
++//! let mut model = MemModel::new();
++//! model.load(0xa84e24, &[0x10, 0x00, 0x00, 0x00]); // firmware-left state
++//! let mut rec = Recorder::new(&mut model);
++//! rec.write_u32(0xa84010, 1);
++//! assert_eq!(rec.read_u32(0xa84e24), 0x10);
++//! let trace = rec.into_trace();
++//!
++//! // …freeze it as JSONL…
++//! let text = trace.to_jsonl();
++//! let trace = mmio_replay::Trace::from_jsonl(&text).unwrap();
++//!
++//! // …and replay it strictly against the driver.
++//! let mut rep = Replayer::strict(trace);
++//! rep.write_u32(0xa84010, 1);
++//! assert_eq!(rep.read_u32(0xa84e24), 0x10); // recorded value comes back
++//! assert!(rep.finish().ok());
++//! ```
++
++#![no_std]
++#![forbid(unsafe_code)]
++#![deny(missing_docs)]
++
++extern crate alloc;
++
++mod mmio;
++mod recorder;
++mod replayer;
++mod trace;
++
++pub use mmio::{MemModel, Mmio, Op, Width};
++pub use recorder::Recorder;
++pub use replayer::{Compare, Mismatch, MismatchKind, ObservedAccess, ReplayReport, Replayer};
++pub use trace::{Event, ParseError, Trace};
+diff --git a/drivers/mmio-replay/src/mmio.rs b/drivers/mmio-replay/src/mmio.rs
+new file mode 100644
+index 00000000..bdfc4873
+--- /dev/null
++++ b/drivers/mmio-replay/src/mmio.rs
+@@ -0,0 +1,239 @@
++//! The MMIO access trait and a sparse byte-memory model.
++//!
++//! Drivers never touch `volatile` pointers directly: they take a `&mut impl
++//! Mmio` (or `&mut dyn Mmio`). In production that is backed by the real
++//! register window; in host tests it is backed by [`MemModel`] (a plain
++//! sparse memory), a [`crate::Recorder`] around one, or a
++//! [`crate::Replayer`] replaying a trace recorded on the phone.
++
++use alloc::collections::BTreeMap;
++
++/// Access width of one MMIO transaction.
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub enum Width {
++    /// 8-bit access.
++    W8,
++    /// 16-bit access.
++    W16,
++    /// 32-bit access (the common Qualcomm register width).
++    W32,
++    /// 64-bit access.
++    W64,
++}
++
++impl Width {
++    /// Width in bits.
++    pub fn bits(self) -> u32 {
++        match self {
++            Width::W8 => 8,
++            Width::W16 => 16,
++            Width::W32 => 32,
++            Width::W64 => 64,
++        }
++    }
++
++    /// Width in bytes.
++    pub fn bytes(self) -> usize {
++        (self.bits() / 8) as usize
++    }
++
++    /// Decode from a bit count (8, 16, 32 or 64).
++    pub fn from_bits(bits: u32) -> Option<Width> {
++        match bits {
++            8 => Some(Width::W8),
++            16 => Some(Width::W16),
++            32 => Some(Width::W32),
++            64 => Some(Width::W64),
++            _ => None,
++        }
++    }
++
++    /// Bitmask of the low `bits()` bits, e.g. `W16 -> 0xffff`.
++    pub fn mask(self) -> u64 {
++        match self {
++            Width::W64 => u64::MAX,
++            w => (1u64 << w.bits()) - 1,
++        }
++    }
++}
++
++/// Direction of one MMIO transaction.
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub enum Op {
++    /// Read transaction.
++    Read,
++    /// Write transaction.
++    Write,
++}
++
++/// A memory-mapped register window a driver can touch.
++///
++/// All values are transferred little-endian; `write` must ignore the bits of
++/// `value` above `width`. Implementations must not reorder or coalesce
++/// transactions — trace replay depends on one event per call.
++pub trait Mmio {
++    /// Read `width` bits at `addr`.
++    fn read(&mut self, addr: u64, width: Width) -> u64;
++
++    /// Write the low `width` bits of `value` at `addr`.
++    fn write(&mut self, addr: u64, width: Width, value: u64);
++
++    /// `W8` read.
++    fn read_u8(&mut self, addr: u64) -> u8 {
++        self.read(addr, Width::W8) as u8
++    }
++
++    /// `W16` read.
++    fn read_u16(&mut self, addr: u64) -> u16 {
++        self.read(addr, Width::W16) as u16
++    }
++
++    /// `W32` read.
++    fn read_u32(&mut self, addr: u64) -> u32 {
++        self.read(addr, Width::W32) as u32
++    }
++
++    /// `W64` read.
++    fn read_u64(&mut self, addr: u64) -> u64 {
++        self.read(addr, Width::W64)
++    }
++
++    /// `W8` write.
++    fn write_u8(&mut self, addr: u64, value: u8) {
++        self.write(addr, Width::W8, value as u64)
++    }
++
++    /// `W16` write.
++    fn write_u16(&mut self, addr: u64, value: u16) {
++        self.write(addr, Width::W16, value as u64)
++    }
++
++    /// `W32` write.
++    fn write_u32(&mut self, addr: u64, value: u32) {
++        self.write(addr, Width::W32, value as u64)
++    }
++
++    /// `W64` write.
++    fn write_u64(&mut self, addr: u64, value: u64) {
++        self.write(addr, Width::W64, value)
++    }
++}
++
++/// A sparse little-endian byte memory: a simple device model for host tests
++/// (pre-load reset values with [`MemModel::load`], then let the driver run).
++///
++/// Unwritten addresses read as zero. No alignment or side-effect modelling —
++/// drivers that need register semantics layer them on top of this.
++#[derive(Clone, Debug, Default)]
++pub struct MemModel {
++    bytes: BTreeMap<u64, u8>,
++}
++
++impl MemModel {
++    /// An empty model (everything reads zero).
++    pub fn new() -> Self {
++        Self::default()
++    }
++
++    /// Pre-load raw bytes (device-tree style setup of reset/firmware state).
++    pub fn load(&mut self, addr: u64, data: &[u8]) {
++        for (i, b) in data.iter().enumerate() {
++            self.bytes.insert(addr + i as u64, *b);
++        }
++    }
++
++    /// The stored byte at `addr`, or `None` if never written or loaded.
++    pub fn peek(&self, addr: u64) -> Option<u8> {
++        self.bytes.get(&addr).copied()
++    }
++}
++
++impl Mmio for MemModel {
++    fn read(&mut self, addr: u64, width: Width) -> u64 {
++        let mut v = 0u64;
++        for i in 0..width.bytes() {
++            let b = self.bytes.get(&(addr + i as u64)).copied().unwrap_or(0);
++            v |= (b as u64) << (8 * i);
++        }
++        v
++    }
++
++    fn write(&mut self, addr: u64, width: Width, value: u64) {
++        let value = value & width.mask();
++        for i in 0..width.bytes() {
++            self.bytes
++                .insert(addr + i as u64, ((value >> (8 * i)) & 0xff) as u8);
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn width_helpers() {
++        assert_eq!(Width::W32.bits(), 32);
++        assert_eq!(Width::W16.bytes(), 2);
++        assert_eq!(Width::from_bits(64), Some(Width::W64));
++        assert_eq!(Width::from_bits(12), None);
++        assert_eq!(Width::W8.mask(), 0xff);
++        assert_eq!(Width::W16.mask(), 0xffff);
++        assert_eq!(Width::W32.mask(), 0xffff_ffff);
++        assert_eq!(Width::W64.mask(), u64::MAX);
++    }
++
++    #[test]
++    fn u32_roundtrip_little_endian() {
++        let mut m = MemModel::new();
++        m.write_u32(0xa84010, 0xdead_beef);
++        assert_eq!(m.peek(0xa84010), Some(0xef));
++        assert_eq!(m.peek(0xa84011), Some(0xbe));
++        assert_eq!(m.peek(0xa84012), Some(0xad));
++        assert_eq!(m.peek(0xa84013), Some(0xde));
++        assert_eq!(m.read_u32(0xa84010), 0xdead_beef);
++    }
++
++    #[test]
++    fn narrow_write_does_not_clobber_neighbours() {
++        let mut m = MemModel::new();
++        m.write_u32(0x100, 0x1122_3344);
++        m.write_u8(0x101, 0xff);
++        assert_eq!(m.read_u32(0x100), 0x1122_ff44);
++        m.write_u16(0x102, 0xabcd);
++        assert_eq!(m.read_u32(0x100), 0xabcd_ff44);
++    }
++
++    #[test]
++    fn write_masks_value_to_width() {
++        let mut m = MemModel::new();
++        m.write(0x200, Width::W8, 0x1ff);
++        assert_eq!(m.peek(0x200), Some(0xff));
++        assert_eq!(m.peek(0x201), None);
++        m.write(0x210, Width::W16, 0x1_2345);
++        assert_eq!(m.read_u16(0x210), 0x2345);
++        assert_eq!(m.peek(0x212), None);
++    }
++
++    #[test]
++    fn unwritten_reads_zero() {
++        let mut m = MemModel::new();
++        assert_eq!(m.read_u64(0x8000), 0);
++        assert_eq!(m.read_u8(0), 0);
++    }
++
++    #[test]
++    fn u64_spans_loaded_and_unwritten_bytes() {
++        let mut m = MemModel::new();
++        m.load(0x40, &[0x01, 0x02]);
++        assert_eq!(m.read_u64(0x40), 0x0000_0000_0000_0201);
++    }
++
++    #[test]
++    fn load_preloads_reset_state() {
++        let mut m = MemModel::new();
++        // Pretend firmware left SE_HW_PARAM_0 = 0x0000_0010 at +0xe24.
++        m.load(0xa84e24, &[0x10, 0x00, 0x00, 0x00]);
++        assert_eq!(m.read_u32(0xa84e24), 0x10);
++    }
++}
+diff --git a/drivers/mmio-replay/src/recorder.rs b/drivers/mmio-replay/src/recorder.rs
+new file mode 100644
+index 00000000..4a987b41
+--- /dev/null
++++ b/drivers/mmio-replay/src/recorder.rs
+@@ -0,0 +1,134 @@
++//! Recorder: wraps any [`Mmio`] device and captures every transaction as a
++//! [`Trace`].
++//!
++//! On the phone this wraps the real register window (via the oracle tooling);
++//! in host tests it wraps a [`MemModel`] so a reference driver run can be
++//! captured and frozen as JSONL.
++
++use crate::mmio::{Mmio, Op, Width};
++use crate::trace::{Event, Trace};
++
++/// Wraps a device and records each MMIO transaction in order.
++pub struct Recorder<'a, T: Mmio> {
++    inner: &'a mut T,
++    trace: Trace,
++    delay_us: u64,
++}
++
++impl<'a, T: Mmio> Recorder<'a, T> {
++    /// Start recording accesses to `inner`.
++    pub fn new(inner: &'a mut T) -> Self {
++        Self {
++            inner,
++            trace: Trace::new(),
++            delay_us: 0,
++        }
++    }
++
++    /// Set the delay (µs since the previous event) attributed to the *next*
++    /// transaction. Resets to 0 after each recorded event.
++    pub fn set_delay_us(&mut self, delay_us: u64) {
++        self.delay_us = delay_us;
++    }
++
++    /// The trace recorded so far.
++    pub fn trace(&self) -> &Trace {
++        &self.trace
++    }
++
++    /// Finish recording and return the trace.
++    pub fn into_trace(self) -> Trace {
++        self.trace
++    }
++}
++
++impl<T: Mmio> Mmio for Recorder<'_, T> {
++    fn read(&mut self, addr: u64, width: Width) -> u64 {
++        let value = self.inner.read(addr, width);
++        self.trace.push(Event {
++            op: Op::Read,
++            width,
++            addr,
++            value,
++            delay_us: self.delay_us,
++        });
++        self.delay_us = 0;
++        value
++    }
++
++    fn write(&mut self, addr: u64, width: Width, value: u64) {
++        self.inner.write(addr, width, value);
++        self.trace.push(Event {
++            op: Op::Write,
++            width,
++            addr,
++            value: value & width.mask(),
++            delay_us: self.delay_us,
++        });
++        self.delay_us = 0;
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::mmio::MemModel;
++
++    #[test]
++    fn records_reads_and_writes_in_order() {
++        let mut model = MemModel::new();
++        model.load(0x40, &[0x78, 0x56, 0x34, 0x12]);
++        let mut rec = Recorder::new(&mut model);
++        rec.write_u32(0x10, 0xdead_beef);
++        assert_eq!(
++            rec.read_u32(0x40),
++            0x1234_5678,
++            "device value must pass through"
++        );
++        rec.write_u8(0x10, 0xff);
++        let trace = rec.into_trace();
++        assert_eq!(trace.events.len(), 3);
++        assert_eq!(trace.events[0], Event::write(0x10, Width::W32, 0xdead_beef));
++        assert_eq!(trace.events[1], Event::read(0x40, Width::W32, 0x1234_5678));
++        assert_eq!(trace.events[2], Event::write(0x10, Width::W8, 0xff));
++        // The wrapped device really was written through the recorder.
++        // write_u8 replaced only the low byte of the earlier u32 write.
++        assert_eq!(model.read_u32(0x10), 0xdead_beef & 0xffff_ff00 | 0xff);
++    }
++
++    #[test]
++    fn recorded_writes_are_masked_to_width() {
++        let mut model = MemModel::new();
++        let mut rec = Recorder::new(&mut model);
++        rec.write(0x100, Width::W16, 0xffff_ffff);
++        let t = rec.into_trace();
++        assert_eq!(t.events[0].value, 0xffff);
++    }
++
++    #[test]
++    fn delays_attach_to_next_event_and_reset() {
++        let mut model = MemModel::new();
++        let mut rec = Recorder::new(&mut model);
++        rec.set_delay_us(1500);
++        rec.write_u32(0x0, 1);
++        rec.write_u32(0x0, 2); // no delay set: 0
++        rec.set_delay_us(7);
++        let _ = rec.read_u32(0x0);
++        let t = rec.into_trace();
++        assert_eq!(t.total_delay_us(), 1507);
++        assert_eq!(t.events[0].delay_us, 1500);
++        assert_eq!(t.events[1].delay_us, 0);
++        assert_eq!(t.events[2].delay_us, 7);
++    }
++
++    #[test]
++    fn recorded_trace_roundtrips_through_jsonl() {
++        let mut model = MemModel::new();
++        let mut rec = Recorder::new(&mut model);
++        rec.write_u32(0xa84010, 2);
++        let _ = rec.read_u32(0xa84018);
++        let trace = rec.into_trace();
++        let text = trace.to_jsonl();
++        assert_eq!(Trace::from_jsonl(&text).unwrap(), trace);
++    }
++}
+diff --git a/drivers/mmio-replay/src/replayer.rs b/drivers/mmio-replay/src/replayer.rs
+new file mode 100644
+index 00000000..14834f28
+--- /dev/null
++++ b/drivers/mmio-replay/src/replayer.rs
+@@ -0,0 +1,495 @@
++//! Replayer: feeds a recorded [`Trace`] back to a driver and compares every
++//! transaction against it.
++//!
++//! The driver under test is handed `&mut Replayer` as its [`Mmio`]:
++//!
++//! - reads return the value the real hardware returned at that point in the
++//!   recording, so state machines (FIFO-ready bits, handshakes) replay
++//!   faithfully;
++//! - writes are compared against the recording.
++//!
++//! ## Compare modes
++//!
++//! [`Compare::Strict`] — every transaction must equal the next recorded
++//! event (op, width, address, and written value). The first deviation fails
++//! the replay; later accesses are counted but not compared.
++//!
++//! [`Compare::Lenient`] — structure must match: a driver may write values
++//! that differ from the recording (recorded as [`MismatchKind::WriteValue`]
++//! warnings) and may skip recorded events (e.g. extra polling reads the
++//! recording contains), but touching a register that is not in the trace at
++//! all is a [`MismatchKind::Structure`] failure.
++//!
++//! Call [`Replayer::finish`] at the end of the driver run and check
++//! [`ReplayReport::ok`].
++
++use alloc::format;
++use alloc::string::String;
++use alloc::vec::Vec;
++
++use crate::mmio::{Mmio, Op, Width};
++use crate::trace::{Event, Trace};
++
++/// How strictly observed accesses are compared against the trace.
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub enum Compare {
++    /// Everything must match exactly; first deviation fails.
++    Strict,
++    /// Values may differ and recorded events may be skipped; unknown
++    /// registers or directions fail.
++    Lenient,
++}
++
++/// An access the driver actually performed.
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub struct ObservedAccess {
++    /// Direction the driver used.
++    pub op: Op,
++    /// Width the driver used.
++    pub width: Width,
++    /// Address the driver touched.
++    pub addr: u64,
++    /// Value the driver wrote (0 for reads).
++    pub value: u64,
++}
++
++/// Why an observed access did not match the recording.
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub enum MismatchKind {
++    /// Wrong op/width/address: the access does not correspond to the next
++    /// (or any remaining) recorded event. Fails in both compare modes.
++    Structure,
++    /// Right register, wrong value. Fails in strict mode only.
++    WriteValue,
++}
++
++/// One comparison failure.
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub struct Mismatch {
++    /// Index in the trace of the event that was expected (`None` when the
++    /// driver ran past the end of the trace).
++    pub index: Option<usize>,
++    /// The recorded event that was expected, if any.
++    pub expected: Option<Event>,
++    /// What the driver actually did.
++    pub got: ObservedAccess,
++    /// Which rule was broken.
++    pub kind: MismatchKind,
++}
++
++/// The outcome of a replay, produced by [`Replayer::finish`].
++#[derive(Clone, PartialEq, Eq, Debug)]
++pub struct ReplayReport {
++    /// The compare mode that was used.
++    pub mode: Compare,
++    /// Observed accesses that matched a recorded event.
++    pub matched: usize,
++    /// All comparison failures, in order.
++    pub mismatches: Vec<Mismatch>,
++    /// Recorded events the lenient replay stepped over (extra accesses in
++    /// the recording the driver did not perform).
++    pub skipped: Vec<Event>,
++    /// Recorded events never reached by the driver.
++    pub unconsumed: Vec<Event>,
++    /// Accesses made after a strict replay already failed (not compared).
++    pub uncompared: usize,
++}
++
++impl ReplayReport {
++    /// Whether the replay counts as a pass under its compare mode.
++    pub fn ok(&self) -> bool {
++        match self.mode {
++            Compare::Strict => {
++                self.mismatches.is_empty() && self.unconsumed.is_empty() && self.uncompared == 0
++            }
++            Compare::Lenient => !self
++                .mismatches
++                .iter()
++                .any(|m| m.kind == MismatchKind::Structure),
++        }
++    }
++
++    /// Non-failing deviations worth printing in a test log.
++    pub fn warnings(&self) -> usize {
++        self.mismatches
++            .iter()
++            .filter(|m| m.kind == MismatchKind::WriteValue)
++            .count()
++            + self.skipped.len()
++            + self.unconsumed.len()
++    }
++}
++
++impl core::fmt::Display for ReplayReport {
++    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
++        write!(
++            f,
++            "{:?} replay: {} matched, {} mismatch(es), {} skipped, {} unconsumed, {} uncompared -> {}",
++            self.mode,
++            self.matched,
++            self.mismatches.len(),
++            self.skipped.len(),
++            self.unconsumed.len(),
++            self.uncompared,
++            if self.ok() { "PASS" } else { "FAIL" },
++        )?;
++        for m in &self.mismatches {
++            let exp = match m.expected {
++                Some(e) => format!(
++                    "expected {:?} {:#x} w{} {:#x}",
++                    e.op,
++                    e.addr,
++                    e.width.bits(),
++                    e.value
++                ),
++                None => String::from("expected end of trace"),
++            };
++            write!(
++                f,
++                "\n  [{:?} @{}] {}: {:?} {:#x} w{} {:#x}",
++                m.kind,
++                match m.index {
++                    Some(i) => alloc::string::ToString::to_string(&i),
++                    None => String::from("end"),
++                },
++                exp,
++                m.got.op,
++                m.got.addr,
++                m.got.width.bits(),
++                m.got.value,
++            )?;
++        }
++        Ok(())
++    }
++}
++
++/// Replays a recorded [`Trace`] against a driver and compares accesses.
++pub struct Replayer {
++    trace: Vec<Event>,
++    next: usize,
++    mode: Compare,
++    matched: usize,
++    mismatches: Vec<Mismatch>,
++    skipped: Vec<Event>,
++    uncompared: usize,
++    failed: bool,
++    read_default: u64,
++}
++
++impl Replayer {
++    /// Replay `trace` under the given compare mode.
++    pub fn new(trace: Trace, mode: Compare) -> Self {
++        Self {
++            trace: trace.events,
++            next: 0,
++            mode,
++            matched: 0,
++            mismatches: Vec::new(),
++            skipped: Vec::new(),
++            uncompared: 0,
++            failed: false,
++            read_default: 0,
++        }
++    }
++
++    /// [`Compare::Strict`] replay.
++    pub fn strict(trace: Trace) -> Self {
++        Self::new(trace, Compare::Strict)
++    }
++
++    /// [`Compare::Lenient`] replay.
++    pub fn lenient(trace: Trace) -> Self {
++        Self::new(trace, Compare::Lenient)
++    }
++
++    /// Value returned for reads that have no recorded counterpart (default 0).
++    pub fn with_read_default(mut self, value: u64) -> Self {
++        self.read_default = value;
++        self
++    }
++
++    /// Number of recorded events consumed so far.
++    pub fn consumed(&self) -> usize {
++        self.next
++    }
++
++    /// Number of recorded events not yet consumed.
++    pub fn remaining(&self) -> usize {
++        self.trace.len() - self.next
++    }
++
++    /// Whether the replay has already failed (strict mode stops comparing).
++    pub fn failed(&self) -> bool {
++        self.failed
++    }
++
++    /// End the run and produce the report.
++    pub fn finish(&mut self) -> ReplayReport {
++        ReplayReport {
++            mode: self.mode,
++            matched: self.matched,
++            mismatches: core::mem::take(&mut self.mismatches),
++            skipped: core::mem::take(&mut self.skipped),
++            unconsumed: self.trace[self.next..].to_vec(),
++            uncompared: core::mem::replace(&mut self.uncompared, 0),
++        }
++    }
++
++    fn check(&mut self, op: Op, width: Width, addr: u64, value: u64) -> Option<u64> {
++        let value = value & width.mask();
++        if self.failed {
++            self.uncompared += 1;
++            return (op == Op::Read).then_some(self.read_default);
++        }
++        let got = ObservedAccess {
++            op,
++            width,
++            addr,
++            value,
++        };
++
++        // Fast path: the next recorded event.
++        if let Some(e) = self.trace.get(self.next) {
++            if e.op == op && e.width == width && e.addr == addr {
++                if op == Op::Write && value != e.value {
++                    self.mismatches.push(Mismatch {
++                        index: Some(self.next),
++                        expected: Some(*e),
++                        got,
++                        kind: MismatchKind::WriteValue,
++                    });
++                    if self.mode == Compare::Strict {
++                        self.failed = true;
++                        return None;
++                    }
++                }
++                self.matched += 1;
++                self.next += 1;
++                return (op == Op::Read).then_some(e.value);
++            }
++        }
++
++        if self.mode == Compare::Lenient {
++            // Look ahead: the driver may be skipping recorded events.
++            if let Some(j) = (self.next..self.trace.len()).find(|&j| {
++                self.trace[j].op == op && self.trace[j].width == width && self.trace[j].addr == addr
++            }) {
++                self.skipped
++                    .extend(self.trace[self.next..j].iter().copied());
++                let e = self.trace[j];
++                if op == Op::Write && value != e.value {
++                    self.mismatches.push(Mismatch {
++                        index: Some(j),
++                        expected: Some(e),
++                        got,
++                        kind: MismatchKind::WriteValue,
++                    });
++                }
++                self.matched += 1;
++                self.next = j + 1;
++                return (op == Op::Read).then_some(e.value);
++            }
++        }
++
++        // No counterpart anywhere (lenient) or not the next event (strict).
++        let expected = self.trace.get(self.next).copied();
++        self.mismatches.push(Mismatch {
++            index: Some(self.next),
++            expected,
++            got,
++            kind: MismatchKind::Structure,
++        });
++        if self.mode == Compare::Strict {
++            self.failed = true;
++        }
++        (op == Op::Read).then_some(self.read_default)
++    }
++}
++
++impl Mmio for Replayer {
++    fn read(&mut self, addr: u64, width: Width) -> u64 {
++        self.check(Op::Read, width, addr, 0)
++            .unwrap_or(self.read_default)
++    }
++
++    fn write(&mut self, addr: u64, width: Width, value: u64) {
++        self.check(Op::Write, width, addr, value);
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn trace_of(spec: &[(&str, u64, u64)]) -> Trace {
++        let mut t = Trace::new();
++        for (line, addr, value) in spec {
++            let (op, width) = line.split_once('@').unwrap();
++            let width = Width::from_bits(width.parse().unwrap()).unwrap();
++            let e = if op == "w" {
++                Event::write(*addr, width, *value)
++            } else {
++                Event::read(*addr, width, *value)
++            };
++            t.push(e);
++        }
++        t
++    }
++
++    #[test]
++    fn strict_exact_pass() {
++        let t = trace_of(&[
++            ("w@32", 0x10, 1),
++            ("r@32", 0x18, 0x4000_0000),
++            ("w@32", 0x10, 0),
++        ]);
++        let mut rep = Replayer::strict(t.clone());
++        rep.write_u32(0x10, 1);
++        assert_eq!(
++            rep.read_u32(0x18),
++            0x4000_0000,
++            "reads return recorded values"
++        );
++        rep.write_u32(0x10, 0);
++        let report = rep.finish();
++        assert!(report.ok(), "{report}");
++        assert_eq!(report.matched, 3);
++        assert_eq!(rep.remaining(), 0);
++    }
++
++    #[test]
++    fn strict_write_value_mismatch_fails_at_right_index() {
++        let t = trace_of(&[("w@32", 0x10, 1), ("w@32", 0x14, 7)]);
++        let mut rep = Replayer::strict(t);
++        rep.write_u32(0x10, 1);
++        rep.write_u32(0x14, 8); // wrong value
++        assert!(rep.failed());
++        let r = rep.finish();
++        assert!(!r.ok());
++        assert_eq!(r.mismatches.len(), 1);
++        assert_eq!(r.mismatches[0].kind, MismatchKind::WriteValue);
++        assert_eq!(r.mismatches[0].index, Some(1));
++        assert_eq!(r.mismatches[0].expected.unwrap().value, 7);
++        assert_eq!(r.mismatches[0].got.value, 8);
++    }
++
++    #[test]
++    fn strict_structure_mismatch_stops_comparing() {
++        let t = trace_of(&[("w@32", 0x10, 1), ("w@32", 0x14, 7)]);
++        let mut rep = Replayer::strict(t);
++        rep.write_u32(0x99, 1); // wrong register
++        rep.write_u32(0x10, 1); // would have matched, but strict already failed
++        let r = rep.finish();
++        assert!(!r.ok());
++        assert_eq!(r.mismatches.len(), 1);
++        assert_eq!(r.mismatches[0].kind, MismatchKind::Structure);
++        assert_eq!(r.uncompared, 1);
++        assert_eq!(r.unconsumed.len(), 2);
++    }
++
++    #[test]
++    fn strict_access_past_end_of_trace() {
++        let t = trace_of(&[("w@32", 0x10, 1)]);
++        let mut rep = Replayer::strict(t);
++        rep.write_u32(0x10, 1);
++        rep.write_u32(0x10, 1); // extra
++        let r = rep.finish();
++        assert!(!r.ok());
++        assert_eq!(r.mismatches[0].kind, MismatchKind::Structure);
++        assert_eq!(r.mismatches[0].index, Some(1));
++        assert_eq!(r.mismatches[0].expected, None);
++    }
++
++    #[test]
++    fn strict_driver_doing_fewer_accesses_fails() {
++        let t = trace_of(&[("w@32", 0x10, 1), ("w@32", 0x14, 7)]);
++        let mut rep = Replayer::strict(t);
++        rep.write_u32(0x10, 1);
++        let r = rep.finish();
++        assert!(!r.ok());
++        assert_eq!(r.unconsumed.len(), 1);
++    }
++
++    #[test]
++    fn lenient_tolerates_write_value_differences() {
++        let t = trace_of(&[("w@32", 0x10, 1), ("w@32", 0x14, 7)]);
++        let mut rep = Replayer::lenient(t);
++        rep.write_u32(0x10, 2);
++        rep.write_u32(0x14, 9);
++        let r = rep.finish();
++        assert!(r.ok(), "{r}");
++        assert_eq!(r.matched, 2);
++        assert_eq!(r.mismatches.len(), 2);
++        assert!(r
++            .mismatches
++            .iter()
++            .all(|m| m.kind == MismatchKind::WriteValue));
++        assert_eq!(r.warnings(), 2);
++    }
++
++    #[test]
++    fn lenient_tolerates_skipped_recorded_events() {
++        // Recording polled twice; driver polls once.
++        let t = trace_of(&[
++            ("r@32", 0x18, 0x1),
++            ("r@32", 0x18, 0x1),
++            ("w@32", 0x1c, 0x1),
++        ]);
++        let mut rep = Replayer::lenient(t);
++        assert_eq!(rep.read_u32(0x18), 0x1);
++        rep.write_u32(0x1c, 0x1); // lookahead over the second poll
++        let r = rep.finish();
++        assert!(r.ok(), "{r}");
++        assert_eq!(r.skipped.len(), 1);
++        assert_eq!(r.matched, 2);
++    }
++
++    #[test]
++    fn lenient_fails_on_unknown_register() {
++        let t = trace_of(&[("w@32", 0x10, 1)]);
++        let mut rep = Replayer::lenient(t);
++        rep.write_u32(0x20, 1); // not in the trace at all
++        let r = rep.finish();
++        assert!(!r.ok());
++        assert_eq!(r.mismatches[0].kind, MismatchKind::Structure);
++    }
++
++    #[test]
++    fn lenient_fails_on_wrong_direction() {
++        let t = trace_of(&[("w@32", 0x10, 1)]);
++        let mut rep = Replayer::lenient(t);
++        assert_eq!(rep.read_u32(0x10), 0); // reading a write-only slot
++        let r = rep.finish();
++        assert!(!r.ok());
++        assert_eq!(r.mismatches[0].kind, MismatchKind::Structure);
++        assert_eq!(r.unconsumed.len(), 1);
++    }
++
++    #[test]
++    fn lenient_fails_on_wrong_width() {
++        let t = trace_of(&[("w@32", 0x10, 1)]);
++        let mut rep = Replayer::lenient(t);
++        rep.write_u16(0x10, 1);
++        let r = rep.finish();
++        assert!(!r.ok());
++        assert_eq!(r.mismatches[0].kind, MismatchKind::Structure);
++    }
++
++    #[test]
++    fn read_default_used_for_unmatched_reads() {
++        let t = trace_of(&[("w@32", 0x10, 1)]);
++        let mut rep = Replayer::lenient(t).with_read_default(0xdead_beef);
++        assert_eq!(rep.read_u32(0x99), 0xdead_beef);
++    }
++
++    #[test]
++    fn display_report_is_informative() {
++        let t = trace_of(&[("w@32", 0x10, 1)]);
++        let mut rep = Replayer::strict(t);
++        rep.write_u32(0x20, 5);
++        let text = alloc::format!("{}", rep.finish());
++        assert!(text.contains("FAIL"));
++        assert!(text.contains("Structure"));
++        assert!(text.contains("0x20"));
++    }
++}
+diff --git a/drivers/mmio-replay/src/trace.rs b/drivers/mmio-replay/src/trace.rs
+new file mode 100644
+index 00000000..e31ade85
+--- /dev/null
++++ b/drivers/mmio-replay/src/trace.rs
+@@ -0,0 +1,455 @@
++//! Trace events and the JSONL codec.
++//!
++//! One flat JSON object per line — the format the oracle recorder on the
++//! phone emits and every host test consumes:
++//!
++//! ```text
++//! {"op":"w","width":32,"addr":"0xa84010","value":"0x2","delay_us":0}
++//! ```
++//!
++//! Keys: `op` (`"r"`/`"w"`, also `"read"`/`"write"`), `width` (8/16/32/64),
++//! `addr`, `value`, `delay_us` (optional, time since the previous event).
++//! `addr`/`value` are written as hex strings but decimal numbers are also
++//! accepted when parsing. Unknown keys are ignored so oracle captures can
++//! carry extra fields; missing required keys or malformed JSON are errors
++//! with the offending 1-based line number.
++
++use alloc::format;
++use alloc::string::String;
++use alloc::vec::Vec;
++
++use crate::mmio::{Op, Width};
++
++/// One recorded MMIO transaction.
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub struct Event {
++    /// Read or write.
++    pub op: Op,
++    /// Access width.
++    pub width: Width,
++    /// Physical address of the access.
++    pub addr: u64,
++    /// For a write: the value written. For a read: the value the hardware
++    /// returned (the replayer feeds this back to the driver).
++    pub value: u64,
++    /// Microseconds between the previous event and this one (0 if unknown).
++    pub delay_us: u64,
++}
++
++impl Event {
++    /// A read event.
++    pub fn read(addr: u64, width: Width, value: u64) -> Self {
++        Self {
++            op: Op::Read,
++            width,
++            addr,
++            value,
++            delay_us: 0,
++        }
++    }
++
++    /// A write event.
++    pub fn write(addr: u64, width: Width, value: u64) -> Self {
++        Self {
++            op: Op::Write,
++            width,
++            addr,
++            value,
++            delay_us: 0,
++        }
++    }
++
++    /// Builder-style setter for [`Event::delay_us`].
++    pub fn with_delay_us(mut self, delay_us: u64) -> Self {
++        self.delay_us = delay_us;
++        self
++    }
++
++    /// Render as one JSONL line (no trailing newline).
++    pub fn to_json_line(&self) -> String {
++        format!(
++            "{{\"op\":\"{}\",\"width\":{},\"addr\":\"{:#x}\",\"value\":\"{:#x}\",\"delay_us\":{}}}",
++            if self.op == Op::Read { "r" } else { "w" },
++            self.width.bits(),
++            self.addr,
++            self.value & self.width.mask(),
++            self.delay_us,
++        )
++    }
++
++    /// Parse one JSONL line into an [`Event`].
++    pub fn from_json_line(line: &str) -> Result<Event, String> {
++        let mut p = Parser::new(line);
++        p.parse_event()
++    }
++}
++
++/// A register trace: MMIO transactions in the order they happened.
++#[derive(Clone, PartialEq, Eq, Debug, Default)]
++pub struct Trace {
++    /// Events in occurrence order.
++    pub events: Vec<Event>,
++}
++
++impl Trace {
++    /// An empty trace.
++    pub fn new() -> Self {
++        Self::default()
++    }
++
++    /// Append an event.
++    pub fn push(&mut self, event: Event) {
++        self.events.push(event);
++    }
++
++    /// Number of recorded transactions.
++    pub fn len(&self) -> usize {
++        self.events.len()
++    }
++
++    /// Whether the trace is empty.
++    pub fn is_empty(&self) -> bool {
++        self.events.is_empty()
++    }
++
++    /// Sum of all recorded inter-event delays, for power/timing budget tests.
++    pub fn total_delay_us(&self) -> u64 {
++        self.events.iter().map(|e| e.delay_us).sum()
++    }
++
++    /// Render as JSONL: one line per event, newline-terminated.
++    pub fn to_jsonl(&self) -> String {
++        let mut out = String::new();
++        for e in &self.events {
++            out.push_str(&e.to_json_line());
++            out.push('\n');
++        }
++        out
++    }
++
++    /// Parse JSONL (blank lines skipped). Errors carry the 1-based line.
++    pub fn from_jsonl(text: &str) -> Result<Trace, ParseError> {
++        let mut trace = Trace::new();
++        for (i, line) in text.lines().enumerate() {
++            if line.trim().is_empty() {
++                continue;
++            }
++            let event = Event::from_json_line(line).map_err(|m| ParseError {
++                line: i + 1,
++                message: m,
++            })?;
++            trace.events.push(event);
++        }
++        Ok(trace)
++    }
++}
++
++/// A JSONL parse failure with the 1-based line number.
++#[derive(Clone, PartialEq, Eq, Debug)]
++pub struct ParseError {
++    /// 1-based line number of the offending line.
++    pub line: usize,
++    /// What went wrong.
++    pub message: String,
++}
++
++impl core::fmt::Display for ParseError {
++    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
++        write!(f, "line {}: {}", self.line, self.message)
++    }
++}
++
++enum Scalar {
++    Str(String),
++    Num(u64),
++}
++
++struct Parser<'a> {
++    b: &'a [u8],
++    pos: usize,
++}
++
++impl<'a> Parser<'a> {
++    fn new(s: &'a str) -> Self {
++        Self {
++            b: s.as_bytes(),
++            pos: 0,
++        }
++    }
++
++    fn err<T>(msg: &str) -> Result<T, String> {
++        Err(String::from(msg))
++    }
++
++    fn skip_ws(&mut self) {
++        while self.pos < self.b.len() && (self.b[self.pos] as char).is_ascii_whitespace() {
++            self.pos += 1;
++        }
++    }
++
++    fn peek(&mut self) -> Option<u8> {
++        self.skip_ws();
++        self.b.get(self.pos).copied()
++    }
++
++    fn expect(&mut self, c: u8) -> Result<(), String> {
++        if self.peek() != Some(c) {
++            Self::err(&format!(
++                "expected '{}', found {:?}",
++                c as char,
++                self.peek()
++            ))
++        } else {
++            self.pos += 1;
++            Ok(())
++        }
++    }
++
++    fn parse_string(&mut self) -> Result<String, String> {
++        self.expect(b'"')?;
++        let mut out = String::new();
++        loop {
++            let c = match self.b.get(self.pos) {
++                Some(c) => *c,
++                None => return Self::err("unterminated string"),
++            };
++            self.pos += 1;
++            match c {
++                b'"' => return Ok(out),
++                b'\\' => {
++                    let e = match self.b.get(self.pos) {
++                        Some(e) => *e,
++                        None => return Self::err("unterminated escape"),
++                    };
++                    self.pos += 1;
++                    match e {
++                        b'"' => out.push('"'),
++                        b'\\' => out.push('\\'),
++                        b'/' => out.push('/'),
++                        b'n' => out.push('\n'),
++                        b't' => out.push('\t'),
++                        _ => return Self::err("unsupported string escape"),
++                    }
++                }
++                _ => out.push(c as char),
++            }
++        }
++    }
++
++    fn parse_scalar(&mut self) -> Result<Scalar, String> {
++        match self.peek() {
++            Some(b'"') => Ok(Scalar::Str(self.parse_string()?)),
++            Some(c) if c.is_ascii_digit() => {
++                let start = self.pos;
++                while self.pos < self.b.len() && self.b[self.pos].is_ascii_digit() {
++                    self.pos += 1;
++                }
++                let text =
++                    core::str::from_utf8(&self.b[start..self.pos]).map_err(|_| "non-utf8")?;
++                text.parse::<u64>()
++                    .map(Scalar::Num)
++                    .map_err(|_| format!("number out of range: {text}"))
++            }
++            _ => Self::err("expected a string or number value"),
++        }
++    }
++
++    fn parse_uint(&mut self) -> Result<u64, String> {
++        match self.parse_scalar()? {
++            Scalar::Num(n) => Ok(n),
++            Scalar::Str(s) => parse_u64_text(&s),
++        }
++    }
++
++    fn parse_event(&mut self) -> Result<Event, String> {
++        self.expect(b'{')?;
++        let mut op: Option<Op> = None;
++        let mut width: Option<Width> = None;
++        let mut addr: Option<u64> = None;
++        let mut value: Option<u64> = None;
++        let mut delay_us: Option<u64> = None;
++
++        if self.peek() == Some(b'}') {
++            self.pos += 1;
++            return Self::err("empty object");
++        }
++
++        loop {
++            let key = self.parse_string()?;
++            self.expect(b':')?;
++            match key.as_str() {
++                "op" => {
++                    let s = match self.parse_scalar()? {
++                        Scalar::Str(s) => s,
++                        Scalar::Num(_) => return Self::err("op must be \"r\" or \"w\""),
++                    };
++                    op = Some(match s.as_str() {
++                        "r" | "read" => Op::Read,
++                        "w" | "write" => Op::Write,
++                        other => return Self::err(&format!("unknown op {other:?}")),
++                    });
++                }
++                "width" => {
++                    let bits = self.parse_uint()?;
++                    width = Some(match Width::from_bits(bits as u32) {
++                        Some(w) if bits <= 64 => w,
++                        _ => return Self::err("width must be 8, 16, 32 or 64"),
++                    });
++                }
++                "addr" => addr = Some(self.parse_uint()?),
++                "value" => value = Some(self.parse_uint()?),
++                "delay_us" => delay_us = Some(self.parse_uint()?),
++                _ => {
++                    // Unknown keys are tolerated (oracle captures may carry
++                    // extra fields) but the value must still be valid JSON.
++                    self.parse_scalar()?;
++                }
++            }
++            match self.peek() {
++                Some(b',') => self.pos += 1,
++                Some(b'}') => {
++                    self.pos += 1;
++                    break;
++                }
++                _ => return Self::err("expected ',' or '}'"),
++            }
++        }
++        // Trailing content after the object is a parse error.
++        if self.peek().is_some() {
++            return Self::err("trailing characters after object");
++        }
++
++        let event = Event {
++            op: op.ok_or("missing key \"op\"")?,
++            width: width.ok_or("missing key \"width\"")?,
++            addr: addr.ok_or("missing key \"addr\"")?,
++            value: value.ok_or("missing key \"value\"")?,
++            delay_us: delay_us.unwrap_or(0),
++        };
++        Ok(event)
++    }
++}
++
++/// Parse a decimal or `0x`-hex unsigned integer from text.
++fn parse_u64_text(s: &str) -> Result<u64, String> {
++    let t = s.trim();
++    if t.is_empty() {
++        return Err(String::from("empty number"));
++    }
++    let (digits, radix) = if let Some(rest) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X"))
++    {
++        (rest, 16)
++    } else {
++        (t, 10)
++    };
++    if digits.is_empty() {
++        return Err(format!("no digits in {s:?}"));
++    }
++    u64::from_str_radix(digits, radix).map_err(|_| format!("invalid number {s:?}"))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn ev() -> Event {
++        Event::write(0xa84010, Width::W32, 2).with_delay_us(12)
++    }
++
++    #[test]
++    fn line_roundtrip() {
++        let e = ev();
++        let line = e.to_json_line();
++        assert_eq!(
++            line,
++            r#"{"op":"w","width":32,"addr":"0xa84010","value":"0x2","delay_us":12}"#
++        );
++        assert_eq!(Event::from_json_line(&line).unwrap(), e);
++    }
++
++    #[test]
++    fn trace_roundtrip_with_blank_lines() {
++        let mut t = Trace::new();
++        t.push(ev());
++        t.push(Event::read(0xa84018, Width::W32, 0x4000_0000).with_delay_us(3));
++        let jsonl = t.to_jsonl();
++        let parsed = Trace::from_jsonl(&format!("\n{jsonl}\n")).unwrap();
++        assert_eq!(parsed, t);
++        assert_eq!(parsed.total_delay_us(), 15);
++    }
++
++    #[test]
++    fn accepts_decimal_and_long_op_spellings() {
++        let e = Event::from_json_line(
++            r#"{"op":"read","width":16,"addr":43087,"value":258,"delay_us":1}"#,
++        )
++        .unwrap();
++        assert_eq!(e, Event::read(0xa84f, Width::W16, 0x102).with_delay_us(1));
++    }
++
++    #[test]
++    fn delay_us_is_optional() {
++        let e =
++            Event::from_json_line(r#"{"op":"w","width":8,"addr":"0x10","value":"0xff"}"#).unwrap();
++        assert_eq!(e.delay_us, 0);
++    }
++
++    #[test]
++    fn unknown_keys_ignored() {
++        let e = Event::from_json_line(
++            r#"{"op":"w","width":32,"addr":"0x10","value":"0x1","device":"geni9","seq":7}"#,
++        )
++        .unwrap();
++        assert_eq!(e.addr, 0x10);
++    }
++
++    #[test]
++    fn write_value_masked_on_output() {
++        let e = Event::write(0x10, Width::W8, 0x1ff);
++        assert!(e.to_json_line().contains("\"value\":\"0xff\""));
++    }
++
++    #[test]
++    fn parse_errors_name_the_problem() {
++        assert_eq!(
++            Event::from_json_line(r#"{"width":32,"addr":"0x10","value":"0x1"}"#).unwrap_err(),
++            "missing key \"op\""
++        );
++        assert_eq!(
++            Event::from_json_line(r#"{"op":"x","width":32,"addr":"0x10","value":"0x1"}"#)
++                .unwrap_err(),
++            "unknown op \"x\""
++        );
++        assert_eq!(
++            Event::from_json_line(r#"{"op":"w","width":12,"addr":"0x10","value":"0x1"}"#)
++                .unwrap_err(),
++            "width must be 8, 16, 32 or 64"
++        );
++        assert!(Event::from_json_line("{").is_err());
++        assert!(Event::from_json_line(
++            r#"{"op":"w","width":32,"addr":"0x10","value":"0x1" extra}"#
++        )
++        .is_err());
++        assert!(Event::from_json_line(r#"{"op":"w","width":32,"addr":"zz","value":1}"#).is_err());
++        assert!(Event::from_json_line(r#"{"op":"w","width":32,"addr":1.5,"value":1}"#).is_err());
++    }
++
++    #[test]
++    fn jsonl_errors_carry_line_numbers() {
++        let text = "not json\n{\"op\":\"w\",\"width\":32,\"addr\":\"0x10\",\"value\":\"0x1\"}\n{\"op\":\"w\"}\n";
++        let err = Trace::from_jsonl(text).unwrap_err();
++        assert_eq!(err.line, 1);
++        assert_eq!(Trace::from_jsonl("not json\n\n\n").unwrap_err().line, 1);
++        // First two lines fine, third bad:
++        let text2 = "{\"op\":\"w\",\"width\":32,\"addr\":\"0x10\",\"value\":\"0x1\"}\n\n{\"op\":\"q\",\"width\":32,\"addr\":\"0x10\",\"value\":\"0x1\"}\n";
++        assert_eq!(Trace::from_jsonl(text2).unwrap_err().line, 3);
++    }
++
++    #[test]
++    fn number_overflow_rejected() {
++        assert!(Event::from_json_line(
++            r#"{"op":"w","width":32,"addr":99999999999999999999,"value":1}"#
++        )
++        .is_err());
++    }
++}
+diff --git a/drivers/spmid-core/Cargo.toml b/drivers/spmid-core/Cargo.toml
+new file mode 100644
+index 00000000..3a64ab57
+--- /dev/null
++++ b/drivers/spmid-core/Cargo.toml
+@@ -0,0 +1,8 @@
++[package]
++name = "spmid-core"
++version = "0.1.0"
++edition = "2021"
++license = "MIT"
++
++[dependencies]
++mmio-replay = { path = "../mmio-replay" }
+diff --git a/drivers/spmid-core/src/lib.rs b/drivers/spmid-core/src/lib.rs
+new file mode 100644
+index 00000000..3bbda2ea
+--- /dev/null
++++ b/drivers/spmid-core/src/lib.rs
+@@ -0,0 +1,153 @@
++//! Read-only SDM845 SPMI arbiter v5 and PM8998 button sampling.
++use mmio_replay::Mmio;
++
++const VALID_VERSION_MIN: u32 = 0x5000_0000;
++const VALID_VERSION_MAX: u32 = 0x7000_0000;
++const DONE: u32 = 1;
++const MAX_CHANNELS: usize = 512;
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Error {
++    UnsupportedVersion(u32),
++    BadChannel,
++    Timeout,
++    BadStatus(u32),
++}
++
++#[derive(Debug, Clone, Copy)]
++pub struct Windows {
++    pub core: u64,
++    pub observer: u64,
++    pub config: u64,
++    pub owner: u8,
++}
++
++pub struct Arbiter<M: Mmio> {
++    io: M,
++    windows: Windows,
++    channels: [[Option<u16>; 256]; 16],
++}
++
++impl<M: Mmio> Arbiter<M> {
++    pub fn new(mut io: M, windows: Windows) -> Result<Self, Error> {
++        let version = io.read_u32(windows.core);
++        if !(VALID_VERSION_MIN..VALID_VERSION_MAX).contains(&version) {
++            return Err(Error::UnsupportedVersion(version));
++        }
++        let count = ((io.read_u32(windows.core + 4) & 0x7ff) as usize).min(MAX_CHANNELS);
++        let mut channels = [[None; 256]; 16];
++        for apid in 0..count {
++            let entry = io.read_u32(windows.core + 0x900 + 4 * apid as u64);
++            let sid = ((entry >> 16) & 0xf) as usize;
++            let pid = ((entry >> 8) & 0xff) as usize;
++            let owner = (io.read_u32(windows.config + 4 * apid as u64) & 7) as u8;
++            // Prefer an APID owned by our EE, but observer reads work on either.
++            if channels[sid][pid].is_none() || owner == windows.owner {
++                channels[sid][pid] = Some(apid as u16);
++            }
++        }
++        Ok(Self {
++            io,
++            windows,
++            channels,
++        })
++    }
++
++    pub fn read_byte(&mut self, sid: u8, addr: u16) -> Result<u8, Error> {
++        let channel = self
++            .channels
++            .get(sid as usize)
++            .and_then(|pids| pids[(addr >> 8) as usize])
++            .ok_or(Error::BadChannel)?;
++        let base = self.windows.observer + u64::from(channel) * 0x80;
++        self.io.write_u32(base + 4, 0);
++        self.io
++            .write_u32(base, (1 << 27) | (u32::from(addr & 0xff) << 4) | 1);
++        for _ in 0..1024 {
++            let status = self.io.read_u32(base + 8);
++            if status & DONE != 0 {
++                if status != DONE {
++                    return Err(Error::BadStatus(status));
++                }
++                return Ok(self.io.read_u32(base + 0x18) as u8);
++            }
++        }
++        Err(Error::Timeout)
++    }
++
++    pub fn into_io(self) -> M {
++        self.io
++    }
++
++    pub fn pmic_type(&mut self) -> Result<u8, Error> {
++        self.read_byte(0, 0x104)
++    }
++    pub fn sample(&mut self) -> Result<Levels, Error> {
++        Ok(Levels {
++            power: self.read_byte(0, 0x810)? & 0x80 != 0,
++            volume_down: self.read_byte(0, 0xc410)? & 1 == 0,
++            volume_up: self.read_byte(0, 0xc510)? & 1 == 0,
++        })
++    }
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct Levels {
++    pub power: bool,
++    pub volume_down: bool,
++    pub volume_up: bool,
++}
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Button {
++    Power,
++    VolumeDown,
++    VolumeUp,
++}
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct Edge {
++    pub button: Button,
++    pub pressed: bool,
++}
++
++/// Initial sample establishes a baseline; no phantom press is emitted.
++pub struct Buttons {
++    previous: Option<Levels>,
++    power_confirmed: bool,
++}
++impl Buttons {
++    pub fn new(power_confirmed: bool) -> Self {
++        Self {
++            previous: None,
++            power_confirmed,
++        }
++    }
++    pub fn update(&mut self, levels: Levels) -> Vec<Edge> {
++        let mut edges = Vec::new();
++        if let Some(previous) = self.previous {
++            for (button, old, new, enabled) in [
++                (
++                    Button::Power,
++                    previous.power,
++                    levels.power,
++                    self.power_confirmed,
++                ),
++                (
++                    Button::VolumeDown,
++                    previous.volume_down,
++                    levels.volume_down,
++                    true,
++                ),
++                (Button::VolumeUp, previous.volume_up, levels.volume_up, true),
++            ] {
++                if enabled && old != new {
++                    edges.push(Edge {
++                        button,
++                        pressed: new,
++                    });
++                }
++            }
++        }
++        self.previous = Some(levels);
++        edges
++    }
++}
+diff --git a/drivers/spmid-core/tests/arbiter.rs b/drivers/spmid-core/tests/arbiter.rs
+new file mode 100644
+index 00000000..e98ebb08
+--- /dev/null
++++ b/drivers/spmid-core/tests/arbiter.rs
+@@ -0,0 +1,159 @@
++use mmio_replay::{Event, Replayer, Trace, Width};
++use spmid_core::{Arbiter, Button, Buttons, Edge, Error, Levels, Windows};
++
++const CORE: u64 = 0x0c44_0000;
++const OBS: u64 = 0x0e60_0000;
++const CFG: u64 = 0x0c40_a000;
++fn win() -> Windows {
++    Windows {
++        core: CORE,
++        observer: OBS,
++        config: CFG,
++        owner: 0,
++    }
++}
++fn r(t: &mut Trace, addr: u64, value: u32) {
++    t.push(Event::read(addr, Width::W32, value as u64));
++}
++fn w(t: &mut Trace, addr: u64, value: u32) {
++    t.push(Event::write(addr, Width::W32, value as u64));
++}
++fn setup(entries: &[(u8, u8)]) -> Trace {
++    let mut t = Trace::new();
++    r(&mut t, CORE, 0x5000_0000);
++    r(&mut t, CORE + 4, entries.len() as u32);
++    for (i, (sid, pid)) in entries.iter().enumerate() {
++        r(
++            &mut t,
++            CORE + 0x900 + (i * 4) as u64,
++            ((*sid as u32) << 16) | ((*pid as u32) << 8),
++        );
++        r(&mut t, CFG + (i * 4) as u64, 0);
++    }
++    t
++}
++fn read(t: &mut Trace, channel: u64, offset: u8, value: u8) {
++    let base = OBS + 0x80 * channel;
++    w(t, base + 4, 0);
++    w(t, base, (1 << 27) | ((offset as u32) << 4) | 1);
++    r(t, base + 8, 1);
++    r(t, base + 0x18, value as u32);
++}
++#[test]
++fn replay_revision_and_three_buttons() {
++    let mut t = setup(&[(0, 1), (0, 8), (0, 0xc4), (0, 0xc5)]);
++    read(&mut t, 0, 4, 0x51);
++    read(&mut t, 1, 0x10, 0x80);
++    read(&mut t, 2, 0x10, 0);
++    read(&mut t, 3, 0x10, 1);
++    let mut arb = Arbiter::new(Replayer::strict(t), win()).unwrap();
++    assert_eq!(arb.pmic_type(), Ok(0x51));
++    assert_eq!(
++        arb.sample(),
++        Ok(Levels {
++            power: true,
++            volume_down: true,
++            volume_up: false
++        })
++    );
++    assert!(arb.into_io().finish().ok());
++}
++#[test]
++fn missing_channel_fails_without_bus_access() {
++    let t = setup(&[(0, 8)]);
++    let mut arb = Arbiter::new(Replayer::strict(t), win()).unwrap();
++    assert_eq!(arb.read_byte(0, 0xc410), Err(Error::BadChannel));
++    assert!(arb.into_io().finish().ok());
++}
++#[test]
++fn timeout_is_bounded() {
++    let mut t = setup(&[(0, 8)]);
++    w(&mut t, OBS + 4, 0);
++    w(&mut t, OBS, (1 << 27) | (0x10 << 4) | 1);
++    for _ in 0..1024 {
++        r(&mut t, OBS + 8, 0);
++    }
++    let mut arb = Arbiter::new(Replayer::strict(t), win()).unwrap();
++    assert_eq!(arb.read_byte(0, 0x810), Err(Error::Timeout));
++    assert!(arb.into_io().finish().ok());
++}
++#[test]
++fn bad_status_is_rejected() {
++    let mut t = setup(&[(0, 8)]);
++    w(&mut t, OBS + 4, 0);
++    w(&mut t, OBS, (1 << 27) | (0x10 << 4) | 1);
++    r(&mut t, OBS + 8, 3);
++    let mut arb = Arbiter::new(Replayer::strict(t), win()).unwrap();
++    assert_eq!(arb.read_byte(0, 0x810), Err(Error::BadStatus(3)));
++    assert!(arb.into_io().finish().ok());
++}
++#[test]
++fn unsupported_version_is_rejected() {
++    let mut t = Trace::new();
++    r(&mut t, CORE, 0x3000_0000);
++    let result = Arbiter::new(Replayer::strict(t), win());
++    assert!(matches!(
++        result,
++        Err(Error::UnsupportedVersion(0x3000_0000))
++    ));
++}
++#[test]
++fn edges_have_no_initial_press_and_power_is_gated() {
++    let mut buttons = Buttons::new(false);
++    let released = Levels {
++        power: false,
++        volume_down: false,
++        volume_up: false,
++    };
++    assert!(buttons.update(released).is_empty());
++    assert_eq!(
++        buttons.update(Levels {
++            power: true,
++            volume_down: true,
++            volume_up: false
++        }),
++        vec![Edge {
++            button: Button::VolumeDown,
++            pressed: true
++        }]
++    );
++    assert_eq!(
++        buttons.update(Levels {
++            power: false,
++            volume_down: false,
++            volume_up: false
++        }),
++        vec![Edge {
++            button: Button::VolumeDown,
++            pressed: false
++        }]
++    );
++}
++
++#[test]
++fn confirmed_power_edges_reach_input_model() {
++    let mut buttons = Buttons::new(true);
++    let released = Levels {
++        power: false,
++        volume_down: false,
++        volume_up: false,
++    };
++    assert!(buttons.update(released).is_empty());
++    assert_eq!(
++        buttons.update(Levels {
++            power: true,
++            ..released
++        }),
++        vec![Edge {
++            button: Button::Power,
++            pressed: true
++        }]
++    );
++    assert_eq!(
++        buttons.update(released),
++        vec![Edge {
++            button: Button::Power,
++            pressed: false
++        }]
++    );
++}
+diff --git a/drivers/spmid/Cargo.toml b/drivers/spmid/Cargo.toml
+new file mode 100644
+index 00000000..511ba643
+--- /dev/null
++++ b/drivers/spmid/Cargo.toml
+@@ -0,0 +1,22 @@
++[package]
++name = "spmid"
++version = "0.1.0"
++edition = "2021"
++license = "MIT"
++description = "Read-only SDM845 SPMI PMIC button daemon"
++
++[dependencies]
++mmio-replay = { path = "../mmio-replay" }
++spmid-core = { path = "../spmid-core" }
++
++[features]
++host-compile = []
++
++[dependencies.common]
++path = "../common"
++
++[dependencies.inputd]
++path = "../inputd"
++
++[dependencies.orbclient]
++workspace = true
+diff --git a/drivers/spmid/README.md b/drivers/spmid/README.md
+new file mode 100644
+index 00000000..a6046002
+--- /dev/null
++++ b/drivers/spmid/README.md
+@@ -0,0 +1,7 @@
++# spmid (OnePlus 6 downstream driver)
++
++`spmid` reads SDM845 SPMI arbiter v5 and PM8998 PON/GPIO buttons, then publishes `K_POWER`, `K_VOLUME_DOWN`, and `K_VOLUME_UP` OrbClient key edges to `inputd`'s producer endpoint. It never writes PMIC registers. Its only MMIO writes are the arbiter observer's CONFIG and CMD0 registers for read transactions. Poll interval is 50 ms (20 wakeups/s); no background start unit is installed.
++
++The current profile uses the static `sdm845.dtsi` window addresses and EE 0. Do not start it on a phone until the live DT and PMIC status polarity have been checked against `specs/spmi-pmic-buttons.md` and the phone oracle. The daemon exits on probe, transaction, or inputd errors. A true Redox aarch64 build and device test remain pending because this host does not have `aarch64-unknown-redox` installed.
++
++Host verification: `cargo test -p spmid-core -p spmid --offline` and `cargo check -p spmid --features host-compile --offline`. The `host-compile` feature compiles the Redox code path with the host standard library; it is a compile check only, not a supported Linux runtime.
+diff --git a/drivers/spmid/src/main.rs b/drivers/spmid/src/main.rs
+new file mode 100644
+index 00000000..c7597a18
+--- /dev/null
++++ b/drivers/spmid/src/main.rs
+@@ -0,0 +1,126 @@
++//! Read-only PM8998 button sampler. Manual opt-in until phone oracle validation.
++#[cfg(any(target_os = "redox", feature = "host-compile"))]
++mod redox {
++    use std::error::Error;
++    use std::thread;
++    use std::time::Duration;
++
++    use common::{MemoryType, PhysBorrowed, Prot};
++    use inputd::ProducerHandle;
++    use mmio_replay::{Mmio, Width};
++    use orbclient::{KeyEvent, K_POWER, K_VOLUME_DOWN, K_VOLUME_UP};
++    use spmid_core::{Arbiter, Button, Buttons, Windows};
++
++    const CORE: u64 = 0x0c44_0000;
++    const OBS: u64 = 0x0e60_0000;
++    const CFG: u64 = 0x0c40_a000;
++
++    struct Window {
++        base: u64,
++        len: usize,
++        map: PhysBorrowed,
++    }
++    impl Window {
++        fn new(base: u64, len: usize) -> Result<Self, Box<dyn Error>> {
++            let map = PhysBorrowed::map(
++                base as usize,
++                len,
++                Prot {
++                    read: true,
++                    write: true,
++                },
++                MemoryType::DeviceMemory,
++            )?;
++            Ok(Self { base, len, map })
++        }
++        fn contains(&self, addr: u64) -> bool {
++            addr >= self.base
++                && addr
++                    .checked_add(4)
++                    .is_some_and(|end| end <= self.base + self.len as u64)
++        }
++        fn ptr(&self, addr: u64) -> *mut u32 {
++            assert!(self.contains(addr) && addr % 4 == 0);
++            unsafe { (self.map.as_ptr() as *mut u8).add((addr - self.base) as usize) as *mut u32 }
++        }
++    }
++    struct Hardware {
++        core: Window,
++        observer: Window,
++        config: Window,
++    }
++    impl Hardware {
++        fn new() -> Result<Self, Box<dyn Error>> {
++            Ok(Self {
++                core: Window::new(CORE, 0x1100)?,
++                observer: Window::new(OBS, 0x100000)?,
++                config: Window::new(CFG, 0x26000)?,
++            })
++        }
++        fn window(&self, addr: u64) -> &Window {
++            [&self.core, &self.observer, &self.config]
++                .into_iter()
++                .find(|w| w.contains(addr))
++                .expect("SPMI MMIO outside mapped DT windows")
++        }
++    }
++    impl Mmio for Hardware {
++        fn read(&mut self, addr: u64, width: Width) -> u64 {
++            assert_eq!(width, Width::W32);
++            unsafe { self.window(addr).ptr(addr).read_volatile() as u64 }
++        }
++        fn write(&mut self, addr: u64, width: Width, value: u64) {
++            assert_eq!(width, Width::W32);
++            unsafe { self.window(addr).ptr(addr).write_volatile(value as u32) }
++        }
++    }
++    pub fn run() -> Result<(), Box<dyn Error>> {
++        let hardware = Hardware::new()?;
++        let mut arb = Arbiter::new(
++            hardware,
++            Windows {
++                core: CORE,
++                observer: OBS,
++                config: CFG,
++                owner: 0,
++            },
++        )
++        .map_err(|e| format!("SPMI arbiter probe: {e:?}"))?;
++        let pmic_type = arb
++            .pmic_type()
++            .map_err(|e| format!("PMIC revision read: {e:?}"))?;
++        eprintln!("spmid: PMIC type 0x{pmic_type:02x}; power key enabled per OpenBSD qcpon status bit; verify on hardware before autostart");
++        let mut input = ProducerHandle::new()?;
++        let mut buttons = Buttons::new(true);
++        loop {
++            let levels = arb
++                .sample()
++                .map_err(|e| format!("SPMI button read: {e:?}"))?;
++            for edge in buttons.update(levels) {
++                let scancode = match edge.button {
++                    Button::Power => K_POWER,
++                    Button::VolumeDown => K_VOLUME_DOWN,
++                    Button::VolumeUp => K_VOLUME_UP,
++                };
++                input.write_event(
++                    KeyEvent {
++                        character: '\0',
++                        scancode,
++                        pressed: edge.pressed,
++                    }
++                    .to_event(),
++                )?;
++            }
++            thread::sleep(Duration::from_millis(50));
++        }
++    }
++}
++
++#[cfg(any(target_os = "redox", feature = "host-compile"))]
++fn main() -> Result<(), Box<dyn std::error::Error>> {
++    redox::run()
++}
++#[cfg(not(any(target_os = "redox", feature = "host-compile")))]
++fn main() {
++    eprintln!("spmid requires Redox aarch64; use spmid-core tests on the host");
++}
+-- 
+2.43.0
+

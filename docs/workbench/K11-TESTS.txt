@@ -1,0 +1,76 @@
+# K11 dwc3-gadget test evidence — 2026-10-25T00:14:13Z
+# source = branch drivers/usb-gadget after 'dwc3-gadget: split event dispatch' (parent 88e5ee0), rustc 1.99.0 (b940084d7 2026-09-28)
+
+$ cargo test
+
+running 8 tests
+test event::tests::device_events_decode ... ok
+test event::tests::endpoint_events_decode ... ok
+test event::tests::encode_decode_roundtrip ... ok
+test event::tests::non_device_class_events_are_unknown ... ok
+test layout::tests::regions_do_not_overlap ... ok
+test trb::tests::bufsiz_is_24_bits ... ok
+test trb::tests::single_trb_bits ... ok
+test trb::tests::store_load_roundtrip_and_control_last ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 3 tests
+test cdc_acm_line_coding_and_bulk_echo ... ok
+test enumerates_reset_address_descriptors_configuration ... ok
+test cdc_ncm_ntb_parameters_connection_and_frame_echo ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test connect_before_init_is_refused ... ok
+test endpoint_command_status_error_is_reported ... ok
+test disconnect_drops_vbus_and_halts ... ok
+test endpoint_command_timeout_is_bounded ... ok
+test init_connect_golden_trace ... ok
+test rejects_bad_hwparams ... ok
+test rejects_unknown_core_after_one_read ... ok
+test run_stop_halt_timeout_is_reported ... ok
+test soft_reset_timeout_is_bounded ... ok
+test unaligned_dma_touches_nothing ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 15 tests
+test bulk_read_into_short_buffer_overflows ... ok
+test command_failure_while_enabling_is_recorded ... ok
+test bus_reset_disables_user_endpoints_and_aborts_reads ... ok
+test control_data_in_aborted_by_bus_reset ... ok
+test control_out_larger_than_ep0_buffer_stalls ... ok
+test corrupt_event_count_is_reported_and_acked ... ok
+test disabling_endpoint_ends_pending_transfer ... ok
+test disconnect_suspend_and_wakeup_become_bus_events ... ok
+test endpoint_allocation_limits ... ok
+test remote_wakeup_is_unsupported_and_status_before_decision_waits ... ok
+test stalled_in_endpoint_halts_host_until_cleared ... ok
+test stuck_command_at_runtime_is_bounded ... ok
+test superspeed_connect_done_is_refused ... ok
+test write_larger_than_mps_is_refused_before_hardware ... ok
+test unknown_request_stalls_then_next_setup_recovers ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test src/lib.rs - (line 14) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+$ cargo test --release
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+$ cargo clippy --all-targets
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+$ cargo build --lib --target aarch64-unknown-uefi   # no_std aarch64 check
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s

@@ -1,0 +1,292 @@
+{
+  "ir_version": "1.0.0",
+  "id": "svc.demo.water_reminder",
+  "version": "1.0.0",
+  "generation": 1,
+  "content_hash": "blake3:1111111111111111111111111111111111111111111111111111111111111111",
+  "title": "Water Reminder",
+  "description": "Ask the user to drink water on a fixed interval. Every reminder is journaled; nothing is spoken by this host.",
+  "author": {
+    "name": "agentd demo",
+    "provenance": "llm_synthesized"
+  },
+  "execution_mode": "singleton_service",
+  "priority_class": "P4_BACKGROUND_MONITOR",
+  "parameters": [],
+  "triggers": [
+    {
+      "id": "trig_every_hour",
+      "kind": "timer_schedule",
+      "entry_action": "act_count_reminder",
+      "timer_schedule": {
+        "mode": "interval_monotonic",
+        "duration_sec_expr": "$.state.every_sec",
+        "catchup_policy": "drop_missed",
+        "grace_window_sec": 0,
+        "wake_from_suspend": false
+      }
+    },
+    {
+      "id": "trig_stopped",
+      "kind": "lifecycle_stop",
+      "entry_action": "act_mark_stopped"
+    }
+  ],
+  "workflow": [
+    "act_count_reminder"
+  ],
+  "actions": {
+    "act_count_reminder": {
+      "type": "state_mutate",
+      "description": "Count the reminder that is about to be delivered.",
+      "effect_class": "reversible_staged",
+      "read_only": false,
+      "deduplicate_calls": false,
+      "concurrency": "serial",
+      "timeout": {
+        "idle_ms": 50,
+        "total_ms": 100
+      },
+      "state_patch": [
+        {
+          "op": "replace",
+          "path": "/reminders_sent",
+          "value": "{{state.reminders_sent + 1}}"
+        },
+        {
+          "op": "replace",
+          "path": "/status",
+          "value": "armed"
+        }
+      ],
+      "next": [
+        {
+          "target": "act_remind"
+        }
+      ]
+    },
+    "act_remind": {
+      "type": "dialog",
+      "description": "Deliver the reminder. agentd records it as a journal record instead of speaking.",
+      "effect_class": "committed_irreversible",
+      "read_only": true,
+      "deduplicate_calls": false,
+      "concurrency": "serial",
+      "timeout": {
+        "idle_ms": 500,
+        "total_ms": 2000
+      },
+      "dialog": {
+        "speech": "Time to drink some water.",
+        "text": "Water reminder",
+        "priority": "alert"
+      },
+      "idempotency_key_template": "svc.demo.water_reminder:{{execution_id}}:remind"
+    },
+    "act_mark_stopped": {
+      "type": "state_mutate",
+      "description": "Note in state that the reminder was stopped.",
+      "effect_class": "reversible_staged",
+      "read_only": false,
+      "deduplicate_calls": false,
+      "concurrency": "serial",
+      "timeout": {
+        "idle_ms": 50,
+        "total_ms": 100
+      },
+      "state_patch": [
+        {
+          "op": "replace",
+          "path": "/status",
+          "value": "stopped"
+        }
+      ]
+    }
+  },
+  "deps": {
+    "schemes": [
+      {
+        "scheme": "time:monotonic",
+        "access": "event_subscribe",
+        "lifecycle": "demand_per_action"
+      },
+      {
+        "scheme": "audio:wyoming/tts",
+        "access": "write",
+        "lifecycle": "demand_per_action"
+      }
+    ],
+    "wasm_components": [],
+    "sub_services": []
+  },
+  "capabilities": [
+    {
+      "cap_id": "cap_water_sched",
+      "capability": "timer.monotonic.schedule",
+      "scope": {
+        "wake_from_suspend": false
+      },
+      "lifetime": "until_deadline",
+      "max_duration_sec": 86400,
+      "revocable": true,
+      "audit_reason": "Arm one monotonic interval timer per reminder."
+    },
+    {
+      "cap_id": "cap_water_tts",
+      "capability": "audio.playback.tts",
+      "scope": {
+        "channel": "notification"
+      },
+      "lifetime": "per_invocation",
+      "max_duration_sec": 5,
+      "revocable": true,
+      "audit_reason": "Deliver one reminder notice per interval."
+    }
+  ],
+  "state_schema": {
+    "namespace": "state:svc.demo.water_reminder",
+    "durability": "ephemeral_session",
+    "wal_limit_bytes": 65536,
+    "retention_ttl_sec": 86400,
+    "schema": {
+      "type": "object",
+      "required": [
+        "status",
+        "every_sec",
+        "reminders_sent"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "armed",
+            "stopped"
+          ]
+        },
+        "every_sec": {
+          "type": "integer",
+          "minimum": 60
+        },
+        "reminders_sent": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "initial_state": {
+      "status": "armed",
+      "every_sec": 3600,
+      "reminders_sent": 0
+    },
+    "migrations": []
+  },
+  "ui": {
+    "mode": "none"
+  },
+  "power_budget": {
+    "cpu_cluster_preference": "silver_only",
+    "max_cpu_cores": 1,
+    "cpu_quota_pct": 1,
+    "memory_limit_mb": 2,
+    "wasm_fuel_per_invocation": 1000,
+    "max_wakeups_per_minute": 1,
+    "max_wakelock_sec": 0,
+    "network_egress_bytes_max": 0,
+    "allowed_hosts": [],
+    "allowed_ip_name_lookups": [],
+    "allowed_host_loopback_ports": [],
+    "auto_stop_idle_ms": 0,
+    "power_announcement": "Water Reminder: one notice per hour, silver cluster only, zero network bytes."
+  },
+  "tests": [
+    {
+      "name": "two_hours_sends_two_reminders",
+      "description": "The interval fires once per hour and the counter tracks it.",
+      "initial_env": {
+        "monotonic_ms": 0,
+        "wall_iso": "2026-11-02T12:00:00Z",
+        "battery_pct": 80.0,
+        "charging": false,
+        "network_online": false,
+        "location": {
+          "lat": 45.5152,
+          "lon": -122.6784,
+          "tz": "America/Los_Angeles"
+        }
+      },
+      "events": [
+        {
+          "at_monotonic_ms": 3600000,
+          "event_type": "advance_clock",
+          "payload": {}
+        },
+        {
+          "at_monotonic_ms": 7200000,
+          "event_type": "advance_clock",
+          "payload": {}
+        }
+      ],
+      "assertions": {
+        "final_state_subset": {
+          "reminders_sent": 2,
+          "status": "armed"
+        },
+        "expected_bus_emissions": [],
+        "expected_ui_surfaces": [],
+        "budget_assertions": {
+          "max_memory_mb_used": 2.0,
+          "network_bytes_sent": 0,
+          "active_schemes_after_completion": []
+        }
+      }
+    },
+    {
+      "name": "stop_marks_state_and_stops_firing",
+      "description": "A stop signal runs the lifecycle_stop trigger and no reminder follows.",
+      "initial_env": {
+        "monotonic_ms": 0,
+        "wall_iso": "2026-11-02T12:00:00Z",
+        "battery_pct": 80.0,
+        "charging": false,
+        "network_online": false,
+        "location": {
+          "lat": 45.5152,
+          "lon": -122.6784,
+          "tz": "America/Los_Angeles"
+        }
+      },
+      "events": [
+        {
+          "at_monotonic_ms": 3600000,
+          "event_type": "advance_clock",
+          "payload": {}
+        },
+        {
+          "at_monotonic_ms": 3700000,
+          "event_type": "stop_signal",
+          "payload": {
+            "reason": "user said stop"
+          }
+        },
+        {
+          "at_monotonic_ms": 7200000,
+          "event_type": "advance_clock",
+          "payload": {}
+        }
+      ],
+      "assertions": {
+        "final_state_subset": {
+          "reminders_sent": 1,
+          "status": "stopped"
+        },
+        "expected_bus_emissions": [],
+        "expected_ui_surfaces": [],
+        "budget_assertions": {
+          "max_memory_mb_used": 2.0,
+          "network_bytes_sent": 0,
+          "active_schemes_after_completion": []
+        }
+      }
+    }
+  ]
+}

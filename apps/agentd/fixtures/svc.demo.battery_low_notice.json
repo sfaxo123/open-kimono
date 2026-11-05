@@ -1,0 +1,192 @@
+{
+  "ir_version": "1.0.0",
+  "id": "svc.demo.battery_low_notice",
+  "version": "1.0.0",
+  "generation": 1,
+  "content_hash": "blake3:2222222222222222222222222222222222222222222222222222222222222222",
+  "title": "Battery Low Notice",
+  "description": "Notice once per discharge cycle when the phone drops below 20%, re-armed at 25%.",
+  "author": {
+    "name": "agentd demo",
+    "provenance": "llm_synthesized"
+  },
+  "execution_mode": "singleton_service",
+  "priority_class": "P4_BACKGROUND_MONITOR",
+  "parameters": [],
+  "triggers": [
+    {
+      "id": "trig_low",
+      "kind": "sensor_threshold",
+      "entry_action": "act_notice",
+      "condition_cel": "trigger.payload.charging == false",
+      "sensor_threshold": {
+        "scheme_path": "sys:power/battery",
+        "metric": "capacity_pct",
+        "operator": "lt",
+        "threshold": 20.0,
+        "hysteresis_reset": 25.0,
+        "edge_only": true,
+        "poll_or_irq": "spmi_comparator"
+      }
+    }
+  ],
+  "workflow": [
+    "act_notice"
+  ],
+  "actions": {
+    "act_notice": {
+      "type": "dialog",
+      "description": "Tell the user the battery is low. agentd records the notice instead of speaking it.",
+      "effect_class": "committed_irreversible",
+      "idempotency_key_template": "svc.demo.battery_low_notice:{{execution_id}}:notice",
+      "read_only": true,
+      "deduplicate_calls": true,
+      "concurrency": "serial",
+      "timeout": {
+        "idle_ms": 500,
+        "total_ms": 2000
+      },
+      "dialog": {
+        "speech": "The battery is below twenty percent.",
+        "text": "Battery low",
+        "priority": "alert"
+      }
+    }
+  },
+  "deps": {
+    "schemes": [
+      {
+        "scheme": "sys:power/battery",
+        "access": "event_subscribe",
+        "lifecycle": "always_resident_kernel"
+      },
+      {
+        "scheme": "audio:wyoming/tts",
+        "access": "write",
+        "lifecycle": "demand_per_action"
+      }
+    ],
+    "wasm_components": [],
+    "sub_services": []
+  },
+  "capabilities": [
+    {
+      "cap_id": "cap_batt_watch",
+      "capability": "power.battery.read",
+      "scope": {
+        "metric": "capacity_pct",
+        "irq_comparator_only": true
+      },
+      "lifetime": "standing_trigger_watch",
+      "max_duration_sec": 86400,
+      "revocable": true,
+      "audit_reason": "Watch the fuel-gauge SOC comparator at 20% without waking the CPU."
+    },
+    {
+      "cap_id": "cap_batt_tts",
+      "capability": "audio.playback.tts",
+      "scope": {},
+      "lifetime": "per_invocation",
+      "max_duration_sec": 5,
+      "revocable": true,
+      "audit_reason": "One low-battery notice per discharge cycle."
+    }
+  ],
+  "state_schema": {
+    "namespace": "state:svc.demo.battery_low_notice",
+    "durability": "ephemeral_session",
+    "wal_limit_bytes": 65536,
+    "retention_ttl_sec": 86400,
+    "schema": {
+      "type": "object",
+      "required": [
+        "notices"
+      ],
+      "properties": {
+        "notices": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "initial_state": {
+      "notices": 0
+    },
+    "migrations": []
+  },
+  "ui": {
+    "mode": "none"
+  },
+  "power_budget": {
+    "cpu_cluster_preference": "silver_only",
+    "max_cpu_cores": 1,
+    "cpu_quota_pct": 1,
+    "memory_limit_mb": 2,
+    "wasm_fuel_per_invocation": 1000,
+    "max_wakeups_per_minute": 0.1,
+    "max_wakelock_sec": 0,
+    "network_egress_bytes_max": 0,
+    "allowed_hosts": [],
+    "allowed_ip_name_lookups": [],
+    "allowed_host_loopback_ports": [],
+    "auto_stop_idle_ms": 0,
+    "power_announcement": "Battery Low Notice: armed on the PMIC comparator, zero CPU wakeups until 20%."
+  },
+  "tests": [
+    {
+      "name": "one_notice_at_twenty_percent",
+      "description": "Dropping to 19% produces exactly one notice; 18% does not repeat it.",
+      "initial_env": {
+        "monotonic_ms": 0,
+        "wall_iso": "2026-11-02T12:00:00Z",
+        "battery_pct": 30.0,
+        "charging": false,
+        "network_online": false,
+        "location": {
+          "lat": 45.5152,
+          "lon": -122.6784,
+          "tz": "America/Los_Angeles"
+        }
+      },
+      "events": [
+        {
+          "at_monotonic_ms": 10000,
+          "event_type": "sensor_sample",
+          "payload": {
+            "scheme": "sys:power/battery",
+            "capacity_pct": 19.0,
+            "charging": false
+          }
+        },
+        {
+          "at_monotonic_ms": 60000,
+          "event_type": "sensor_sample",
+          "payload": {
+            "scheme": "sys:power/battery",
+            "capacity_pct": 18.0,
+            "charging": false
+          }
+        }
+      ],
+      "assertions": {
+        "final_state_subset": {},
+        "expected_bus_emissions": [
+          {
+            "msg_type": "speak",
+            "data": {
+              "utterance": "The battery is below twenty percent."
+            }
+          }
+        ],
+        "expected_ui_surfaces": [],
+        "budget_assertions": {
+          "max_memory_mb_used": 2.0,
+          "network_bytes_sent": 0,
+          "active_schemes_after_completion": [
+            "sys:power/battery"
+          ]
+        }
+      }
+    }
+  ]
+}

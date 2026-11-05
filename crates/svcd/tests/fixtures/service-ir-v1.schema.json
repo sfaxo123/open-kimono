@@ -1,0 +1,725 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://redox-op6.local/schemas/service-ir/v1.json",
+  "title": "Redox Language-Native OS Service IR (v1.0.0)",
+  "description": "Typed Intermediate Representation for deterministic, zero-LLM routines, services, and mini-apps on Redox OS (OnePlus 6 SDM845).",
+  "type": "object",
+  "required": [
+    "ir_version",
+    "id",
+    "version",
+    "title",
+    "description",
+    "execution_mode",
+    "triggers",
+    "actions",
+    "deps",
+    "capabilities",
+    "state_schema",
+    "ui",
+    "power_budget",
+    "tests"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "ir_version": {
+      "const": "1.0.0",
+      "description": "Schema version of the Service IR format (borrowed from goose/crates/goose/src/recipe/mod.rs)."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^svc\\.[a-z0-9_]+(\\.[a-z0-9_]+)+$",
+      "description": "Reverse-domain style canonical service identifier (e.g. 'svc.nav.offline_route')."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+      "description": "Semantic version of this service block."
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "Monotonic Nix-style generation number for atomic hot-reload and rollback (PLAN.md B8)."
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$",
+      "description": "BLAKE3 digest of the canonicalized IR + Wasm component bytes."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 80,
+      "description": "Short human-readable title (goose/crates/goose/src/recipe/mod.rs)."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 512,
+      "description": "Detailed description exposed to the user and trace inspector."
+    },
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "contact": { "type": "string" },
+        "provenance": {
+          "type": "string",
+          "enum": ["user_voice", "user_text", "system_builtin", "community_registry", "llm_synthesized"]
+        }
+      },
+      "required": ["name", "provenance"]
+    },
+    "execution_mode": {
+      "type": "string",
+      "enum": ["ephemeral_component", "warm_pooled_component", "singleton_service"],
+      "description": "Instantiation lifecycle borrowed from wasmcloud/crates/wash-runtime/src/types.rs and engine/instance_pool.rs."
+    },
+    "priority_class": {
+      "type": "string",
+      "enum": [
+        "P0_SAFETY_THERMAL",
+        "P1_USER_ABORT_STOP",
+        "P2_INTERACTIVE_VOICE_UI",
+        "P3_ACTIVE_FOREGROUND_NAV",
+        "P4_BACKGROUND_MONITOR"
+      ],
+      "default": "P2_INTERACTIVE_VOICE_UI",
+      "description": "Deterministic priority tier used by the Conflict Resolver."
+    },
+    "parameters": {
+      "type": "array",
+      "maxItems": 32,
+      "description": "Typed template parameters rendered via strict MiniJinja before execution (goose/crates/goose/src/recipe/mod.rs & validate_recipe.rs).",
+      "items": { "$ref": "#/$defs/Parameter" }
+    },
+    "triggers": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Events that wake and fire this service without invoking an LLM.",
+      "items": { "$ref": "#/$defs/Trigger" }
+    },
+    "workflow": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" },
+      "description": "Topologically ordered entrypoint action IDs or cross-service references (leon/skills/native/video_translator_skill/skill.json)."
+    },
+    "actions": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Named action nodes forming a deterministic DAG (leon/server/src/schemas/skill-schemas.ts & tool-schemas.ts).",
+      "additionalProperties": { "$ref": "#/$defs/ActionNode" }
+    },
+    "deps": {
+      "$ref": "#/$defs/Dependencies"
+    },
+    "capabilities": {
+      "type": "array",
+      "description": "Scoped capability grants required from the caps: broker.",
+      "items": { "$ref": "#/$defs/CapabilityGrantRequest" }
+    },
+    "state_schema": {
+      "$ref": "#/$defs/StateSpecification"
+    },
+    "ui": {
+      "$ref": "#/$defs/UiSpecification"
+    },
+    "power_budget": {
+      "$ref": "#/$defs/PowerResourceBudget"
+    },
+    "retry": {
+      "$ref": "#/$defs/RetryConfig"
+    },
+    "tests": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Mandatory simulator test cases run before installation or generation switch.",
+      "items": { "$ref": "#/$defs/SimulatorTestCase" }
+    }
+  },
+  "$defs": {
+    "Parameter": {
+      "type": "object",
+      "required": ["key", "input_type", "requirement", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "input_type": {
+          "type": "string",
+          "enum": ["string", "number", "boolean", "date", "duration_sec", "select"]
+        },
+        "requirement": {
+          "type": "string",
+          "enum": ["required", "optional", "user_prompt"]
+        },
+        "description": { "type": "string" },
+        "default": { "type": ["string", "number", "boolean", "null"] },
+        "options": {
+          "type": "array",
+          "maxItems": 200,
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "Trigger": {
+      "type": "object",
+      "required": ["id", "kind", "entry_action"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^trig_[a-z0-9_]+$" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "voice_intent",
+            "bus_message",
+            "timer_schedule",
+            "sensor_threshold",
+            "ui_action",
+            "lifecycle_stop"
+          ]
+        },
+        "entry_action": {
+          "type": "string",
+          "description": "Action ID in `actions` to invoke when this trigger fires."
+        },
+        "condition_cel": {
+          "type": "string",
+          "description": "Optional deterministic guard expression over trigger payload and current state."
+        },
+        "debounce_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "cooldown_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Minimum time between consecutive firings of this trigger."
+        },
+        "voice_intent": {
+          "type": "object",
+          "description": "Zero-LLM template matcher (ha-intents/intents.yaml + ovos-core/intent_services/manifest.py).",
+          "required": ["domain", "intent_name", "lang", "sentences"],
+          "additionalProperties": false,
+          "properties": {
+            "domain": { "type": "string" },
+            "intent_name": {
+              "type": "string",
+              "not": { "enum": ["converse", "response", "stop", "fallback", "common_query"] }
+            },
+            "lang": { "type": "string", "default": "en-US" },
+            "method": { "type": "string", "enum": ["template", "keyword", "regex"], "default": "template" },
+            "speech_to_phrase": { "type": "boolean", "default": true },
+            "sentences": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+            "slots": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "required": ["type", "required"],
+                "properties": {
+                  "type": { "type": "string", "enum": ["string", "integer", "float", "duration", "enum"] },
+                  "required": { "type": "boolean" },
+                  "default": {}
+                }
+              }
+            }
+          }
+        },
+        "bus_message": {
+          "type": "object",
+          "description": "OVOS-MSG-1 topic matcher (ovos-bus-client/ovos_bus_client/message.py).",
+          "required": ["msg_type"],
+          "additionalProperties": false,
+          "properties": {
+            "msg_type": { "type": "string" },
+            "data_filter": { "type": "object" },
+            "require_session": { "type": "boolean", "default": true }
+          }
+        },
+        "timer_schedule": {
+          "type": "object",
+          "description": "Monotonic or wall-clock timer (hermes-agent/cron/job_definition.py & scheduler_tick.py).",
+          "required": ["mode"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "type": "string", "enum": ["countdown_monotonic", "interval_monotonic", "cron_wall", "oneshot_iso"] },
+            "duration_sec_expr": { "type": "string", "description": "Literal seconds or state/slot pointer e.g. '$.state.remaining_sec'." },
+            "cron_expr": { "type": "string" },
+            "catchup_policy": { "type": "string", "enum": ["advance_before_dispatch", "drop_missed", "fire_once_within_grace"], "default": "advance_before_dispatch" },
+            "grace_window_sec": { "type": "integer", "minimum": 0, "maximum": 7200, "default": 120 },
+            "wake_from_suspend": { "type": "boolean", "default": false }
+          }
+        },
+        "sensor_threshold": {
+          "type": "object",
+          "description": "Hardware scheme edge-triggered threshold with hysteresis so values hovering near the threshold do not bounce.",
+          "required": ["scheme_path", "metric", "operator", "threshold", "hysteresis_reset"],
+          "additionalProperties": false,
+          "properties": {
+            "scheme_path": { "type": "string", "pattern": "^(sys|sensor|power|audio|net):[a-z0-9_/.-]+$" },
+            "metric": { "type": "string" },
+            "operator": { "type": "string", "enum": ["lt", "lte", "gt", "gte", "eq"] },
+            "threshold": { "type": "number" },
+            "hysteresis_reset": {
+              "type": "number",
+              "description": "Value the metric must cross in the opposite direction to re-arm the trigger."
+            },
+            "edge_only": { "type": "boolean", "default": true },
+            "poll_or_irq": { "type": "string", "enum": ["irq_event", "spmi_comparator", "poll_slow"], "default": "irq_event" }
+          }
+        },
+        "ui_action": {
+          "type": "object",
+          "description": "A2UI client-to-server action event matcher (a2ui/specification/v0_9/json/client_to_server.json).",
+          "required": ["surface_id", "action_name"],
+          "additionalProperties": false,
+          "properties": {
+            "surface_id": { "type": "string" },
+            "action_name": { "type": "string" },
+            "source_component_id": { "type": "string" }
+          }
+        }
+      }
+    },
+    "ActionNode": {
+      "type": "object",
+      "required": ["type", "description", "effect_class", "read_only", "timeout"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["logic", "dialog", "ui_patch", "bus_emit", "state_mutate", "sub_service"],
+          "description": "Action execution type (leon/server/src/schemas/skill-schemas.ts + Redox extensions)."
+        },
+        "description": { "type": "string", "minLength": 8, "maxLength": 256 },
+        "effect_class": {
+          "type": "string",
+          "enum": ["pure", "reversible_staged", "reversible_compensated", "committed_irreversible"],
+          "description": "Transaction model classification (Section 4)."
+        },
+        "idempotency_key_template": {
+          "type": "string",
+          "description": "Template producing deterministic key e.g. '{{service_id}}:{{execution_id}}:{{action_id}}'."
+        },
+        "read_only": {
+          "type": "boolean",
+          "description": "Whether this action leaves durable/external state unchanged (leon/server/src/schemas/tool-schemas.ts)."
+        },
+        "deduplicate_calls": {
+          "type": "boolean",
+          "default": true,
+          "description": "Block repeated identical inputs within the same state generation (leon/server/src/schemas/tool-schemas.ts)."
+        },
+        "concurrency": {
+          "type": "string",
+          "enum": ["serial", "parallel"],
+          "default": "serial",
+          "description": "Serial preserves instance state; parallel runs in isolated Wasm store (leon/server/src/schemas/tool-schemas.ts)."
+        },
+        "timeout": {
+          "type": "object",
+          "required": ["idle_ms", "total_ms"],
+          "additionalProperties": false,
+          "properties": {
+            "idle_ms": { "type": "integer", "minimum": 10, "maximum": 300000 },
+            "total_ms": { "type": "integer", "minimum": 10, "maximum": 300000 }
+          }
+        },
+        "wasm_call": {
+          "type": "object",
+          "description": "For type='logic': WIT interface function invocation on the sandboxed Wasm component.",
+          "required": ["component_ref", "wit_interface", "function", "args_mapping"],
+          "additionalProperties": false,
+          "properties": {
+            "component_ref": { "type": "string" },
+            "wit_interface": { "type": "string", "pattern": "^[a-z0-9-]+:[a-z0-9-]+/[a-z0-9-]+(@[0-9.]+)?$" },
+            "function": { "type": "string" },
+            "args_mapping": { "type": "object" },
+            "output_state_pointer": { "type": "string", "pattern": "^/[a-zA-Z0-9_/-]*$" },
+            "post_hook_jq": { "type": "string" }
+          }
+        },
+        "state_patch": {
+          "type": "array",
+          "description": "For type='state_mutate': RFC 6902 JSON Patch operations staged into the working transaction.",
+          "items": {
+            "type": "object",
+            "required": ["op", "path"],
+            "properties": {
+              "op": { "type": "string", "enum": ["add", "replace", "remove", "test"] },
+              "path": { "type": "string", "pattern": "^/[a-zA-Z0-9_/-]+$" },
+              "value": {}
+            }
+          }
+        },
+        "dialog": {
+          "type": "object",
+          "description": "For type='dialog': Spoken (Wyoming TTS) and written answer without Wasm code (leon/server/src/schemas/skill-schemas.ts).",
+          "required": ["speech", "text"],
+          "additionalProperties": false,
+          "properties": {
+            "speech": { "type": "string" },
+            "text": { "type": "string" },
+            "priority": { "type": "string", "enum": ["normal", "alert", "critical"], "default": "normal" }
+          }
+        },
+        "ui_patch": {
+          "type": "object",
+          "description": "For type='ui_patch': A2UI surface message or OpenUI statement patch.",
+          "required": ["surface_id", "operation"],
+          "additionalProperties": false,
+          "properties": {
+            "surface_id": { "type": "string" },
+            "operation": { "type": "string", "enum": ["create_surface", "update_components", "update_data_model", "delete_surface", "openui_statements"] },
+            "data_model_path": { "type": "string" },
+            "data_model_value": {},
+            "openui_statements": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "bus_emit": {
+          "type": "object",
+          "description": "For type='bus_emit': Emit an OVOS-MSG-1 message onto the bus/trace scheme.",
+          "required": ["derivation", "msg_type", "data"],
+          "additionalProperties": false,
+          "properties": {
+            "derivation": { "type": "string", "enum": ["forward", "reply", "response", "root"] },
+            "msg_type": { "type": "string" },
+            "data": { "type": "object" }
+          }
+        },
+        "compensating_action": {
+          "type": "string",
+          "description": "Action ID to execute on rollback if `effect_class` is `reversible_compensated`."
+        },
+        "next": {
+          "type": "array",
+          "description": "Conditional edges to successor Action IDs in the DAG.",
+          "items": {
+            "type": "object",
+            "required": ["target"],
+            "additionalProperties": false,
+            "properties": {
+              "when_cel": { "type": "string" },
+              "target": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "Dependencies": {
+      "type": "object",
+      "required": ["schemes", "wasm_components", "sub_services"],
+      "additionalProperties": false,
+      "properties": {
+        "schemes": {
+          "type": "array",
+          "description": "Redox kernel/userspace schemes required by this service.",
+          "items": {
+            "type": "object",
+            "required": ["scheme", "access", "lifecycle"],
+            "additionalProperties": false,
+            "properties": {
+              "scheme": { "type": "string", "pattern": "^[a-z0-9_.-]+:([a-zA-Z0-9_./-]*)?$" },
+              "access": { "type": "string", "enum": ["read", "write", "read_write", "event_subscribe"] },
+              "lifecycle": {
+                "type": "string",
+                "enum": ["demand_per_action", "while_surface_visible", "while_grant_alive", "always_resident_kernel"],
+                "description": "Determines when the scheme daemon is started and stopped (VISION.md §4 & §8)."
+              }
+            }
+          }
+        },
+        "wasm_components": {
+          "type": "array",
+          "description": "Sandboxed Wasm components and their WIT worlds (wasmcloud/crates/wash-runtime/src/wit.rs & types.rs).",
+          "items": {
+            "type": "object",
+            "required": ["id", "digest", "wit_world", "pool_policy"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+              "wit_world": {
+                "type": "object",
+                "required": ["imports", "exports"],
+                "properties": {
+                  "imports": { "type": "array", "items": { "type": "string" } },
+                  "exports": { "type": "array", "items": { "type": "string" } }
+                }
+              },
+              "pool_policy": {
+                "type": "object",
+                "required": ["pool_size", "max_invocations", "max_concurrency", "reclaim_window_seconds"],
+                "properties": {
+                  "pool_size": { "type": "integer", "minimum": 0, "maximum": 4 },
+                  "max_invocations": { "type": "integer", "minimum": 1, "maximum": 10000 },
+                  "max_concurrency": { "type": "integer", "minimum": 1, "maximum": 4 },
+                  "reclaim_window_seconds": { "type": "integer", "minimum": 0, "maximum": 3600 }
+                }
+              }
+            }
+          }
+        },
+        "sub_services": {
+          "type": "array",
+          "description": "Composable sub-recipes/services (goose/crates/goose/src/recipe/mod.rs SubRecipe).",
+          "items": {
+            "type": "object",
+            "required": ["name", "service_id", "sequential_when_repeated"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "service_id": { "type": "string" },
+              "min_version": { "type": "string" },
+              "values": { "type": "object", "additionalProperties": { "type": "string" } },
+              "sequential_when_repeated": { "type": "boolean", "default": true }
+            }
+          }
+        }
+      }
+    },
+    "CapabilityGrantRequest": {
+      "type": "object",
+      "required": ["cap_id", "capability", "scope", "lifetime", "max_duration_sec", "audit_reason"],
+      "additionalProperties": false,
+      "properties": {
+        "cap_id": { "type": "string" },
+        "capability": {
+          "type": "string",
+          "enum": [
+            "audio.capture",
+            "audio.playback.tts",
+            "audio.playback.alarm",
+            "location.gnss.read",
+            "storage.maps.readonly",
+            "state.namespace.readwrite",
+            "power.battery.read",
+            "power.request_wake",
+            "timer.monotonic.schedule",
+            "ui.surface.render",
+            "network.connect"
+          ]
+        },
+        "scope": {
+          "type": "object",
+          "description": "Fine-grained constraints (e.g. path prefix, allowed_hosts, max wake lock seconds)."
+        },
+        "lifetime": {
+          "type": "string",
+          "enum": ["per_invocation", "while_visible", "until_deadline", "standing_trigger_watch"]
+        },
+        "max_duration_sec": { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "revocable": { "type": "boolean", "default": true },
+        "audit_reason": {
+          "type": "string",
+          "description": "Human-readable explanation announced on trace: when the capability is exercised (VISION.md §3 & §4)."
+        }
+      }
+    },
+    "StateSpecification": {
+      "type": "object",
+      "required": ["namespace", "durability", "schema", "initial_state"],
+      "additionalProperties": false,
+      "properties": {
+        "namespace": { "type": "string", "pattern": "^state:[a-z0-9_.-]+$" },
+        "durability": { "type": "string", "enum": ["ephemeral_session", "sqlite_wal_durable"] },
+        "wal_limit_bytes": { "type": "integer", "default": 4194304, "maximum": 67108864 },
+        "retention_ttl_sec": { "type": "integer", "minimum": 0 },
+        "schema": { "type": "object", "description": "JSON Schema for the service's state object." },
+        "initial_state": { "type": "object" },
+        "migrations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from_version", "to_version", "json_patch"],
+            "properties": {
+              "from_version": { "type": "string" },
+              "to_version": { "type": "string" },
+              "json_patch": { "type": "array" }
+            }
+          }
+        }
+      }
+    },
+    "UiSpecification": {
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "type": "string", "enum": ["none", "a2ui_v1", "openui_stream"] },
+        "surface_id": { "type": "string" },
+        "catalog_id": {
+          "type": "string",
+          "default": "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json"
+        },
+        "send_data_model": { "type": "boolean", "default": true },
+        "initial_messages": {
+          "type": "array",
+          "description": "Declarative A2UI createSurface / updateComponents / updateDataModel messages (a2ui/specification/v0_9/json/server_to_client.json).",
+          "items": { "type": "object" }
+        },
+        "openui_statements": {
+          "type": "array",
+          "description": "Optional OpenUI Lang statement blocks (openui/packages/a2ui/src/statement-patch.ts).",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "PowerResourceBudget": {
+      "type": "object",
+      "description": "Hard resource & power limits enforced by the supervisor (VISION.md §8 + wasmcloud LocalResources).",
+      "required": [
+        "cpu_cluster_preference",
+        "max_cpu_cores",
+        "cpu_quota_pct",
+        "memory_limit_mb",
+        "wasm_fuel_per_invocation",
+        "max_wakeups_per_minute",
+        "max_wakelock_sec",
+        "network_egress_bytes_max",
+        "allowed_hosts",
+        "allowed_ip_name_lookups",
+        "allowed_host_loopback_ports",
+        "auto_stop_idle_ms",
+        "power_announcement"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cpu_cluster_preference": {
+          "type": "string",
+          "enum": ["silver_only", "silver_preferred", "gold_burst_allowed"],
+          "description": "SDM845 Kryo 385 Silver (cores 0-3, 1.76 GHz efficiency) vs Gold (cores 4-7, 2.8 GHz performance)."
+        },
+        "max_cpu_cores": { "type": "integer", "minimum": 1, "maximum": 4, "default": 1 },
+        "cpu_quota_pct": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 },
+        "memory_limit_mb": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "wasm_fuel_per_invocation": { "type": "integer", "minimum": 1000, "maximum": 500000000 },
+        "max_wakeups_per_minute": { "type": "number", "minimum": 0, "maximum": 600 },
+        "max_wakelock_sec": { "type": "integer", "minimum": 0, "maximum": 3600 },
+        "network_egress_bytes_max": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "0 enforces strictly offline execution (VISION.md §8)."
+        },
+        "allowed_hosts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Empty array = deny all outbound connections (wasmcloud/crates/wash-runtime/src/types.rs)."
+        },
+        "allowed_ip_name_lookups": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Empty array = deny all DNS resolution (wasmcloud/crates/wash-runtime/src/types.rs)."
+        },
+        "allowed_host_loopback_ports": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "default": [],
+          "description": "Empty array = deny all loopback ports (wasmcloud/crates/wash-runtime/src/types.rs)."
+        },
+        "auto_stop_idle_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Supervisor stops the component/service and unmounts scheme daemons after this idle window."
+        },
+        "power_announcement": {
+          "type": "string",
+          "description": "Exact template announced on trace:/UI when hardware components switch on or off (VISION.md §4)."
+        }
+      }
+    },
+    "RetryConfig": {
+      "type": "object",
+      "description": "Bounded retry configuration (goose/crates/goose/src/agents/types.rs).",
+      "required": ["max_retries", "timeout_seconds", "checks"],
+      "additionalProperties": false,
+      "properties": {
+        "max_retries": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 300 },
+        "on_failure_action": { "type": "string" },
+        "on_failure_timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 600 },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "expr"],
+            "properties": {
+              "type": { "type": "string", "enum": ["state_assertion", "scheme_health"] },
+              "expr": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "SimulatorTestCase": {
+      "type": "object",
+      "required": ["name", "initial_env", "events", "assertions"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "initial_env": {
+          "type": "object",
+          "required": ["monotonic_ms", "wall_iso", "battery_pct", "charging", "network_online", "location"],
+          "properties": {
+            "monotonic_ms": { "type": "integer", "minimum": 0 },
+            "wall_iso": { "type": "string", "format": "date-time" },
+            "battery_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+            "charging": { "type": "boolean" },
+            "network_online": { "type": "boolean" },
+            "location": {
+              "type": "object",
+              "required": ["lat", "lon", "tz"],
+              "properties": {
+                "lat": { "type": "number" },
+                "lon": { "type": "number" },
+                "tz": { "type": "string" }
+              }
+            }
+          }
+        },
+        "events": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["at_monotonic_ms", "event_type", "payload"],
+            "properties": {
+              "at_monotonic_ms": { "type": "integer", "minimum": 0 },
+              "event_type": {
+                "type": "string",
+                "enum": ["utterance", "bus_message", "advance_clock", "sensor_sample", "ui_action", "stop_signal"]
+              },
+              "payload": { "type": "object" }
+            }
+          }
+        },
+        "assertions": {
+          "type": "object",
+          "required": ["final_state_subset", "expected_bus_emissions", "expected_ui_surfaces", "budget_assertions"],
+          "properties": {
+            "final_state_subset": { "type": "object" },
+            "expected_bus_emissions": { "type": "array", "items": { "type": "object" } },
+            "expected_ui_surfaces": { "type": "array", "items": { "type": "object" } },
+            "budget_assertions": {
+              "type": "object",
+              "required": ["max_memory_mb_used", "network_bytes_sent", "active_schemes_after_completion"],
+              "properties": {
+                "max_memory_mb_used": { "type": "number" },
+                "network_bytes_sent": { "type": "integer" },
+                "active_schemes_after_completion": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

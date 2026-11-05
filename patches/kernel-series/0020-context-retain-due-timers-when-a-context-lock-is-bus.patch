@@ -1,0 +1,35 @@
+From 59db6b80f024fead967210f84e17b24cf4cf11e5 Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sun, 25 Oct 2026 19:55:12 +0000
+Subject: [PATCH 20/21] context: retain due timers when a context lock is busy
+
+A deferred timer must remain discoverable by the next scheduler scan.
+The actual source excerpt fails the contention regression before this patch
+and passes all three host checks after it. No kernel/IRQ/guest proof claimed.
+
+Agent: Codex
+Model: gpt-6-sol
+Provider: OpenAI
+Refs: wy-1792956367-diag; wy-kernel-wake-root-red/green-20261025T1955
+---
+ src/context/switch.rs | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/context/switch.rs b/src/context/switch.rs
+index 863ee7fc..6e570c28 100644
+--- a/src/context/switch.rs
++++ b/src/context/switch.rs
+@@ -332,6 +332,13 @@ fn schedule(
+             }
+         });
+ 
++        // Retry contended due entries on a later scan instead of clearing them
++        // with the temporary buffer at the start of the next scan.
++        if !timers.is_empty() {
++            let mut run_queue = percpu.switch_internals.run_queue.lock();
++            run_queue.timers.extend(timers.drain(..));
++        }
++
+         // Drain from percpu
+         {
+             let mut local_wake = percpu.switch_internals.local_wakeup_list.borrow_mut();

@@ -1,0 +1,202 @@
+From 90064b8c0bdcb8ce2a2c55b4ac947f48e2c3278d Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Mon, 26 Oct 2026 00:21:08 +0000
+Subject: [PATCH 15/21] reject malformed dt stride
+
+---
+ src/arch/aarch64/device/irqchip/gicv3.rs      |  13 +-
+ .../aarch64/device/irqchip/gicv3/model.rs     | 116 +++++++++++++++++-
+ 2 files changed, 119 insertions(+), 10 deletions(-)
+
+diff --git a/src/arch/aarch64/device/irqchip/gicv3.rs b/src/arch/aarch64/device/irqchip/gicv3.rs
+index 9a9a859d..49518b8b 100644
+--- a/src/arch/aarch64/device/irqchip/gicv3.rs
++++ b/src/arch/aarch64/device/irqchip/gicv3.rs
+@@ -136,11 +136,14 @@ impl GicV3 {
+             .raw_property("#redistributor-regions")
+             .and_then(|prop| prop.as_value::<u32>().ok())
+             .unwrap_or(1) as usize;
+-        let stride = node
+-            .raw_property("redistributor-stride")
+-            .and_then(|prop| prop.as_value::<u64>().ok())
+-            .map_or(0, |stride| stride as usize);
+-        GICR_STRIDE.store(stride, Ordering::Release);
++        // Validate the actual property bytes before distributor initialization/MMIO.
++        let stride = model::parse_stride_property(
++            node.raw_property("redistributor-stride").map(|prop| prop.value),
++        ).map_err(|err| {
++            error!("gicv3: invalid redistributor-stride: {:?}", err);
++            Error::new(EINVAL)
++        })?;
++        GICR_STRIDE.store(stride.unwrap_or(0), Ordering::Release);
+ 
+         // Read registers: <GICD> then one tuple per redistributor region.
+         let chunks = node.reg().ok_or_else(|| Error::new(EINVAL))?;
+diff --git a/src/arch/aarch64/device/irqchip/gicv3/model.rs b/src/arch/aarch64/device/irqchip/gicv3/model.rs
+index b08b7a6e..987cb986 100644
+--- a/src/arch/aarch64/device/irqchip/gicv3/model.rs
++++ b/src/arch/aarch64/device/irqchip/gicv3/model.rs
+@@ -16,6 +16,8 @@ pub const GICR_WAKER_PROCESSOR_SLEEP: u32 = 1 << 1;
+ pub const GICR_WAKER_CHILDREN_ASLEEP: u32 = 1 << 2;
+ 
+ pub const GICR_SGI_BASE: usize = 0x1_0000;
++/// DT `redistributor-stride` alignment unit: frames are RD_base + SGI_base.
++pub const GICR_STRIDE_ALIGN: usize = GICR_SGI_BASE;
+ pub const GICR_IGROUPR0: usize = GICR_SGI_BASE + 0x0080;
+ pub const GICR_ISENABLER0: usize = GICR_SGI_BASE + 0x0100;
+ pub const GICR_ICENABLER0: usize = GICR_SGI_BASE + 0x0180;
+@@ -34,6 +36,9 @@ pub enum Gicv3Error {
+     MissingDistributor,
+     MissingRedistributor,
+     BadRegion,
++    /// DT `redistributor-stride` present but unusable (0, undersized or unaligned).
++    InvalidStride(usize),
++    MalformedStrideProperty,
+     NoRedistributorForCpu(u32),
+     WakeTimeout,
+     RwpTimeout,
+@@ -84,6 +89,35 @@ pub fn mpidr_affinity(mpidr: u64) -> u32 {
+     ((((mpidr >> 32) & 0xff) as u32) << 24) | (mpidr & 0x00ff_ffff) as u32
+ }
+ 
++/// Validate an EXPLICIT DT `redistributor-stride`. Absent is represented by
++/// `None` and stays supported (the walk then derives the step from
++/// GICR_TYPER.VLPIS); a present value must be at least one RD_base + SGI_base
++/// frame pair and a multiple of GICR_SGI_BASE. An explicit 0 is malformed, not
++/// "absent" — it would make the walk step nowhere. This is the only copy of the
++/// rule: `find_redistributor` calls it too, so DT validation cannot drift from
++/// the walk that consumes the stride.
++pub fn validate_stride(stride: Option<usize>) -> Result<(), Gicv3Error> {
++    match stride {
++        None => Ok(()),
++        Some(step) if step >= GICR_FRAMES_V3 && step % GICR_STRIDE_ALIGN == 0 => Ok(()),
++        Some(step) => Err(Gicv3Error::InvalidStride(step)),
++    }
++}
++
++/// DT binding uses exactly one big-endian u64; absence remains distinct from zero.
++pub fn parse_stride_property(raw: Option<&[u8]>) -> Result<Option<usize>, Gicv3Error> {
++    let stride = match raw {
++        None => None,
++        Some(bytes) => {
++            let bytes: [u8; 8] = bytes.try_into().map_err(|_| Gicv3Error::MalformedStrideProperty)?;
++            Some(usize::try_from(u64::from_be_bytes(bytes))
++                .map_err(|_| Gicv3Error::MalformedStrideProperty)?)
++        }
++    };
++    validate_stride(stride)?;
++    Ok(stride)
++}
++
+ /// Walk each redistributor region (virtual base, length) frame by frame.
+ pub fn find_redistributor<M: Mmio>(
+     mmio: &M,
+@@ -91,9 +125,7 @@ pub fn find_redistributor<M: Mmio>(
+     stride: Option<usize>,
+     affinity: u32,
+ ) -> Result<usize, Gicv3Error> {
+-    if stride.is_some_and(|step| step < GICR_FRAMES_V3 || step % GICR_SGI_BASE != 0) {
+-        return Err(Gicv3Error::BadRegion);
+-    }
++    validate_stride(stride)?;
+     for &(base, len) in regions {
+         if base % GICR_SGI_BASE != 0 {
+             return Err(Gicv3Error::BadRegion);
+@@ -344,7 +376,7 @@ mod tests {
+         let regions = [(RD0, 0x8_0000), (rd_b, 0x2_0000)];
+         assert_eq!(find_redistributor(&m, &regions, Some(0x4_0000), 5), Ok(RD0 + 0x4_0000));
+         assert_eq!(find_redistributor(&m, &regions, Some(0x4_0000), 9), Ok(rd_b));
+-        assert_eq!(find_redistributor(&m, &regions, Some(0), 9), Err(Gicv3Error::BadRegion));
++        assert_eq!(find_redistributor(&m, &regions, Some(0), 9), Err(Gicv3Error::InvalidStride(0)));
+     }
+ 
+     #[test]
+@@ -352,13 +384,87 @@ mod tests {
+         let m = MockMmio::default();
+         for step in [0, 1, GICR_SGI_BASE, GICR_FRAMES_V3 + 8] {
+             assert_eq!(find_redistributor(&m, &[(RD0, 0xf6_0000)], Some(step), 1),
+-                       Err(Gicv3Error::BadRegion));
++                       Err(Gicv3Error::InvalidStride(step)));
+         }
+         assert_eq!(find_redistributor(&m, &[(RD0 + 1, 0x2_0000)], None, 1),
+                    Err(Gicv3Error::BadRegion));
+         assert_eq!(m.reads.get(), 0);
+     }
+ 
++    /// The production DT-adapter validation: an explicit stride is checked by
++    /// the same helper `find_redistributor` uses, before any MMIO happens.
++    #[test]
++    fn production_property_decoder_preserves_absence_and_rejects_bad_bytes() {
++        assert_eq!(parse_stride_property(None), Ok(None));
++        assert_eq!(parse_stride_property(Some(&0x40000u64.to_be_bytes())), Ok(Some(0x40000)));
++        for n in [0u64, 1, 0x10000, 0x20008] {
++            assert_eq!(parse_stride_property(Some(&n.to_be_bytes())),
++                       Err(Gicv3Error::InvalidStride(n as usize)));
++        }
++        for bytes in [&[][..], &[0u8; 4][..], &[0u8; 9][..]] {
++            assert_eq!(parse_stride_property(Some(bytes)), Err(Gicv3Error::MalformedStrideProperty));
++        }
++    }
++
++    #[test]
++    fn validate_stride_rejects_zero_undersized_and_unaligned() {
++        // Explicit 0 is malformed, NOT "absent".
++        assert_eq!(validate_stride(Some(0)), Err(Gicv3Error::InvalidStride(0)));
++        // Below one RD_base + SGI_base frame pair.
++        for step in [1, GICR_SGI_BASE, 0x1_ffff] {
++            assert_eq!(validate_stride(Some(step)), Err(Gicv3Error::InvalidStride(step)));
++        }
++        // Big enough but not a multiple of the SGI frame boundary.
++        for step in [GICR_FRAMES_V3 + 8, 0x2_0001, 0x3_c000] {
++            assert_eq!(validate_stride(Some(step)), Err(Gicv3Error::InvalidStride(step)));
++        }
++    }
++
++    #[test]
++    fn validate_stride_accepts_absent_and_frame_aligned_steps() {
++        // Absent property stays supported: the walk derives the step from VLPIS.
++        assert_eq!(validate_stride(None), Ok(()));
++        // GICv3 (RD+SGI) and GICv4 (adds VLPI frames) strides, plus multiples.
++        for step in [GICR_FRAMES_V3, GICR_FRAMES_V4, 0x6_0000] {
++            assert_eq!(validate_stride(Some(step)), Ok(()));
++        }
++    }
++
++    /// An explicit zero must fail the walk too, with no MMIO at all — a stride
++    /// of 0 would make the frame walk step nowhere and re-read RD0 forever.
++    #[test]
++    fn explicit_zero_stride_stops_walk_before_first_mmio() {
++        let m = MockMmio::with_rds(&[(RD0, 1, true)]);
++        assert_eq!(
++            find_redistributor(&m, &[(RD0, 0xf6_0000)], Some(0), 1),
++            Err(Gicv3Error::InvalidStride(0))
++        );
++        assert_eq!(m.reads.get(), 0);
++    }
++
++    /// Absent stride still walks both QEMU-style layouts (VLPIS clear and set).
++    #[test]
++    fn absent_stride_defaults_from_vlpis() {
++        let rd1_v3 = RD0 + GICR_FRAMES_V3;
++        let m = MockMmio::with_rds(&[(RD0, 0, false), (rd1_v3, 1, true)]);
++        assert_eq!(find_redistributor(&m, &[(RD0, 0xf6_0000)], None, 1), Ok(rd1_v3));
++
++        let rd1_v4 = RD0 + GICR_FRAMES_V4;
++        let mut m = MockMmio::with_rds(&[(RD0, 0, false), (rd1_v4, 1, true)]);
++        m.set(RD0 + GICR_TYPER, m.get(RD0 + GICR_TYPER) | GICR_TYPER_VLPIS);
++        assert_eq!(find_redistributor(&m, &[(RD0, 0xf6_0000)], None, 1), Ok(rd1_v4));
++
++        // The same layout walked with the smaller explicit step lands on the
++        // intermediate frame, whose TYPER reads 0 — affinity 0, not 1 — so it
++        // is skipped and RD1 at +0x4_0000 is still found.
++        let mut m = MockMmio::with_rds(&[(RD0, 0, false), (rd1_v4, 1, true)]);
++        m.set(RD0 + GICR_TYPER, m.get(RD0 + GICR_TYPER) | GICR_TYPER_VLPIS);
++        assert_eq!(
++            find_redistributor(&m, &[(RD0, 0x8_0000)], Some(GICR_FRAMES_V3), 1),
++            Ok(rd1_v4)
++        );
++    }
++
+     #[test]
+     fn scan_stays_inside_region_and_rejects_overflow() {
+         // No LAST bit anywhere: walking must stop at the region length.

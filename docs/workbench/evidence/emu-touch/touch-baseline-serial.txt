@@ -1,0 +1,889 @@
+
+
+U-Boot 2026.10-g8649a54d301a (Oct 24 2026 - 23:18:35 +0000)
+
+Model: OnePlus 6
+DRAM:  4 GiB
+Core:  218 devices, 29 uclasses, devicetree: separate
+WDT:   Not starting watchdog@17980000
+MMC:   
+Loading Environment from nowhere...Loading Environment from nowhere... OK
+button_gpio gpio-keys: pinctrl_select_state_full: uclass_get_device_by_phandle_id: err=-22
+button_gpio gpio-keys: pinctrl_select_state_full: uclass_get_device_by_phandle_id: err=-22
+Button key-vol-down failed to probe
+Button key-vol-up failed to probe
+In:    serial,button-kbd
+Out:   serial,vidconsole
+Err:   serial,vidconsole
+Model: OnePlus 6
+qcom-ufshcd ufshc@1d84000: uclass_get_device_by_ofnode failed: -19
+qcom-ufshcd ufshc@1d84000: error finding src node
+qcom-ufshcd ufshc@1d84000: uclass_get_device_by_ofnode failed: -19
+qcom-ufshcd ufshc@1d84000: error finding src node
+qcom-ufshcd ufshc@1d84000: failed to get regulator vcc-supply:-19
+qcom-ufshcd ufshc@1d84000: failed to get regulator vccq-supply:-2
+qcom-ufshcd ufshc@1d84000: ufs_qcom_check_hibern8: invalid TX_FSM_STATE = 0
+qcom-ufshcd ufshc@1d84000: Error in OCS:1
+qcom-ufshcd ufshc@1d84000: __ufshcd_query_descriptor: opcode 0x01 for idn 1 failed, index 0, err = -22
+qcom-ufshcd ufshc@1d84000: ufshcd_read_desc_length: Failed to get descriptor header id 1
+qcom-ufshcd ufshc@1d84000: invalid ref_clk setting = 0
+qcom-ufshcd ufshc@1d84000: [RX, TX]: gear=[3, 3], lane[1, 1], pwr[FAST MODE, FAST MODE], rate = 2
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+QCOM-FMP: Failed to find boot partition
+Net:   No ethernet found.
+GENI-SE: GENI SE wrapper not found
+[?25h
+scanning bus for devices...
+  Device 0: (0:0) Vendor: QEMU Prod.: QEMU HARDDISK Rev: 2.5+
+            Type: Hard Disk
+            Capacity: 64.0 MB = 0.0 GB (131072 x 512)
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+qcom-ufshcd ufshc@1d84000: OCS error from controller = 1
+No button labelled 'Volume Down'
+[2KHit any key to stop autoboot: 0
+7[r[999;999H[6n8fw_name is not defined. Not generating capsule GUIDs
+[2J[1;1HWARN - Failed to get EFI EDID from handle Handle(6431925200): Status(0x8000000000000003) "unsupported"
+[?25lINFO - Currently in EL1
+Redox OS Bootloader 1.0.0 on aarch64/UEFI
+Hardware descriptor: DeviceTree(17e4b8000, 27000)
+Output 0, best resolution: 1080x2280
+Auto-selecting boot resolution
+kernel_entry(0x17e4e5000, 0xffff80017e506000, 0xffffff000008d8a8, 0x17f569520)
+KernelArgs {
+    kernel_base: 0x16285e000,
+    kernel_size: 0x1a1878,
+    stack_base: 0x17e4e6000,
+    stack_size: 0x20000,
+    env_base: 0x17e4a8000,
+    env_size: 0xf3,
+    acpi_rsdp_base: 0x17e4b8000,
+    acpi_rsdp_size: 0x27000,
+    areas_base: 0x1619f2030,
+    areas_size: 0x6000,
+    bootstrap_base: 0x15ff93000,
+    bootstrap_size: 0xc58000,
+}
+kernel::dtb::serial:INFO -- UART Compatible { string: "qcom,geni-debug-uart" } at 0xFFFF800000A84000 size 0x4000
+kernel::dtb:DEBUG -- dynamic reserved-memory node mpss-metadata; ignoring it until allocation is supported
+kernel::dtb:DEBUG -- dynamic reserved-memory node fastrpc; ignoring it until allocation is supported
+kernel::startup::memory:DEBUG -- Registering Reserved memory 9D400000 size 964B00
+kernel::devices::graphical_debug:INFO -- device tree simple-framebuffer 1080x2280 stride 1080 at 9D400000
+kernel::arch::aarch64::start:INFO -- Redox OS starting...
+kernel::startup:DEBUG -- Kernel: 16285E000:1629FF878
+kernel::startup:DEBUG -- Env: 17E4A8000:17E4A80F3
+kernel::startup:DEBUG -- HWDESC: 17E4B8000:17E4DF000
+kernel::startup:DEBUG -- Areas: 1619F2030:1619F8030
+kernel::startup:DEBUG -- Bootstrap: 15FF93000:160BEB000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory 17E4E5000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory 17E4DF000 size 5000
+kernel::startup::memory:DEBUG -- Registering Reclaim memory 17E4A1000 size 7000
+kernel::startup::memory:DEBUG -- Registering Free memory 80000000 size 5700000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 85700000 size 600000
+kernel::startup::memory:DEBUG -- Registering Free memory 85D00000 size 100000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 85E00000 size 100000
+kernel::startup::memory:DEBUG -- Registering Free memory 85F00000 size C0000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 85FC0000 size 6457000
+kernel::startup::memory:DEBUG -- Registering Free memory 8C417000 size E9000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 8C500000 size B700000
+kernel::startup::memory:DEBUG -- Registering Free memory 97C00000 size 5800000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 9D400000 size 2400000
+kernel::startup::memory:DEBUG -- Registering Free memory 9F800000 size 56300000
+kernel::startup::memory:DEBUG -- Registering Reserved memory F5B00000 size 202000
+kernel::startup::memory:DEBUG -- Registering Free memory F5D02000 size 6A291000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 15FF93000 size C58000
+kernel::startup::memory:DEBUG -- Registering Free memory 160BEB000 size FBD000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 161BA8000 size C59000
+kernel::startup::memory:DEBUG -- Registering Free memory 162801000 size 5D000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 16285E000 size 1A2000
+kernel::startup::memory:DEBUG -- Registering Free memory 162A00000 size 1BAA1000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 17E4A1000 size 43000
+kernel::startup::memory:DEBUG -- Registering Free memory 17E4E4000 size 1000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 17E4E5000 size 21000
+kernel::startup::memory:DEBUG -- Registering Free memory 17E506000 size 2000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 17E508000 size 2A000
+kernel::startup::memory:DEBUG -- Registering Free memory 17E532000 size 8000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 17E53A000 size 1000
+kernel::startup::memory:DEBUG -- Registering Free memory 17E53B000 size 3000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 17E53E000 size 22000
+kernel::startup::memory:DEBUG -- Registering Free memory 17E560000 size 1095000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 17F5F5000 size 1000
+kernel::startup::memory:DEBUG -- Registering Free memory 17F5F6000 size 7AA000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 17FDA0000 size 20000
+kernel::startup::memory:DEBUG -- Registering Free memory 17FDC0000 size 240000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 85700000 size 600000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 85E00000 size 100000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 85FC0000 size 20000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 85FE0000 size 20000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 86000000 size 200000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 86200000 size 2D00000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 8AB00000 size 1400000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 8BF00000 size 500000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 8C400000 size 10000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 8C410000 size 5000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 8C415000 size 2000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 8C500000 size 1A00000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 8DF00000 size 100000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 8E000000 size 7800000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 95800000 size 500000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 95D00000 size 800000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 96500000 size 200000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 96700000 size 1400000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 97B00000 size 100000
+kernel::dtb:DEBUG -- dynamic reserved-memory node mpss-metadata; ignoring it until allocation is supported
+kernel::dtb:DEBUG -- dynamic reserved-memory node fastrpc; ignoring it until allocation is supported
+kernel::startup::memory:DEBUG -- Registering Reserved memory 9D400000 size 2400000
+kernel::startup::memory:DEBUG -- Registering Reserved memory F5B00000 size 202000
+kernel::startup::memory:DEBUG -- Registering Reserved memory 88F00000 size 1C00000
+kernel::startup::memory:DEBUG -- Registering Reserved memory AC300000 size 400000
+kernel::dtb:DEBUG -- dev mem 0x00000000 0x00000000 0x1000000000
+kernel::dtb:DEBUG -- soc device clock-controller@100000 0x00100000 -> 0x00100000 len 0x001f0000
+kernel::startup::memory:DEBUG -- Registering Device memory 100000 size 1F0000
+kernel::dtb:DEBUG -- soc device qfprom@784000 0x00784000 -> 0x00784000 len 0x000008ff
+kernel::startup::memory:DEBUG -- Registering Device memory 784000 size 8FF
+kernel::dtb:DEBUG -- soc device rng@793000 0x00793000 -> 0x00793000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 793000 size 1000
+kernel::dtb:DEBUG -- soc device dma-controller@800000 0x00800000 -> 0x00800000 len 0x00060000
+kernel::startup::memory:DEBUG -- Registering Device memory 800000 size 60000
+kernel::dtb:DEBUG -- soc device geniqup@8c0000 0x008c0000 -> 0x008c0000 len 0x00006000
+kernel::startup::memory:DEBUG -- Registering Device memory 8C0000 size 6000
+kernel::dtb:DEBUG -- soc device dma-controller@a00000 0x00a00000 -> 0x00a00000 len 0x00060000
+kernel::startup::memory:DEBUG -- Registering Device memory A00000 size 60000
+kernel::dtb:DEBUG -- soc device geniqup@ac0000 0x00ac0000 -> 0x00ac0000 len 0x00006000
+kernel::startup::memory:DEBUG -- Registering Device memory AC0000 size 6000
+kernel::dtb:DEBUG -- soc device regulator@ff1000 0x00ff1000 -> 0x00ff1000 len 0x00000060
+kernel::startup::memory:DEBUG -- Registering Device memory FF1000 size 60
+kernel::dtb:DEBUG -- soc device system-cache-controller@1100000 0x01100000 -> 0x01100000 len 0x00045000
+kernel::startup::memory:DEBUG -- Registering Device memory 1100000 size 45000
+kernel::dtb:DEBUG -- soc device system-cache-controller@1100000 0x01180000 -> 0x01180000 len 0x00050000
+kernel::startup::memory:DEBUG -- Registering Device memory 1180000 size 50000
+kernel::dtb:DEBUG -- soc device system-cache-controller@1100000 0x01200000 -> 0x01200000 len 0x00050000
+kernel::startup::memory:DEBUG -- Registering Device memory 1200000 size 50000
+kernel::dtb:DEBUG -- soc device system-cache-controller@1100000 0x01280000 -> 0x01280000 len 0x00050000
+kernel::startup::memory:DEBUG -- Registering Device memory 1280000 size 50000
+kernel::dtb:DEBUG -- soc device system-cache-controller@1100000 0x01300000 -> 0x01300000 len 0x00050000
+kernel::startup::memory:DEBUG -- Registering Device memory 1300000 size 50000
+kernel::dtb:DEBUG -- soc device dma@10a2000 0x010a2000 -> 0x010a2000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 10A2000 size 1000
+kernel::dtb:DEBUG -- soc device dma@10a2000 0x010ae000 -> 0x010ae000 len 0x00002000
+kernel::startup::memory:DEBUG -- Registering Device memory 10AE000 size 2000
+kernel::dtb:DEBUG -- soc device pmu@114a000 0x0114a000 -> 0x0114a000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 114A000 size 1000
+kernel::dtb:DEBUG -- soc device pmu@1436400 0x01436400 -> 0x01436400 len 0x00000600
+kernel::startup::memory:DEBUG -- Registering Device memory 1436400 size 600
+kernel::dtb:DEBUG -- soc device pcie@1c00000 0x01c00000 -> 0x01c00000 len 0x00002000
+kernel::startup::memory:DEBUG -- Registering Device memory 1C00000 size 2000
+kernel::dtb:DEBUG -- soc device pcie@1c00000 0x60000000 -> 0x60000000 len 0x00000f1d
+kernel::startup::memory:DEBUG -- Registering Device memory 60000000 size F1D
+kernel::dtb:DEBUG -- soc device pcie@1c00000 0x60000f20 -> 0x60000f20 len 0x000000a8
+kernel::startup::memory:DEBUG -- Registering Device memory 60000F20 size A8
+kernel::dtb:DEBUG -- soc device pcie@1c00000 0x60100000 -> 0x60100000 len 0x00100000
+kernel::startup::memory:DEBUG -- Registering Device memory 60100000 size 100000
+kernel::dtb:DEBUG -- soc device pcie@1c00000 0x01c07000 -> 0x01c07000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 1C07000 size 1000
+kernel::dtb:DEBUG -- soc device phy@1c06000 0x01c06000 -> 0x01c06000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 1C06000 size 1000
+kernel::dtb:DEBUG -- soc device pcie@1c08000 0x01c08000 -> 0x01c08000 len 0x00002000
+kernel::startup::memory:DEBUG -- Registering Device memory 1C08000 size 2000
+kernel::dtb:DEBUG -- soc device pcie@1c08000 0x40000000 -> 0x40000000 len 0x00000f1d
+kernel::startup::memory:DEBUG -- Registering Device memory 40000000 size F1D
+kernel::dtb:DEBUG -- soc device pcie@1c08000 0x40000f20 -> 0x40000f20 len 0x000000a8
+kernel::startup::memory:DEBUG -- Registering Device memory 40000F20 size A8
+kernel::dtb:DEBUG -- soc device pcie@1c08000 0x40100000 -> 0x40100000 len 0x00100000
+kernel::startup::memory:DEBUG -- Registering Device memory 40100000 size 100000
+kernel::dtb:DEBUG -- soc device pcie@1c08000 0x01c0c000 -> 0x01c0c000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 1C0C000 size 1000
+kernel::dtb:DEBUG -- soc device phy@1c0a000 0x01c0a000 -> 0x01c0a000 len 0x00002000
+kernel::startup::memory:DEBUG -- Registering Device memory 1C0A000 size 2000
+kernel::dtb:DEBUG -- soc device interconnect@1380000 0x01380000 -> 0x01380000 len 0x00027200
+kernel::startup::memory:DEBUG -- Registering Device memory 1380000 size 27200
+kernel::dtb:DEBUG -- soc device interconnect@14e0000 0x014e0000 -> 0x014e0000 len 0x00000400
+kernel::startup::memory:DEBUG -- Registering Device memory 14E0000 size 400
+kernel::dtb:DEBUG -- soc device interconnect@1500000 0x01500000 -> 0x01500000 len 0x00005080
+kernel::startup::memory:DEBUG -- Registering Device memory 1500000 size 5080
+kernel::dtb:DEBUG -- soc device interconnect@1620000 0x01620000 -> 0x01620000 len 0x00018080
+kernel::startup::memory:DEBUG -- Registering Device memory 1620000 size 18080
+kernel::dtb:DEBUG -- soc device interconnect@16e0000 0x016e0000 -> 0x016e0000 len 0x00015080
+kernel::startup::memory:DEBUG -- Registering Device memory 16E0000 size 15080
+kernel::dtb:DEBUG -- soc device interconnect@1700000 0x01700000 -> 0x01700000 len 0x0001f300
+kernel::startup::memory:DEBUG -- Registering Device memory 1700000 size 1F300
+kernel::dtb:DEBUG -- soc device interconnect@1740000 0x01740000 -> 0x01740000 len 0x0001c100
+kernel::startup::memory:DEBUG -- Registering Device memory 1740000 size 1C100
+kernel::dtb:DEBUG -- soc device ufshc@1d84000 0x01d84000 -> 0x01d84000 len 0x00002500
+kernel::startup::memory:DEBUG -- Registering Device memory 1D84000 size 2500
+kernel::dtb:DEBUG -- soc device ufshc@1d84000 0x01d90000 -> 0x01d90000 len 0x00008000
+kernel::startup::memory:DEBUG -- Registering Device memory 1D90000 size 8000
+kernel::dtb:DEBUG -- soc device phy@1d87000 0x01d87000 -> 0x01d87000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 1D87000 size 1000
+kernel::dtb:DEBUG -- soc device dma-controller@1dc4000 0x01dc4000 -> 0x01dc4000 len 0x00024000
+kernel::startup::memory:DEBUG -- Registering Device memory 1DC4000 size 24000
+kernel::dtb:DEBUG -- soc device crypto@1dfa000 0x01dfa000 -> 0x01dfa000 len 0x00006000
+kernel::startup::memory:DEBUG -- Registering Device memory 1DFA000 size 6000
+kernel::dtb:DEBUG -- soc device ipa@1e40000 0x01e40000 -> 0x01e40000 len 0x00007000
+kernel::startup::memory:DEBUG -- Registering Device memory 1E40000 size 7000
+kernel::dtb:DEBUG -- soc device ipa@1e40000 0x01e47000 -> 0x01e47000 len 0x00002000
+kernel::startup::memory:DEBUG -- Registering Device memory 1E47000 size 2000
+kernel::dtb:DEBUG -- soc device ipa@1e40000 0x01e04000 -> 0x01e04000 len 0x0002c000
+kernel::startup::memory:DEBUG -- Registering Device memory 1E04000 size 2C000
+kernel::dtb:DEBUG -- soc device hwlock@1f40000 0x01f40000 -> 0x01f40000 len 0x00020000
+kernel::startup::memory:DEBUG -- Registering Device memory 1F40000 size 20000
+kernel::dtb:DEBUG -- soc device syscon@1f60000 0x01f60000 -> 0x01f60000 len 0x00020000
+kernel::startup::memory:DEBUG -- Registering Device memory 1F60000 size 20000
+kernel::dtb:DEBUG -- soc device pinctrl@3400000 0x03400000 -> 0x03400000 len 0x00c00000
+kernel::startup::memory:DEBUG -- Registering Device memory 3400000 size C00000
+kernel::dtb:DEBUG -- soc device remoteproc@4080000 0x04080000 -> 0x04080000 len 0x00000408
+kernel::startup::memory:DEBUG -- Registering Device memory 4080000 size 408
+kernel::dtb:DEBUG -- soc device remoteproc@4080000 0x04180000 -> 0x04180000 len 0x00000048
+kernel::startup::memory:DEBUG -- Registering Device memory 4180000 size 48
+kernel::dtb:DEBUG -- soc device clock-controller@5090000 0x05090000 -> 0x05090000 len 0x00009000
+kernel::startup::memory:DEBUG -- Registering Device memory 5090000 size 9000
+kernel::dtb:DEBUG -- soc device remoteproc@5c00000 0x05c00000 -> 0x05c00000 len 0x00004000
+kernel::startup::memory:DEBUG -- Registering Device memory 5C00000 size 4000
+kernel::dtb:DEBUG -- soc device stm@6002000 0x06002000 -> 0x06002000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 6002000 size 1000
+kernel::dtb:DEBUG -- soc device stm@6002000 0x16280000 -> 0x16280000 len 0x00180000
+kernel::startup::memory:DEBUG -- Registering Device memory 16280000 size 180000
+kernel::dtb:DEBUG -- soc device funnel@6041000 0x06041000 -> 0x06041000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 6041000 size 1000
+kernel::dtb:DEBUG -- soc device funnel@6043000 0x06043000 -> 0x06043000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 6043000 size 1000
+kernel::dtb:DEBUG -- soc device funnel@6045000 0x06045000 -> 0x06045000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 6045000 size 1000
+kernel::dtb:DEBUG -- soc device replicator@6046000 0x06046000 -> 0x06046000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 6046000 size 1000
+kernel::dtb:DEBUG -- soc device etf@6047000 0x06047000 -> 0x06047000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 6047000 size 1000
+kernel::dtb:DEBUG -- soc device etr@6048000 0x06048000 -> 0x06048000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 6048000 size 1000
+kernel::dtb:DEBUG -- soc device etm@7040000 0x07040000 -> 0x07040000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 7040000 size 1000
+kernel::dtb:DEBUG -- soc device etm@7140000 0x07140000 -> 0x07140000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 7140000 size 1000
+kernel::dtb:DEBUG -- soc device etm@7240000 0x07240000 -> 0x07240000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 7240000 size 1000
+kernel::dtb:DEBUG -- soc device etm@7340000 0x07340000 -> 0x07340000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 7340000 size 1000
+kernel::dtb:DEBUG -- soc device etm@7440000 0x07440000 -> 0x07440000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 7440000 size 1000
+kernel::dtb:DEBUG -- soc device etm@7540000 0x07540000 -> 0x07540000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 7540000 size 1000
+kernel::dtb:DEBUG -- soc device etm@7640000 0x07640000 -> 0x07640000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 7640000 size 1000
+kernel::dtb:DEBUG -- soc device etm@7740000 0x07740000 -> 0x07740000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 7740000 size 1000
+kernel::dtb:DEBUG -- soc device funnel@7800000 0x07800000 -> 0x07800000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 7800000 size 1000
+kernel::dtb:DEBUG -- soc device funnel@7810000 0x07810000 -> 0x07810000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 7810000 size 1000
+kernel::dtb:DEBUG -- soc device mmc@8804000 0x08804000 -> 0x08804000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 8804000 size 1000
+kernel::dtb:DEBUG -- soc device spi@88df000 0x088df000 -> 0x088df000 len 0x00000600
+kernel::startup::memory:DEBUG -- Registering Device memory 88DF000 size 600
+kernel::dtb:DEBUG -- soc device slim-ngd@171c0000 0x171c0000 -> 0x171c0000 len 0x0002c000
+kernel::startup::memory:DEBUG -- Registering Device memory 171C0000 size 2C000
+kernel::dtb:DEBUG -- soc device lmh@17d70800 0x17d70800 -> 0x17d70800 len 0x00000400
+kernel::startup::memory:DEBUG -- Registering Device memory 17D70800 size 400
+kernel::dtb:DEBUG -- soc device lmh@17d78800 0x17d78800 -> 0x17d78800 len 0x00000400
+kernel::startup::memory:DEBUG -- Registering Device memory 17D78800 size 400
+kernel::dtb:DEBUG -- soc device phy@88e2000 0x088e2000 -> 0x088e2000 len 0x00000400
+kernel::startup::memory:DEBUG -- Registering Device memory 88E2000 size 400
+kernel::dtb:DEBUG -- soc device phy@88e3000 0x088e3000 -> 0x088e3000 len 0x00000400
+kernel::startup::memory:DEBUG -- Registering Device memory 88E3000 size 400
+kernel::dtb:DEBUG -- soc device phy@88e8000 0x088e8000 -> 0x088e8000 len 0x00003000
+kernel::startup::memory:DEBUG -- Registering Device memory 88E8000 size 3000
+kernel::dtb:DEBUG -- soc device phy@88eb000 0x088eb000 -> 0x088eb000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 88EB000 size 1000
+kernel::dtb:DEBUG -- soc device usb@a6f8800 0x0a6f8800 -> 0x0a6f8800 len 0x00000400
+kernel::startup::memory:DEBUG -- Registering Device memory A6F8800 size 400
+kernel::dtb:DEBUG -- soc device usb@a8f8800 0x0a8f8800 -> 0x0a8f8800 len 0x00000400
+kernel::startup::memory:DEBUG -- Registering Device memory A8F8800 size 400
+kernel::dtb:DEBUG -- soc device video-codec@aa00000 0x0aa00000 -> 0x0aa00000 len 0x000ff000
+kernel::startup::memory:DEBUG -- Registering Device memory AA00000 size FF000
+kernel::dtb:DEBUG -- soc device clock-controller@ab00000 0x0ab00000 -> 0x0ab00000 len 0x00010000
+kernel::startup::memory:DEBUG -- Registering Device memory AB00000 size 10000
+kernel::dtb:DEBUG -- soc device camss@acb3000 0x0acb3000 -> 0x0acb3000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory ACB3000 size 1000
+kernel::dtb:DEBUG -- soc device camss@acb3000 0x0acba000 -> 0x0acba000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory ACBA000 size 1000
+kernel::dtb:DEBUG -- soc device camss@acb3000 0x0acc8000 -> 0x0acc8000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory ACC8000 size 1000
+kernel::dtb:DEBUG -- soc device camss@acb3000 0x0ac65000 -> 0x0ac65000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory AC65000 size 1000
+kernel::dtb:DEBUG -- soc device camss@acb3000 0x0ac66000 -> 0x0ac66000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory AC66000 size 1000
+kernel::dtb:DEBUG -- soc device camss@acb3000 0x0ac67000 -> 0x0ac67000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory AC67000 size 1000
+kernel::dtb:DEBUG -- soc device camss@acb3000 0x0ac68000 -> 0x0ac68000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory AC68000 size 1000
+kernel::dtb:DEBUG -- soc device camss@acb3000 0x0acaf000 -> 0x0acaf000 len 0x00004000
+kernel::startup::memory:DEBUG -- Registering Device memory ACAF000 size 4000
+kernel::dtb:DEBUG -- soc device camss@acb3000 0x0acb6000 -> 0x0acb6000 len 0x00004000
+kernel::startup::memory:DEBUG -- Registering Device memory ACB6000 size 4000
+kernel::dtb:DEBUG -- soc device camss@acb3000 0x0acc4000 -> 0x0acc4000 len 0x00004000
+kernel::startup::memory:DEBUG -- Registering Device memory ACC4000 size 4000
+kernel::dtb:DEBUG -- soc device cci@ac4a000 0x0ac4a000 -> 0x0ac4a000 len 0x00004000
+kernel::startup::memory:DEBUG -- Registering Device memory AC4A000 size 4000
+kernel::dtb:DEBUG -- soc device clock-controller@ad00000 0x0ad00000 -> 0x0ad00000 len 0x00010000
+kernel::startup::memory:DEBUG -- Registering Device memory AD00000 size 10000
+kernel::dtb:DEBUG -- soc device display-subsystem@ae00000 0x0ae00000 -> 0x0ae00000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory AE00000 size 1000
+kernel::dtb:DEBUG -- soc device gpu@5000000 0x05000000 -> 0x05000000 len 0x00040000
+kernel::startup::memory:DEBUG -- Registering Device memory 5000000 size 40000
+kernel::dtb:DEBUG -- soc device gpu@5000000 0x0509e000 -> 0x0509e000 len 0x00000010
+kernel::startup::memory:DEBUG -- Registering Device memory 509E000 size 10
+kernel::dtb:DEBUG -- soc device iommu@5040000 0x05040000 -> 0x05040000 len 0x00010000
+kernel::startup::memory:DEBUG -- Registering Device memory 5040000 size 10000
+kernel::dtb:DEBUG -- soc device gmu@506a000 0x0506a000 -> 0x0506a000 len 0x00030000
+kernel::startup::memory:DEBUG -- Registering Device memory 506A000 size 30000
+kernel::dtb:DEBUG -- soc device gmu@506a000 0x0b280000 -> 0x0b280000 len 0x00010000
+kernel::startup::memory:DEBUG -- Registering Device memory B280000 size 10000
+kernel::dtb:DEBUG -- soc device gmu@506a000 0x0b480000 -> 0x0b480000 len 0x00010000
+kernel::startup::memory:DEBUG -- Registering Device memory B480000 size 10000
+kernel::dtb:DEBUG -- soc device clock-controller@af00000 0x0af00000 -> 0x0af00000 len 0x00010000
+kernel::startup::memory:DEBUG -- Registering Device memory AF00000 size 10000
+kernel::dtb:DEBUG -- soc device interrupt-controller@b220000 0x0b220000 -> 0x0b220000 len 0x00010000
+kernel::startup::memory:DEBUG -- Registering Device memory B220000 size 10000
+kernel::dtb:DEBUG -- soc device reset-controller@b2e0000 0x0b2e0000 -> 0x0b2e0000 len 0x00020000
+kernel::startup::memory:DEBUG -- Registering Device memory B2E0000 size 20000
+kernel::dtb:DEBUG -- soc device thermal-sensor@c263000 0x0c263000 -> 0x0c263000 len 0x000001ff
+kernel::startup::memory:DEBUG -- Registering Device memory C263000 size 1FF
+kernel::dtb:DEBUG -- soc device thermal-sensor@c263000 0x0c222000 -> 0x0c222000 len 0x000001ff
+kernel::startup::memory:DEBUG -- Registering Device memory C222000 size 1FF
+kernel::dtb:DEBUG -- soc device thermal-sensor@c265000 0x0c265000 -> 0x0c265000 len 0x000001ff
+kernel::startup::memory:DEBUG -- Registering Device memory C265000 size 1FF
+kernel::dtb:DEBUG -- soc device thermal-sensor@c265000 0x0c223000 -> 0x0c223000 len 0x000001ff
+kernel::startup::memory:DEBUG -- Registering Device memory C223000 size 1FF
+kernel::dtb:DEBUG -- soc device reset-controller@c2a0000 0x0c2a0000 -> 0x0c2a0000 len 0x00031000
+kernel::startup::memory:DEBUG -- Registering Device memory C2A0000 size 31000
+kernel::dtb:DEBUG -- soc device power-management@c300000 0x0c300000 -> 0x0c300000 len 0x00000400
+kernel::startup::memory:DEBUG -- Registering Device memory C300000 size 400
+kernel::dtb:DEBUG -- soc device sram@c3f0000 0x0c3f0000 -> 0x0c3f0000 len 0x00000400
+kernel::startup::memory:DEBUG -- Registering Device memory C3F0000 size 400
+kernel::dtb:DEBUG -- soc device spmi@c440000 0x0c440000 -> 0x0c440000 len 0x00001100
+kernel::startup::memory:DEBUG -- Registering Device memory C440000 size 1100
+kernel::dtb:DEBUG -- soc device spmi@c440000 0x0c600000 -> 0x0c600000 len 0x02000000
+kernel::startup::memory:DEBUG -- Registering Device memory C600000 size 2000000
+kernel::dtb:DEBUG -- soc device spmi@c440000 0x0e600000 -> 0x0e600000 len 0x00100000
+kernel::startup::memory:DEBUG -- Registering Device memory E600000 size 100000
+kernel::dtb:DEBUG -- soc device spmi@c440000 0x0e700000 -> 0x0e700000 len 0x000a0000
+kernel::startup::memory:DEBUG -- Registering Device memory E700000 size A0000
+kernel::dtb:DEBUG -- soc device spmi@c440000 0x0c40a000 -> 0x0c40a000 len 0x00026000
+kernel::startup::memory:DEBUG -- Registering Device memory C40A000 size 26000
+kernel::dtb:DEBUG -- soc device sram@14680000 0x14680000 -> 0x14680000 len 0x00040000
+kernel::startup::memory:DEBUG -- Registering Device memory 14680000 size 40000
+kernel::dtb:DEBUG -- soc device iommu@15000000 0x15000000 -> 0x15000000 len 0x00080000
+kernel::startup::memory:DEBUG -- Registering Device memory 15000000 size 80000
+kernel::dtb:DEBUG -- soc device tbu@150c5000 0x150c5000 -> 0x150c5000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 150C5000 size 1000
+kernel::dtb:DEBUG -- soc device tbu@150c9000 0x150c9000 -> 0x150c9000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 150C9000 size 1000
+kernel::dtb:DEBUG -- soc device tbu@150cd000 0x150cd000 -> 0x150cd000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 150CD000 size 1000
+kernel::dtb:DEBUG -- soc device tbu@150d1000 0x150d1000 -> 0x150d1000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 150D1000 size 1000
+kernel::dtb:DEBUG -- soc device tbu@150d5000 0x150d5000 -> 0x150d5000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 150D5000 size 1000
+kernel::dtb:DEBUG -- soc device tbu@150d9000 0x150d9000 -> 0x150d9000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 150D9000 size 1000
+kernel::dtb:DEBUG -- soc device tbu@150dd000 0x150dd000 -> 0x150dd000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 150DD000 size 1000
+kernel::dtb:DEBUG -- soc device tbu@150e1000 0x150e1000 -> 0x150e1000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 150E1000 size 1000
+kernel::dtb:DEBUG -- soc device clock-controller@17014000 0x17014000 -> 0x17014000 len 0x0001f004
+kernel::startup::memory:DEBUG -- Registering Device memory 17014000 size 1F004
+kernel::dtb:DEBUG -- soc device clock-controller@17014000 0x17300000 -> 0x17300000 len 0x00000200
+kernel::startup::memory:DEBUG -- Registering Device memory 17300000 size 200
+kernel::dtb:DEBUG -- soc device interconnect@17900000 0x17900000 -> 0x17900000 len 0x0000d080
+kernel::startup::memory:DEBUG -- Registering Device memory 17900000 size D080
+kernel::dtb:DEBUG -- soc device watchdog@17980000 0x17980000 -> 0x17980000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 17980000 size 1000
+kernel::dtb:DEBUG -- soc device mailbox@17990000 0x17990000 -> 0x17990000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 17990000 size 1000
+kernel::dtb:DEBUG -- soc device rsc@179c0000 0x179c0000 -> 0x179c0000 len 0x00010000
+kernel::startup::memory:DEBUG -- Registering Device memory 179C0000 size 10000
+kernel::dtb:DEBUG -- soc device rsc@179c0000 0x179d0000 -> 0x179d0000 len 0x00010000
+kernel::startup::memory:DEBUG -- Registering Device memory 179D0000 size 10000
+kernel::dtb:DEBUG -- soc device rsc@179c0000 0x179e0000 -> 0x179e0000 len 0x00010000
+kernel::startup::memory:DEBUG -- Registering Device memory 179E0000 size 10000
+kernel::dtb:DEBUG -- soc device interrupt-controller@17a00000 0x17a00000 -> 0x17a00000 len 0x00010000
+kernel::startup::memory:DEBUG -- Registering Device memory 17A00000 size 10000
+kernel::dtb:DEBUG -- soc device interrupt-controller@17a00000 0x17a60000 -> 0x17a60000 len 0x00100000
+kernel::startup::memory:DEBUG -- Registering Device memory 17A60000 size 100000
+kernel::dtb:DEBUG -- soc device dma-controller@17184000 0x17184000 -> 0x17184000 len 0x0002a000
+kernel::startup::memory:DEBUG -- Registering Device memory 17184000 size 2A000
+kernel::dtb:DEBUG -- soc device timer@17c90000 0x17c90000 -> 0x17c90000 len 0x00001000
+kernel::startup::memory:DEBUG -- Registering Device memory 17C90000 size 1000
+kernel::dtb:DEBUG -- soc device interconnect@17d41000 0x17d41000 -> 0x17d41000 len 0x00001400
+kernel::startup::memory:DEBUG -- Registering Device memory 17D41000 size 1400
+kernel::dtb:DEBUG -- soc device cpufreq@17d43000 0x17d43000 -> 0x17d43000 len 0x00001400
+kernel::startup::memory:DEBUG -- Registering Device memory 17D43000 size 1400
+kernel::dtb:DEBUG -- soc device cpufreq@17d43000 0x17d45800 -> 0x17d45800 len 0x00001400
+kernel::startup::memory:DEBUG -- Registering Device memory 17D45800 size 1400
+kernel::dtb:DEBUG -- soc device wifi@18800000 0x18800000 -> 0x18800000 len 0x00800000
+kernel::startup::memory:DEBUG -- Registering Device memory 18800000 size 800000
+kernel::dtb:DEBUG -- diagnostic UART 0x00a84000 size 0x00004000
+kernel::startup::memory:DEBUG -- Registering Device memory A84000 size 4000
+kernel::startup::memory:DEBUG -- Registering Kernel memory 16285E000 size 1A1878
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory 17E4A8000 size F3
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory 17E4B8000 size 27000
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory 15FF93000 size C58000
+kernel::startup::memory:DEBUG -- Registering IdentityMap memory 17E4E6000 size 20000
+kernel::startup::memory:DEBUG -- 97C00000:9D400000
+kernel::startup::memory:DEBUG -- 80000000:85700000
+kernel::startup::memory:DEBUG -- 17FDC0000:180000000
+kernel::startup::memory:DEBUG -- 85D00000:85E00000
+kernel::startup::memory:DEBUG -- 85F00000:85FC0000
+kernel::startup::memory:DEBUG -- 8C417000:8C500000
+kernel::startup::memory:DEBUG -- 9F800000:F5B00000
+kernel::startup::memory:INFO -- Memory 9F800000:F5B00000 contains reservation AC300000:AC700000
+kernel::startup::memory:DEBUG -- F5D02000:15FF93000
+kernel::startup::memory:DEBUG -- 160BEB000:161BA8000
+kernel::startup::memory:DEBUG -- 162801000:16285E000
+kernel::startup::memory:DEBUG -- 162A00000:17E4A1000
+kernel::startup::memory:DEBUG -- 17E4E4000:17E4E5000
+kernel::startup::memory:DEBUG -- 17E506000:17E508000
+kernel::startup::memory:DEBUG -- 17E532000:17E53A000
+kernel::startup::memory:DEBUG -- 17E53B000:17E53E000
+kernel::startup::memory:DEBUG -- 17E560000:17F5F5000
+kernel::startup::memory:DEBUG -- 17F5F6000:17FDA0000
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x80000000], size: 5700000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x85d00000], size: 100000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x85f00000], size: C0000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x8c417000], size: E9000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x97c00000], size: 5800000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x9f800000], size: CB00000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xac700000], size: 49400000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0xf5d02000], size: 6A291000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x160beb000], size: FBD000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x162801000], size: 5D000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x162a00000], size: 1BAA1000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x17e4e4000], size: 1000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x17e506000], size: 2000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x17e532000], size: 8000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x17e53b000], size: 3000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x17e560000], size: 1095000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x17f5f6000], size: 7AA000 }
+kernel::startup::memory:DEBUG -- MemoryArea { base: [phys 0x17fdc0000], size: 240000 }
+kernel::startup::memory:INFO -- Memory: 3737 MB
+kernel::startup::memory:INFO -- Highest huge page level: 0
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x80000000 => 0xffff800080000000, 22272 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x80000000 remaining 22272
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x85d00000 => 0xffff800085d00000, 256 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x85d00000 remaining 256
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x85f00000 => 0xffff800085f00000, 192 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x85f00000 remaining 192
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x8c417000 => 0xffff80008c417000, 233 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x8c417000 remaining 233
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x97c00000 => 0xffff800097c00000, 22528 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x97c00000 remaining 22528
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x9f800000 => 0xffff80009f800000, 51968 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x9f800000 remaining 51968
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xac700000 => 0xffff8000ac700000, 300032 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xac700000 remaining 300032
+kernel::startup::memory:DEBUG -- Contiguously mapping 0xf5d02000 => 0xffff8000f5d02000, 434833 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0xf5d02000 remaining 434833
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x160beb000 => 0xffff800160beb000, 4029 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x160beb000 remaining 4029
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x162801000 => 0xffff800162801000, 93 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x162801000 remaining 93
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x162a00000 => 0xffff800162a00000, 113313 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x162a00000 remaining 113313
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x17e4e4000 => 0xffff80017e4e4000, 1 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x17e4e4000 remaining 1
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x17e506000 => 0xffff80017e506000, 2 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x17e506000 remaining 2
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x17e532000 => 0xffff80017e532000, 8 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x17e532000 remaining 8
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x17e53b000 => 0xffff80017e53b000, 3 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x17e53b000 remaining 3
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x17e560000 => 0xffff80017e560000, 4245 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x17e560000 remaining 4245
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x17f5f6000 => 0xffff80017f5f6000, 1962 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x17f5f6000 remaining 1962
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x17fdc0000 => 0xffff80017fdc0000, 576 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x17fdc0000 remaining 576
+kernel::startup::memory:DEBUG -- MAPPING STACK, BASE 17e4e6000 SIZE 20000
+kernel::startup::memory:DEBUG -- Contiguously mapping 0x17e4e6000 => 0xffff80017e4e6000, 32 pages, level 0
+kernel::startup::memory:DEBUG -- head+middle lvl 0 next 0 pages_per_iter 1 base 0x17e4e6000 remaining 32
+kernel::startup::memory:DEBUG -- Table: 80000000
+kernel::startup::memory:DEBUG -- 256: 80001403
+kernel::startup::memory:DEBUG -- 510: 80759403
+kernel::startup::memory:INFO -- Permanently used: 7856 KB
+kernel::acpi:ERROR -- NO RSDP FOUND
+kernel::memory:DEBUG -- Initial freelist consistent
+kernel::arch::aarch64::device:INFO -- PSCI INIT
+kernel::arch::aarch64::device::psci:INFO -- PSCI 1.1 using smc conduit from device tree
+kernel::arch::aarch64::device:INFO -- CPU TOPOLOGY INIT
+kernel::arch::aarch64::device::cpu::topology:INFO -- DT CPU topology: 8 enabled, 0 disabled, BSP MPIDR=0x0, 7 PSCI secondaries
+kernel::arch::aarch64::device::cpu::topology:DEBUG -- CPU topology logical #0: MPIDR=0x0 boot=true enable-method=psci
+kernel::arch::aarch64::device::cpu::topology:DEBUG -- CPU topology logical #1: MPIDR=0x100 boot=false enable-method=psci
+kernel::arch::aarch64::device::cpu::topology:DEBUG -- CPU topology logical #2: MPIDR=0x200 boot=false enable-method=psci
+kernel::arch::aarch64::device::cpu::topology:DEBUG -- CPU topology logical #3: MPIDR=0x300 boot=false enable-method=psci
+kernel::arch::aarch64::device::cpu::topology:DEBUG -- CPU topology logical #4: MPIDR=0x400 boot=false enable-method=psci
+kernel::arch::aarch64::device::cpu::topology:DEBUG -- CPU topology logical #5: MPIDR=0x500 boot=false enable-method=psci
+kernel::arch::aarch64::device::cpu::topology:DEBUG -- CPU topology logical #6: MPIDR=0x600 boot=false enable-method=psci
+kernel::arch::aarch64::device::cpu::topology:DEBUG -- CPU topology logical #7: MPIDR=0x700 boot=false enable-method=psci
+kernel::arch::aarch64::device::cpu::boot:INFO -- BSP translation-table walks are inner-shareable: TCR_EL1=0x12b5103510
+kernel::arch::aarch64::device::cpu::boot:INFO -- CPU boot resources: 7 PSCI slots ready, trampoline=0x8c443000, idmap=0x8c444000
+kernel::arch::aarch64::device::cpu::boot:DEBUG -- CPU boot slot logical #1: MPIDR=0x100 stack_phys=0x8c450000..0x8c460000 percpu_phys=0x8c448000 args_phys=0x8c449000
+kernel::arch::aarch64::device::cpu::boot:DEBUG -- CPU boot slot logical #2: MPIDR=0x200 stack_phys=0x8c460000..0x8c470000 percpu_phys=0x8c44a000 args_phys=0x8c44b000
+kernel::arch::aarch64::device::cpu::boot:DEBUG -- CPU boot slot logical #3: MPIDR=0x300 stack_phys=0x8c470000..0x8c480000 percpu_phys=0x8c44c000 args_phys=0x8c44d000
+kernel::arch::aarch64::device::cpu::boot:DEBUG -- CPU boot slot logical #4: MPIDR=0x400 stack_phys=0xf5d40000..0xf5d50000 percpu_phys=0x8c44e000 args_phys=0x8c44f000
+kernel::arch::aarch64::device::cpu::boot:DEBUG -- CPU boot slot logical #5: MPIDR=0x500 stack_phys=0xf5d50000..0xf5d60000 percpu_phys=0xf5d60000 args_phys=0xf5d61000
+kernel::arch::aarch64::device::cpu::boot:DEBUG -- CPU boot slot logical #6: MPIDR=0x600 stack_phys=0xf5d70000..0xf5d80000 percpu_phys=0xf5d62000 args_phys=0xf5d63000
+kernel::arch::aarch64::device::cpu::boot:DEBUG -- CPU boot slot logical #7: MPIDR=0x700 stack_phys=0x17f580000..0x17f590000 percpu_phys=0xf5d64000 args_phys=0xf5d65000
+kernel::arch::aarch64::device:INFO -- IRQCHIP INIT
+kernel::dtb:DEBUG -- root parent = 0x00000001
+kernel::dtb:DEBUG -- pinctrl@3400000, compatible = qcom,sdm845-pinctrl, #interrupt-cells = 0x00000002, phandle = 0x0000004a
+kernel::dtb:DEBUG -- interrupt-parent = 0x00000161
+kernel::dtb:DEBUG -- interrupts begin:
+kernel::dtb:DEBUG -- 0x00000000, 
+kernel::dtb:DEBUG -- 0x000000d0, 
+kernel::dtb:DEBUG -- 0x00000004, 
+kernel::dtb:DEBUG -- interrupts end
+kernel::dtb:DEBUG -- codec@1,0, compatible = slim217,250, #interrupt-cells = 0x00000001, phandle = 0x000000c0
+kernel::dtb:DEBUG -- lmh@17d70800, compatible = qcom,sdm845-lmh, #interrupt-cells = 0x00000001, phandle = 0x000000fe
+kernel::dtb:DEBUG -- interrupt-parent = 0x00000161
+kernel::dtb:DEBUG -- interrupts begin:
+kernel::dtb:DEBUG -- 0x00000000, 
+kernel::dtb:DEBUG -- 0x00000021, 
+kernel::dtb:DEBUG -- 0x00000004, 
+kernel::dtb:DEBUG -- interrupts end
+kernel::dtb:DEBUG -- lmh@17d78800, compatible = qcom,sdm845-lmh, #interrupt-cells = 0x00000001, phandle = 0x000000fd
+kernel::dtb:DEBUG -- interrupt-parent = 0x00000161
+kernel::dtb:DEBUG -- interrupts begin:
+kernel::dtb:DEBUG -- 0x00000000, 
+kernel::dtb:DEBUG -- 0x00000020, 
+kernel::dtb:DEBUG -- 0x00000004, 
+kernel::dtb:DEBUG -- interrupts end
+kernel::dtb:DEBUG -- display-subsystem@ae00000, compatible = qcom,sdm845-mdss, #interrupt-cells = 0x00000001, phandle = 0x000000d7
+kernel::dtb:DEBUG -- interrupt-parent = 0x00000161
+kernel::dtb:DEBUG -- interrupts begin:
+kernel::dtb:DEBUG -- 0x00000000, 
+kernel::dtb:DEBUG -- 0x00000053, 
+kernel::dtb:DEBUG -- 0x00000004, 
+kernel::dtb:DEBUG -- interrupts end
+kernel::dtb:DEBUG -- interrupt-controller@b220000, compatible = qcom,sdm845-pdc, #interrupt-cells = 0x00000002, phandle = 0x0000008d
+kernel::dtb:DEBUG -- interrupts end
+kernel::dtb:DEBUG -- spmi@c440000, compatible = qcom,spmi-pmic-arb, #interrupt-cells = 0x00000004, phandle = 0x000001f7
+kernel::dtb:DEBUG -- interrupt-parent = 0x00000161
+kernel::dtb:DEBUG -- interrupts begin:
+kernel::dtb:DEBUG -- 0x00000000, 
+kernel::dtb:DEBUG -- 0x000001e1, 
+kernel::dtb:DEBUG -- 0x00000004, 
+kernel::dtb:DEBUG -- interrupts end
+kernel::dtb:DEBUG -- gpio@c000, compatible = qcom,pm8998-gpio, #interrupt-cells = 0x00000002, phandle = 0x000000f3
+kernel::dtb:DEBUG -- interrupts end
+kernel::dtb:DEBUG -- gpio@c000, compatible = qcom,pmi8998-gpio, #interrupt-cells = 0x00000002, phandle = 0x000000f5
+kernel::dtb:DEBUG -- interrupts end
+kernel::dtb:DEBUG -- interrupt-controller@17a00000, compatible = arm,gic-v3, #interrupt-cells = 0x00000003, phandle = 0x00000001
+kernel::dtb:DEBUG -- interrupt-parent = 0x00000161
+kernel::dtb:DEBUG -- interrupts begin:
+kernel::dtb:DEBUG -- 0x00000001, 
+kernel::dtb:DEBUG -- 0x00000009, 
+kernel::dtb:DEBUG -- 0x00000004, 
+kernel::dtb:DEBUG -- interrupts end
+kernel::dtb::irqchip:DEBUG -- pinctrl@3400000, compatible = qcom,sdm845-pinctrl, #interrupt-cells = 0x00000002, phandle = 0x0000004a
+kernel::dtb::irqchip:DEBUG -- interrupt-parent = 0x00000001, L3(0, 208, 4)
+kernel::dtb::irqchip:DEBUG -- codec@1,0, compatible = slim217,250, #interrupt-cells = 0x00000001, phandle = 0x000000c0
+kernel::arch::aarch64::device::irqchip:WARN -- no driver for interrupt controller "slim217,250"
+kernel::dtb::irqchip:DEBUG -- interrupt-parent = 0x0000004a, L2(54, 4)
+kernel::dtb::irqchip:DEBUG -- lmh@17d70800, compatible = qcom,sdm845-lmh, #interrupt-cells = 0x00000001, phandle = 0x000000fe
+kernel::arch::aarch64::device::irqchip:WARN -- no driver for interrupt controller "qcom,sdm845-lmh"
+kernel::dtb::irqchip:DEBUG -- interrupt-parent = 0x00000001, L3(0, 33, 4)
+kernel::dtb::irqchip:DEBUG -- lmh@17d78800, compatible = qcom,sdm845-lmh, #interrupt-cells = 0x00000001, phandle = 0x000000fd
+kernel::arch::aarch64::device::irqchip:WARN -- no driver for interrupt controller "qcom,sdm845-lmh"
+kernel::dtb::irqchip:DEBUG -- interrupt-parent = 0x00000001, L3(0, 32, 4)
+kernel::dtb::irqchip:DEBUG -- display-subsystem@ae00000, compatible = qcom,sdm845-mdss, #interrupt-cells = 0x00000001, phandle = 0x000000d7
+kernel::arch::aarch64::device::irqchip:WARN -- no driver for interrupt controller "qcom,sdm845-mdss"
+kernel::dtb::irqchip:DEBUG -- interrupt-parent = 0x00000001, L3(0, 83, 4)
+kernel::dtb::irqchip:DEBUG -- interrupt-controller@b220000, compatible = qcom,sdm845-pdc, #interrupt-cells = 0x00000002, phandle = 0x0000008d
+kernel::dtb::irqchip:DEBUG -- spmi@c440000, compatible = qcom,spmi-pmic-arb, #interrupt-cells = 0x00000004, phandle = 0x000001f7
+kernel::arch::aarch64::device::irqchip:WARN -- no driver for interrupt controller "qcom,spmi-pmic-arb"
+kernel::dtb::irqchip:DEBUG -- interrupt-parent = 0x00000001, L3(0, 481, 4)
+kernel::dtb::irqchip:DEBUG -- gpio@c000, compatible = qcom,pm8998-gpio, #interrupt-cells = 0x00000002, phandle = 0x000000f3
+kernel::arch::aarch64::device::irqchip:WARN -- no driver for interrupt controller "qcom,pm8998-gpio"
+kernel::dtb::irqchip:DEBUG -- gpio@c000, compatible = qcom,pmi8998-gpio, #interrupt-cells = 0x00000002, phandle = 0x000000f5
+kernel::arch::aarch64::device::irqchip:WARN -- no driver for interrupt controller "qcom,pmi8998-gpio"
+kernel::dtb::irqchip:DEBUG -- interrupt-controller@17a00000, compatible = arm,gic-v3, #interrupt-cells = 0x00000003, phandle = 0x00000001
+kernel::dtb::irqchip:DEBUG -- interrupt-parent = 0x00000001, L3(1, 9, 4)
+kernel::arch::aarch64::device:INFO -- select 9 as root ic
+kernel::arch::aarch64::device:INFO -- GIT INIT
+kernel::arch::aarch64::device::generic_timer:DEBUG -- generic_timer use_virtual_timer = false
+kernel::arch::aarch64::device::generic_timer:DEBUG -- architected timer irq = L3(1, 2, 8)
+kernel::arch::aarch64::device::generic_timer:ERROR -- failed to translate architected timer interrupt
+kernel::arch::aarch64::device:INFO -- SERIAL INIT
+kernel::arch::aarch64::device::serial:ERROR -- serial port interrupt configuration failed: Invalid argument
+kernel::arch::aarch64::device:INFO -- RTC INIT
+kernel::arch::aarch64::device::rtc:WARN -- No PL031 RTC found
+kernel::startup:INFO -- SECONDARY CPU INIT
+kernel::arch::aarch64::device::cpu::boot:ERROR -- CPU activation unavailable: PSCI secondary boot currently requires GICv2
+kernel::scheme::acpi:WARN -- expected RXSDT_ENUM to be initialized before AcpiScheme, is ACPI available?
+kernel::startup:DEBUG -- BSP: 1 CPUs
+kernel::startup:DEBUG -- Env: Ok("DTB_ADDR=000000017e4b8000\nDTB_SIZE=0000000000027000\nREDOX_RAMBOOT=1\nFRAMEBUFFER_ADDR=000000009d400000\nFRAMEBUFFER_VIRT=ffff80009d400000\nFRAMEBUFFER_WIDTH=0000000000000438\nFRAMEBUFFER_HEIGHT=00000000000008e8\nFRAMEBUFFER_STRIDE=0000000000000438\n")
+kernel::syscall::process:DEBUG -- Bootstrap entry point: 3000
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+init: switchroot to /scheme/initfs /scheme/initfs/etc
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+randd: Seeding failed, no entropy source.  Random numbers on this platform are NOT SECURE
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2
+timeline-demo-publish: sent 28 events to trace:publish
+spmid: PMIC type 0x51; power key enabled per OpenBSD qcpon status bit; verify on hardware before autostart
+Redox RAM shell. Type help for commands.
+ram:~$ kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2

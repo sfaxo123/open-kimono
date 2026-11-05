@@ -1,0 +1,55 @@
+{"seq":0,"ts_us":1793633536745411,"service":"voiced","trace_id":"00000000000000000000000000000001","payload":{"kind":"op6","type":"power_change","component":"mic","state":"on","reason":"voiced opened capture for a voice request"}}
+{"seq":1,"ts_us":1793633536745462,"service":"voiced","trace_id":"00000000000000000000000000000002","payload":{"kind":"op6","type":"wake_lock_acquired","holder":"voiced","deadline_us":15000650,"max_us":15000000}}
+{"seq":2,"ts_us":1793633536745469,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_started","device":"file:$HOME/agentic/fixtures/ask-request.wav"}}
+{"seq":3,"ts_us":1793633536747237,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.0011285334}}
+{"seq":4,"ts_us":1793633536747251,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.0021493363}}
+{"seq":5,"ts_us":1793633536747276,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.03648641}}
+{"seq":6,"ts_us":1793633536747280,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.19389644}}
+{"seq":7,"ts_us":1793633536747283,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.13809769}}
+{"seq":8,"ts_us":1793633536747287,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.038132567}}
+{"seq":9,"ts_us":1793633536747309,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.122108094}}
+{"seq":10,"ts_us":1793633536747313,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.048055492}}
+{"seq":11,"ts_us":1793633536747316,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.11271437}}
+{"seq":12,"ts_us":1793633536747320,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.028530281}}
+{"seq":13,"ts_us":1793633536747323,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.13647036}}
+{"seq":14,"ts_us":1793633536747327,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.05055202}}
+{"seq":15,"ts_us":1793633536747330,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.026274934}}
+{"seq":16,"ts_us":1793633536747334,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.04926403}}
+{"seq":17,"ts_us":1793633536747351,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.07917336}}
+{"seq":18,"ts_us":1793633536747364,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.06952554}}
+{"seq":19,"ts_us":1793633536747376,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.09489892}}
+{"seq":20,"ts_us":1793633536747387,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.038226176}}
+{"seq":21,"ts_us":1793633536747399,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.060881563}}
+{"seq":22,"ts_us":1793633536747412,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.064347304}}
+{"seq":23,"ts_us":1793633536747425,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.09871489}}
+{"seq":24,"ts_us":1793633536747455,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.05217583}}
+{"seq":25,"ts_us":1793633536747472,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.024088655}}
+{"seq":26,"ts_us":1793633536747486,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.059846874}}
+{"seq":27,"ts_us":1793633536747500,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.06665374}}
+{"seq":28,"ts_us":1793633536747513,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.047864065}}
+{"seq":29,"ts_us":1793633536747526,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.029558929}}
+{"seq":30,"ts_us":1793633536747539,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.004903028}}
+{"seq":31,"ts_us":1793633536747551,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.0003183122}}
+{"seq":32,"ts_us":1793633536747562,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.00009209156}}
+{"seq":33,"ts_us":1793633536747588,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.000091552734}}
+{"seq":34,"ts_us":1793633536747600,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.000091552734}}
+{"seq":35,"ts_us":1793633536747613,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.000091552734}}
+{"seq":36,"ts_us":1793633536747627,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.000091552734}}
+{"seq":37,"ts_us":1793633536747639,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.000091552734}}
+{"seq":38,"ts_us":1793633536747651,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_frame","level":0.000091552734}}
+{"seq":39,"ts_us":1793633536747664,"service":"voiced","trace_id":"00000000000000000000000000000003","payload":{"kind":"op6","type":"mic_stopped","reason":"file input consumed to the end"}}
+{"seq":40,"ts_us":1793633536747688,"service":"voiced","trace_id":"00000000000000000000000000000004","payload":{"kind":"op6","type":"power_change","component":"mic","state":"off","reason":"capture finished, microphone released"}}
+{"seq":41,"ts_us":1793633536747702,"service":"voiced","trace_id":"00000000000000000000000000000005","payload":{"kind":"op6","type":"handoff","destination":"cmd-stt","reason":"transcribe captured audio","status":"started"}}
+{"seq":42,"ts_us":1793633536747719,"service":"voiced","trace_id":"00000000000000000000000000000005","span_id":"0000000000000006","payload":{"kind":"gen_ai","event":"span_start","name":"execute_tool cmd-stt","attributes":{}}}
+{"seq":43,"ts_us":1793633540228637,"service":"voiced","trace_id":"00000000000000000000000000000005","span_id":"0000000000000006","payload":{"kind":"gen_ai","event":"span_end","name":"execute_tool cmd-stt","status":"ok","attributes":{}}}
+{"seq":44,"ts_us":1793633540228672,"service":"voiced","trace_id":"00000000000000000000000000000005","payload":{"kind":"op6","type":"stt_final","engine":"cmd-stt","text":"What is the battery level right now?","confidence":0.8,"latency_us":3480678}}
+{"seq":45,"ts_us":1793633540228682,"service":"voiced","trace_id":"00000000000000000000000000000005","payload":{"kind":"op6","type":"handoff","destination":"cmd-stt","reason":"transcript delivered","status":"completed"}}
+{"seq":46,"ts_us":1793633540229544,"service":"voiced","trace_id":"00000000000000000000000000000007","payload":{"kind":"op6","type":"handoff","destination":"agentd@127.0.0.1:8770","reason":"POST /request \"What is the battery level right now?\"","status":"started"}}
+{"seq":47,"ts_us":1793633544790685,"service":"voiced","trace_id":"00000000000000000000000000000008","payload":{"kind":"op6","type":"journal_dropped","count":0,"reason":"the server journals no user message: the answer was correlated by run position, not by the request text"}}
+{"seq":48,"ts_us":1793633544790725,"service":"voiced","trace_id":"00000000000000000000000000000008","payload":{"kind":"op6","type":"handoff","destination":"agentd@127.0.0.1:8770","reason":"answer received","status":"completed"}}
+{"seq":49,"ts_us":1793633544790765,"service":"voiced","trace_id":"00000000000000000000000000000009","payload":{"kind":"op6","type":"handoff","destination":"cmd-tts","reason":"synthesize speech for \"The battery is at 100% and currently showing as Full.\"","status":"started"}}
+{"seq":50,"ts_us":1793633544790774,"service":"voiced","trace_id":"00000000000000000000000000000009","span_id":"000000000000000a","payload":{"kind":"gen_ai","event":"span_start","name":"execute_tool cmd-tts","attributes":{}}}
+{"seq":51,"ts_us":1793633547560279,"service":"voiced","trace_id":"00000000000000000000000000000009","span_id":"000000000000000a","payload":{"kind":"gen_ai","event":"span_end","name":"execute_tool cmd-tts","status":"ok","attributes":{}}}
+{"seq":52,"ts_us":1793633547560318,"service":"voiced","trace_id":"00000000000000000000000000000009","payload":{"kind":"op6","type":"handoff","destination":"cmd-tts","reason":"188204 bytes of speech written to $HOME/agentic/out/a4-answer.wav in 2769 ms","status":"completed"}}
+{"seq":53,"ts_us":1793633547560326,"service":"voiced","trace_id":"0000000000000000000000000000000b","payload":{"kind":"op6","type":"handoff","destination":"playback:none","reason":"quiet mode: $HOME/agentic/out/a4-answer.wav written, not played","status":"completed"}}
+{"seq":54,"ts_us":1793633547560331,"service":"voiced","trace_id":"0000000000000000000000000000000c","payload":{"kind":"op6","type":"wake_lock_released","holder":"voiced","reason":"voice turn done in 10815 ms"}}

@@ -1,0 +1,276 @@
+From 20274391b808b30ba494eb92cbe072a45862731e Mon Sep 17 00:00:00 2001
+From: x <x@y.z>
+Date: Sat, 24 Oct 2026 23:29:53 +0000
+Subject: [PATCH 09/21] devices: deliver GENI debug UART RX through the SE
+ interrupt
+
+With IRQ numbers wider than u8 the console handler can take the GENI
+uart9 virq (SPI 354, virq 386), so stop masking SE interrupts. enable_irq
+now programs the RX stale timer (160 ticks, so a lone keystroke below the
+watermark still fires), unmasks only the RX watermark/last events plus the
+M-status SEC summary bit, and opens the M/S gates in SE_IRQ_EN. TX stays
+polled and no TX event is unmasked.
+
+The console IRQ handler acknowledges the S status and the SEC bit before
+draining the FIFO; the CMD_DONE handshake is left to polled TX. The
+register model now latches RX events, derives SEC from the S status and
+reports the interrupt line level for the tests.
+
+Bit positions: S_IRQ RX_FIFO_WATERMARK/LAST 26/27 and M_IRQ SEC_IRQ 31
+per OpenBSD qcuart.c @ 20cb344 (ISC); SE_IRQ_EN M/S bits 2/3 per U-Boot
+include/soc/qcom/geni-se.h @ 8649a54d (facts only, no code).
+
+Co-Authored-By: Cursor <noreply@cursor.com>
+Co-Authored-By: Codex <noreply@openai.com>
+---
+ src/devices/uart_qcom_geni.rs       | 46 ++++++++++++---
+ src/devices/uart_qcom_geni/model.rs | 29 ++++++++-
+ src/devices/uart_qcom_geni/tests.rs | 91 +++++++++++++++++++++++++++--
+ 3 files changed, 153 insertions(+), 13 deletions(-)
+
+diff --git a/src/devices/uart_qcom_geni.rs b/src/devices/uart_qcom_geni.rs
+index ccc93972..720de955 100644
+--- a/src/devices/uart_qcom_geni.rs
++++ b/src/devices/uart_qcom_geni.rs
+@@ -1,5 +1,5 @@
+-//! Qualcomm GENI serial engine (QUP v3) as a polled debug UART,
+-//! `qcom,geni-debug-uart`.
++//! Qualcomm GENI serial engine (QUP v3) as a debug UART with polled TX and
++//! interrupt-driven RX, `qcom,geni-debug-uart`.
+ //!
+ //! Clean-room implementation from the register-level description in the
+ //! redox-oneplus6 `specs/geni-debug-uart.md`; behaviour cross-checked against
+@@ -35,15 +35,18 @@ pub mod reg {
+     pub const RX_PACKING_CFG0: usize = 0x284;
+     pub const RX_PACKING_CFG1: usize = 0x288;
+     pub const UART_RX_WORD_LEN: usize = 0x28c;
++    pub const UART_RX_STALE_CNT: usize = 0x294;
+     pub const UART_TX_PARITY_CFG: usize = 0x2a4;
+     pub const UART_RX_PARITY_CFG: usize = 0x2a8;
+     pub const M_CMD0: usize = 0x600;
+     pub const M_CMD_CTRL: usize = 0x604;
+     pub const M_IRQ_STATUS: usize = 0x610;
++    pub const M_IRQ_EN: usize = 0x614;
+     pub const M_IRQ_CLEAR: usize = 0x618;
+     pub const S_CMD0: usize = 0x630;
+     pub const S_CMD_CTRL: usize = 0x634;
+     pub const S_IRQ_STATUS: usize = 0x640;
++    pub const S_IRQ_EN: usize = 0x644;
+     pub const S_IRQ_CLEAR: usize = 0x648;
+     pub const TX_FIFO: usize = 0x700;
+     pub const RX_FIFO: usize = 0x780;
+@@ -61,6 +64,14 @@ pub const CMD_CTRL_ABORT: u32 = 1 << 1;
+ pub const IRQ_CMD_DONE: u32 = 1 << 0;
+ pub const IRQ_CMD_ABORT: u32 = 1 << 5;
+ pub const M_IRQ_TX_FIFO_WATERMARK: u32 = 1 << 30;
++/// Secondary (RX) sequencer interrupt, reported through the M status.
++pub const M_IRQ_SEC_IRQ: u32 = 1 << 31;
++pub const S_IRQ_RX_FIFO_WATERMARK: u32 = 1 << 26;
++/// RX stale timer expired with a partial word in the FIFO.
++pub const S_IRQ_RX_FIFO_LAST: u32 = 1 << 27;
++/// `SE_IRQ_EN` gates for the M and S sequencer interrupt lines.
++pub const SE_IRQ_EN_M: u32 = 1 << 2;
++pub const SE_IRQ_EN_S: u32 = 1 << 3;
+ pub const OPCODE_SHIFT: u32 = 27;
+ pub const OPCODE_UART_START: u32 = 1;
+ pub const RX_FIFO_WC_MASK: u32 = 0x1ff_ffff;
+@@ -80,6 +91,9 @@ pub const TX_WATERMARK_WORDS: u32 = 2;
+ /// Watermarks assume the 16-word FIFO every SDM845 SE reports.
+ pub const RX_WATERMARK_WORDS: u32 = 8;
+ pub const RX_RFR_WATERMARK_WORDS: u32 = 14;
++/// 10 on-wire bits per character × 16, so a single keystroke below the
++/// RX watermark still raises `S_IRQ_RX_FIFO_LAST`.
++pub const RX_STALE_TICKS: u32 = 160;
+ pub const OVERSAMPLING: u32 = 32;
+ /// Smallest mapping that covers every register this driver touches.
+ pub const MIN_REGISTER_SPAN: usize = 0x1000;
+@@ -317,16 +331,34 @@ impl<M: Mmio> SerialPort<M> {
+         received
+     }
+ 
++    /// Acknowledges the SE's level interrupt, then drains RX into `sink`.
++    pub fn service_irq(&mut self, sink: impl FnMut(u8)) -> bool {
++        let s_status = self.mmio.read(reg::S_IRQ_STATUS);
++        if s_status != 0 {
++            self.mmio.write(reg::S_IRQ_CLEAR, s_status);
++        }
++        // Only the RX summary bit: polled TX owns the CMD_DONE handshake.
++        if self.mmio.read(reg::M_IRQ_STATUS) & M_IRQ_SEC_IRQ != 0 {
++            self.mmio.write(reg::M_IRQ_CLEAR, M_IRQ_SEC_IRQ);
++        }
++        self.poll_rx(sink)
++    }
++
+     pub fn receive(&mut self, token: &mut CleanLockToken) {
+-        if self.poll_rx(|c| debug_input(c, token)) {
++        if self.service_irq(|c| debug_input(c, token)) {
+             debug_notify(token);
+         }
+     }
+ 
+-    /// Keeps SE interrupt delivery masked: the GIC virq for this SE's SPI
+-    /// exceeds the u8 IRQ numbers `irq_trigger` accepts, so a delivered
+-    /// interrupt would panic the console IRQ handler. RX stays polled.
++    /// Delivers RX events only; TX stays polled, so no M-sequencer TX bit
++    /// is unmasked and a polled write never raises the line.
+     pub fn enable_irq(&mut self) {
+-        self.mmio.write(reg::IRQ_EN, 0);
++        self.mmio.write(reg::UART_RX_STALE_CNT, RX_STALE_TICKS);
++        self.mmio.write(reg::S_IRQ_CLEAR, u32::MAX);
++        self.mmio.write(reg::M_IRQ_CLEAR, M_IRQ_SEC_IRQ);
++        self.mmio
++            .write(reg::S_IRQ_EN, S_IRQ_RX_FIFO_WATERMARK | S_IRQ_RX_FIFO_LAST);
++        self.mmio.write(reg::M_IRQ_EN, M_IRQ_SEC_IRQ);
++        self.mmio.write(reg::IRQ_EN, SE_IRQ_EN_M | SE_IRQ_EN_S);
+     }
+ }
+diff --git a/src/devices/uart_qcom_geni/model.rs b/src/devices/uart_qcom_geni/model.rs
+index 24f4dba5..51c63a4e 100644
+--- a/src/devices/uart_qcom_geni/model.rs
++++ b/src/devices/uart_qcom_geni/model.rs
+@@ -64,8 +64,33 @@ impl GeniModel {
+         self.state.borrow().rx_armed
+     }
+ 
++    /// Receives `bytes`; an armed RX sequencer latches the watermark event
++    /// once enough words are queued, and the stale-timer event otherwise.
+     pub fn inject_rx(&self, bytes: &[u8]) {
+-        self.state.borrow_mut().rx.extend(bytes);
++        let mut s = self.state.borrow_mut();
++        s.rx.extend(bytes);
++        if s.rx_armed {
++            let words = s.rx.len().div_ceil(4) as u32;
++            s.s_irq |= if words >= s.regs[reg::RX_WATERMARK / 4] {
++                S_IRQ_RX_FIFO_WATERMARK
++            } else {
++                S_IRQ_RX_FIFO_LAST
++            };
++        }
++    }
++
++    /// Level of the SE's interrupt output towards the GIC.
++    pub fn irq_line(&self) -> bool {
++        let s = self.state.borrow();
++        let se_en = s.regs[reg::IRQ_EN / 4];
++        let s_pending = s.s_irq & s.regs[reg::S_IRQ_EN / 4] != 0;
++        let m_pending = Self::m_status(&s) & s.regs[reg::M_IRQ_EN / 4] != 0;
++        (se_en & SE_IRQ_EN_S != 0 && s_pending) || (se_en & SE_IRQ_EN_M != 0 && m_pending)
++    }
++
++    fn m_status(s: &State) -> u32 {
++        let sec = s.s_irq & s.regs[reg::S_IRQ_EN / 4] != 0;
++        s.m_irq | u32::from(sec) * M_IRQ_SEC_IRQ
+     }
+ }
+ 
+@@ -77,7 +102,7 @@ impl Mmio for GeniModel {
+                 u32::from(s.tx_active) * STATUS_M_CMD_ACTIVE
+                     | u32::from(s.rx_armed) * STATUS_S_CMD_ACTIVE
+             }
+-            reg::M_IRQ_STATUS => s.m_irq,
++            reg::M_IRQ_STATUS => Self::m_status(&s),
+             reg::S_IRQ_STATUS => s.s_irq,
+             reg::S_CMD_CTRL => 0,
+             reg::RX_FIFO_STATUS => {
+diff --git a/src/devices/uart_qcom_geni/tests.rs b/src/devices/uart_qcom_geni/tests.rs
+index 163e9da5..a5871ff6 100644
+--- a/src/devices/uart_qcom_geni/tests.rs
++++ b/src/devices/uart_qcom_geni/tests.rs
+@@ -182,10 +182,93 @@ fn poll_rx_rearms_an_idle_rx_sequencer() {
+     assert!(!port.poll_rx(|_| {}));
+ }
+ 
+-#[test]
+-fn enable_irq_keeps_se_interrupt_delivery_masked() {
++fn irq_port() -> SerialPort<GeniModel> {
+     let mut port = port();
+-    port.mmio().set_reg(reg::IRQ_EN, 0xc);
++    port.init(None).unwrap();
+     port.enable_irq();
+-    assert_eq!(port.mmio().reg(reg::IRQ_EN), 0);
++    port
++}
++
++fn service(port: &mut SerialPort<GeniModel>) -> Vec<u8> {
++    let mut out = Vec::new();
++    port.service_irq(|c| out.push(c));
++    out
++}
++
++#[test]
++fn init_masks_se_interrupts_until_enable_irq() {
++    let mut port = port();
++    port.mmio().set_reg(reg::IRQ_EN, SE_IRQ_EN_M | SE_IRQ_EN_S);
++    port.mmio()
++        .set_reg(reg::S_IRQ_EN, S_IRQ_RX_FIFO_WATERMARK | S_IRQ_RX_FIFO_LAST);
++    port.init(None).unwrap();
++    port.mmio().inject_rx(b"x");
++    assert!(!port.mmio().irq_line());
++}
++
++#[test]
++fn enable_irq_unmasks_rx_events_only() {
++    let port = irq_port();
++    let m = port.mmio();
++    assert_eq!(m.reg(reg::IRQ_EN), SE_IRQ_EN_M | SE_IRQ_EN_S);
++    assert_eq!(
++        m.reg(reg::S_IRQ_EN),
++        S_IRQ_RX_FIFO_WATERMARK | S_IRQ_RX_FIFO_LAST
++    );
++    assert_eq!(m.reg(reg::M_IRQ_EN), M_IRQ_SEC_IRQ);
++    assert_eq!(m.reg(reg::UART_RX_STALE_CNT), RX_STALE_TICKS);
++}
++
++#[test]
++fn keystroke_raises_the_line_and_service_drops_it() {
++    let mut port = irq_port();
++    port.mmio().inject_rx(b"k");
++    assert!(port.mmio().irq_line());
++    assert_eq!(
++        port.mmio().read(reg::M_IRQ_STATUS) & M_IRQ_SEC_IRQ,
++        M_IRQ_SEC_IRQ
++    );
++
++    assert_eq!(service(&mut port), b"k");
++    assert!(!port.mmio().irq_line());
++    assert_eq!(port.mmio().read(reg::S_IRQ_STATUS), 0);
++}
++
++#[test]
++fn watermark_burst_is_drained_in_one_service() {
++    let mut port = irq_port();
++    let burst = [b'a'; 40];
++    port.mmio().inject_rx(&burst);
++    assert_eq!(port.mmio().read(reg::S_IRQ_STATUS), S_IRQ_RX_FIFO_WATERMARK);
++    assert_eq!(service(&mut port), burst);
++    assert!(!port.mmio().irq_line());
++}
++
++#[test]
++fn polled_tx_never_raises_the_line() {
++    let mut port = irq_port();
++    port.write(b"ok\n");
++    assert_eq!(port.mmio().tx(), b"ok\r\n");
++    assert!(!port.mmio().irq_line());
++}
++
++#[test]
++fn service_leaves_tx_status_bits_to_polled_tx() {
++    let mut port = irq_port();
++    port.mmio().inject_rx(b"z");
++    port.mmio().clear_writes();
++    service(&mut port);
++    assert!(port
++        .mmio()
++        .writes()
++        .iter()
++        .filter(|&&(o, _)| o == reg::M_IRQ_CLEAR)
++        .all(|&(_, v)| v == M_IRQ_SEC_IRQ));
++}
++
++#[test]
++fn spurious_service_reads_nothing() {
++    let mut port = irq_port();
++    assert!(!port.service_irq(|_| panic!("no data was received")));
++    assert!(!port.mmio().irq_line());
+ }

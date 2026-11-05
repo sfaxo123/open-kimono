@@ -1,0 +1,12 @@
+[package]
+name = "voice-bridge"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "C5: tiny CLI bridging a 16 kHz mono WAV to a Wyoming STT server and text to a Wyoming TTS server, emitting every step as trace-events JSONL on stdout"
+
+# Minimal deps by task rule: only the two in-repo crates. WAV parsing, CLI
+# parsing and the fake test servers are hand-written std code.
+[dependencies]
+wyoming = { path = "../../crates/wyoming" }
+trace-events = { path = "../../crates/trace-events" }
